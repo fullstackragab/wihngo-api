@@ -15,16 +15,22 @@ WORKDIR /src
 COPY ["Wihngo.csproj", "."]
 RUN dotnet restore "./Wihngo.csproj"
 COPY . .
-WORKDIR "/src/."
-RUN dotnet build "./Wihngo.csproj" -c $BUILD_CONFIGURATION -o /app/build
+WORKDIR "/src"
+# Find the first .csproj file anywhere in the repo
+RUN PROJECT=$(find . -name "*.csproj" | head -n 1) && \
+    echo "Detected project: $PROJECT" && \
+    dotnet restore "$PROJECT" && \
+    dotnet build "$PROJECT" -c $BUILD_CONFIGURATION -o /app/build
 
 # This stage is used to publish the service project to be copied to the final stage
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./Wihngo.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+RUN PROJECT=$(find . -name "*.csproj" | head -n 1) && \
+    dotnet publish "$PROJECT" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+
 
 # This stage is used in production or when running from VS in regular mode (Default when not using the Debug configuration)
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
-ENTRYPOINT ["dotnet", "Wihngo.dll"]
+CMD ["dotnet", "$(ls *.dll | head -n 1)"]
