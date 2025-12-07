@@ -17,9 +17,9 @@ namespace Wihngo.Controllers
 
         // POST api/<AuthController>
         [HttpPost]
-        public void Post([FromBody] Object loginDto)
+        public Object Post([FromBody] Object loginDto)
         {
-            Console.WriteLine(loginDto);
+            return loginDto;
         }
     }
 }
