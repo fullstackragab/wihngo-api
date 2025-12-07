@@ -23,8 +23,9 @@ namespace Wihngo.Controllers
         [HttpGet]
         public async Task<ActionResult<IEnumerable<UserReadDto>>> Get()
         {
-            var users = await _db.Users.Include(u => u.Birds).ToListAsync();
-            Console.WriteLine(string.Join(", ", users));
+            var users = await _db.Users
+                .AsNoTracking()
+                .ToListAsync();
             return Ok(_mapper.Map<IEnumerable<UserReadDto>>(users));
         }
 
@@ -39,6 +40,50 @@ namespace Wihngo.Controllers
 
             if (user == null) return NotFound();
             return Ok(_mapper.Map<UserReadDto>(user));
+        }
+
+        [HttpGet("profile/{id}")]
+        public async Task<ActionResult<UserProfileDto>> Profile(Guid id)
+        {
+            var user = await _db.Users
+                .Include(u => u.Birds)
+                .Include(u => u.Stories)
+                .Include(u => u.SupportTransactions)
+                .FirstOrDefaultAsync(u => u.UserId == id);
+
+            if (user == null) return NotFound();
+
+            // Build profile DTO
+            var profile = new UserProfileDto
+            {
+                Name = user.Name,
+                Location = "", // not stored yet
+                JoinedDate = user.CreatedAt.ToString("MMMM yyyy"),
+                Bio = user.Bio ?? string.Empty,
+                Avatar = "??",
+                Stats = new ProfileStats
+                {
+                    BirdsLoved = user.Birds.Count, // placeholder: count of owned birds
+                    StoriesShared = user.Stories.Count,
+                    Supported = user.SupportTransactions.Count
+                },
+                FavoriteBirds = user.Birds.Select(b => new FavoriteBirdDto
+                {
+                    Name = b.Name,
+                    Emoji = "??",
+                    Loved = true
+                }).ToList(),
+                RecentStories = user.Stories.OrderByDescending(s => s.CreatedAt).Take(5).Select(s => new StorySummaryDto
+                {
+                    StoryId = s.StoryId,
+                    Title = s.Content.Length > 30 ? s.Content.Substring(0, 30) + "..." : s.Content,
+                    Bird = s.Bird?.Name ?? string.Empty,
+                    Date = s.CreatedAt.ToString("MMMM d, yyyy"),
+                    Preview = s.Content.Length > 140 ? s.Content.Substring(0, 140) + "..." : s.Content
+                }).ToList()
+            };
+
+            return Ok(profile);
         }
 
         [HttpPost]

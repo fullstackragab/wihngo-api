@@ -23,11 +23,18 @@ namespace Wihngo.Models
         [MaxLength(200)]
         public string? Species { get; set; }
 
+        [MaxLength(500)]
+        public string? Tagline { get; set; }
+
         [MaxLength(2000)]
         public string? Description { get; set; }
 
         [MaxLength(1000)]
         public string? ImageUrl { get; set; }
+
+        public int LovedCount { get; set; } = 0;
+
+        public int SupportedCount { get; set; } = 0;
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

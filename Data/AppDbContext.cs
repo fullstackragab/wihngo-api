@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Wihngo.Models;
+using System.Text.RegularExpressions;
 
 namespace Wihngo.Data
 {
@@ -53,6 +54,37 @@ namespace Wihngo.Data
                 .WithOne(t => t.Bird)
                 .HasForeignKey(t => t.BirdId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            // Apply snake_case column naming for all properties so EF maps to typical Postgres column names
+            foreach (var entity in modelBuilder.Model.GetEntityTypes())
+            {
+                // convert table name to snake_case if not explicitly set
+                var currentTableName = entity.GetTableName();
+                if (string.IsNullOrEmpty(currentTableName))
+                {
+                    entity.SetTableName(ToSnakeCase(entity.ClrType.Name));
+                }
+                else
+                {
+                    // ensure table name is snake_case as well
+                    entity.SetTableName(ToSnakeCase(currentTableName));
+                }
+
+                foreach (var property in entity.GetProperties())
+                {
+                    property.SetColumnName(ToSnakeCase(property.Name));
+                }
+            }
+        }
+
+        private static string ToSnakeCase(string input)
+        {
+            if (string.IsNullOrEmpty(input)) return input;
+            // simple PascalCase / camelCase to snake_case converter
+            var startUnderscores = Regex.Match(input, "^_+");
+            var result = Regex.Replace(input, "([a-z0-9])([A-Z])", "$1_$2");
+            result = Regex.Replace(result, "([A-Z])([A-Z][a-z])", "$1_$2");
+            return result.ToLowerInvariant();
         }
     }
 }
