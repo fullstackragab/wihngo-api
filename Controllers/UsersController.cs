@@ -24,6 +24,7 @@ namespace Wihngo.Controllers
         public async Task<ActionResult<IEnumerable<UserReadDto>>> Get()
         {
             var users = await _db.Users.Include(u => u.Birds).ToListAsync();
+            Console.WriteLine(string.Join(", ", users));
             return Ok(_mapper.Map<IEnumerable<UserReadDto>>(users));
         }
 

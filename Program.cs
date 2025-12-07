@@ -19,7 +19,7 @@ builder.Services.AddAutoMapper(typeof(Program));
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
                        ?? "Host=localhost;Port=5432;Database=wihngo;Username=postgres;Password=postgres";
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString));
+    options.UseNpgsql(connectionString)); // Removed .UseSnakeCaseNamingConvention()
 
 // JWT configuration
 var jwtSecret = builder.Configuration["Jwt:Secret"] ?? "please_change_this_secret";

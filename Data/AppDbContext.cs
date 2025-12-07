@@ -1,8 +1,8 @@
+using Microsoft.EntityFrameworkCore;
+using Wihngo.Models;
+
 namespace Wihngo.Data
 {
-    using Microsoft.EntityFrameworkCore;
-    using Wihngo.Models;
-
     public class AppDbContext : DbContext
     {
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
@@ -17,6 +17,12 @@ namespace Wihngo.Data
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+
+            // map to lowercase table names to match your DB
+            modelBuilder.Entity<User>().ToTable("users");
+            modelBuilder.Entity<Bird>().ToTable("birds");
+            modelBuilder.Entity<Story>().ToTable("stories");
+            modelBuilder.Entity<SupportTransaction>().ToTable("supporttransactions");
 
             modelBuilder.Entity<User>()
                 .HasMany(u => u.Birds)
