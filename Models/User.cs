@@ -1,20 +1,17 @@
 ﻿namespace Wihngo.Models
 {
     using System;
+    using System.Collections.Generic;
     using System.ComponentModel.DataAnnotations;
 
     public class User
     {
         [Key]
-        public Guid Id { get; set; } = Guid.NewGuid();
+        public Guid UserId { get; set; } = Guid.NewGuid();
 
         [Required]
-        [MaxLength(100)]
-        public string FirstName { get; set; } = string.Empty;
-
-        [Required]
-        [MaxLength(100)]
-        public string LastName { get; set; } = string.Empty;
+        [MaxLength(200)]
+        public string Name { get; set; } = string.Empty;
 
         [Required]
         [EmailAddress]
@@ -24,15 +21,22 @@
         [Required]
         public string PasswordHash { get; set; } = string.Empty;
 
-        [MaxLength(50)]
-        public string Role { get; set; } = "User";
+        [MaxLength(1000)]
+        public string? ProfileImage { get; set; }
+
+        [MaxLength(2000)]
+        public string? Bio { get; set; }
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-        public DateTime? UpdatedAt { get; set; }
+        // Navigation properties
+        public List<Bird> Birds { get; set; } = new();
 
-        public bool IsActive { get; set; } = true;
+        public List<Story> Stories { get; set; } = new();
 
-        public string GetFullName() => $"{FirstName} {LastName}".Trim();
+        // Transactions where this user is the supporter
+        public List<SupportTransaction> SupportTransactions { get; set; } = new();
+
+        public string GetDisplayName() => Name;
     }
 }
