@@ -8,6 +8,7 @@ namespace Wihngo.Controllers
     using Wihngo.Data;
     using Wihngo.Dtos;
     using Wihngo.Models;
+    using System.Text.Json;
 
     [Route("api/[controller]")]
     [ApiController]
@@ -20,6 +21,22 @@ namespace Wihngo.Controllers
         {
             _db = db;
             _mapper = mapper;
+        }
+
+        private Guid? GetUserIdClaim()
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userIdClaim, out var userId)) return null;
+            return userId;
+        }
+
+        private async Task<bool> EnsureOwner(Guid birdId)
+        {
+            var userId = GetUserIdClaim();
+            if (userId == null) return false;
+            var bird = await _db.Birds.FindAsync(birdId);
+            if (bird == null) return false;
+            return bird.OwnerId == userId.Value;
         }
 
         [HttpGet]
@@ -227,6 +244,157 @@ namespace Wihngo.Controllers
             dto.CreatedAt = usage.CreatedAt;
 
             return CreatedAtAction(nameof(ReportSupportUsage), new { id = id, usageId = usage.UsageId }, dto);
+        }
+
+        [Authorize]
+        [HttpPost("{id}/premium/subscribe")]
+        public async Task<IActionResult> Subscribe(Guid id)
+        {
+            if (!await EnsureOwner(id)) return Forbid();
+
+            // For simplicity we create a local subscription record with status active
+            var existing = await _db.BirdPremiumSubscriptions.FirstOrDefaultAsync(s => s.BirdId == id && s.Status == "active");
+            if (existing != null) return BadRequest("Already subscribed");
+
+            var userId = GetUserIdClaim().Value;
+
+            var subscription = new BirdPremiumSubscription
+            {
+                BirdId = id,
+                OwnerId = userId,
+                Status = "active",
+                Plan = "monthly",
+                Provider = "local",
+                ProviderSubscriptionId = Guid.NewGuid().ToString(),
+                PriceCents = 300,
+                DurationDays = 30,
+                StartedAt = DateTime.UtcNow,
+                CurrentPeriodEnd = DateTime.UtcNow.AddMonths(1),
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            _db.BirdPremiumSubscriptions.Add(subscription);
+
+            var bird = await _db.Birds.FindAsync(id);
+            if (bird != null)
+            {
+                bird.IsPremium = true;
+                bird.PremiumPlan = subscription.Plan;
+                bird.PremiumExpiresAt = subscription.CurrentPeriodEnd;
+                bird.MaxMediaCount = 20; // premium allows more media
+            }
+
+            await _db.SaveChangesAsync();
+            return Ok(new { subscriptionId = subscription.Id, expiry = subscription.CurrentPeriodEnd });
+        }
+
+        [Authorize]
+        [HttpPost("{id}/premium/subscribe/lifetime")]
+        public async Task<IActionResult> PurchaseLifetime(Guid id)
+        {
+            if (!await EnsureOwner(id)) return Forbid();
+
+            var existing = await _db.BirdPremiumSubscriptions.FirstOrDefaultAsync(s => s.BirdId == id && s.Status == "active");
+            if (existing != null) return BadRequest("Already subscribed");
+
+            var userId = GetUserIdClaim().Value;
+
+            var subscription = new BirdPremiumSubscription
+            {
+                BirdId = id,
+                OwnerId = userId,
+                Status = "active",
+                Plan = "lifetime",
+                Provider = "local",
+                ProviderSubscriptionId = Guid.NewGuid().ToString(),
+                PriceCents = 7000, // $70 one-time
+                DurationDays = int.MaxValue,
+                StartedAt = DateTime.UtcNow,
+                CurrentPeriodEnd = DateTime.MaxValue,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            _db.BirdPremiumSubscriptions.Add(subscription);
+
+            var bird = await _db.Birds.FindAsync(id);
+            if (bird != null)
+            {
+                bird.IsPremium = true;
+                bird.PremiumPlan = subscription.Plan;
+                bird.PremiumExpiresAt = null;
+                bird.MaxMediaCount = 50; // lifetime premium allows most media
+            }
+
+            await _db.SaveChangesAsync();
+            return Ok(new { subscriptionId = subscription.Id, plan = subscription.Plan });
+        }
+
+        [Authorize]
+        [HttpPatch("{id}/premium/style")]
+        public async Task<IActionResult> UpdateStyle(Guid id, [FromBody] PremiumStyleDto dto)
+        {
+            if (!await EnsureOwner(id)) return Forbid();
+
+            var bird = await _db.Birds.FindAsync(id);
+            if (bird == null) return NotFound();
+
+            // Ensure active subscription
+            var active = await _db.BirdPremiumSubscriptions.FirstOrDefaultAsync(s => s.BirdId == id && s.Status == "active");
+            if (active == null) return Forbid("No active subscription");
+
+            var json = JsonSerializer.Serialize(dto);
+            bird.PremiumStyleJson = json;
+
+            await _db.SaveChangesAsync();
+            return Ok();
+        }
+
+        [Authorize]
+        [HttpPatch("{id}/premium/qr")]
+        public async Task<IActionResult> UpdateQr(Guid id, [FromBody] string qrUrl)
+        {
+            if (!await EnsureOwner(id)) return Forbid();
+
+            var bird = await _db.Birds.FindAsync(id);
+            if (bird == null) return NotFound();
+
+            // Allow qr to be set only if premium
+            if (!bird.IsPremium) return Forbid("Only premium birds can have QR codes");
+
+            bird.QrCodeUrl = qrUrl;
+            await _db.SaveChangesAsync();
+            return Ok();
+        }
+
+        [Authorize]
+        [HttpPost("{id}/donate")]
+        public async Task<IActionResult> DonateToBird(Guid id, [FromBody] long cents)
+        {
+            var bird = await _db.Birds.FindAsync(id);
+            if (bird == null) return NotFound("Bird not found");
+
+            // Record a simple support transaction (not handling external payments here)
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userIdClaim, out var supporterId)) return Unauthorized();
+
+            var tx = new SupportTransaction
+            {
+                TransactionId = Guid.NewGuid(),
+                BirdId = id,
+                SupporterId = supporterId,
+                Amount = cents / 100m,
+                Message = null,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _db.SupportTransactions.Add(tx);
+            bird.DonationCents += cents;
+            bird.SupportedCount = await _db.SupportTransactions.CountAsync(t => t.BirdId == id);
+
+            await _db.SaveChangesAsync();
+            return Ok(new { totalDonated = bird.DonationCents });
         }
     }
 }

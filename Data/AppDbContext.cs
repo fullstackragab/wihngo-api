@@ -15,7 +15,8 @@ namespace Wihngo.Data
         public DbSet<Story> Stories { get; set; } = null!;
         public DbSet<SupportTransaction> SupportTransactions { get; set; } = null!;
         public DbSet<Love> Loves { get; set; } = null!;
-        public DbSet<SupportUsage> SupportUsage { get; set; } = null!;
+        public DbSet<SupportUsage> SupportUsages { get; set; } = null!; // plural set name to match entity
+        public DbSet<BirdPremiumSubscription> BirdPremiumSubscriptions { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -25,6 +26,7 @@ namespace Wihngo.Data
             modelBuilder.Entity<User>().ToTable("users");
             modelBuilder.Entity<Bird>().ToTable("birds");
             modelBuilder.Entity<Story>().ToTable("stories");
+            modelBuilder.Entity<BirdPremiumSubscription>().ToTable("bird_premium_subscriptions");
             // Use underscore-separated plural table name to match SQL scripts
             modelBuilder.Entity<SupportTransaction>().ToTable("support_transactions");
             modelBuilder.Entity<Love>().ToTable("loves");

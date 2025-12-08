@@ -29,5 +29,9 @@ namespace Wihngo.Models
         public string? ImageUrl { get; set; }
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+        // Premium highlight fields
+        public bool IsHighlighted { get; set; } = false;
+        public int? HighlightOrder { get; set; }
     }
 }

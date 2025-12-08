@@ -1,8 +1,10 @@
 namespace Wihngo.Controllers
 {
     using AutoMapper;
+    using Microsoft.AspNetCore.Authorization;
     using Microsoft.AspNetCore.Mvc;
     using Microsoft.EntityFrameworkCore;
+    using System.Security.Claims;
     using Wihngo.Data;
     using Wihngo.Dtos;
     using Wihngo.Models;
@@ -18,6 +20,13 @@ namespace Wihngo.Controllers
         {
             _db = db;
             _mapper = mapper;
+        }
+
+        private Guid? GetUserIdClaim()
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userIdClaim, out var userId)) return null;
+            return userId;
         }
 
         [HttpGet]
@@ -95,6 +104,68 @@ namespace Wihngo.Controllers
             _db.Stories.Remove(story);
             await _db.SaveChangesAsync();
             return NoContent();
+        }
+
+        [Authorize]
+        [HttpPatch("{id}/highlight")]
+        public async Task<IActionResult> ToggleHighlight(Guid id, [FromBody] StoryHighlightDto dto)
+        {
+            var story = await _db.Stories.Include(s => s.Bird).FirstOrDefaultAsync(s => s.StoryId == id);
+            if (story == null) return NotFound();
+
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
+            // Only bird owner can set highlights
+            if (story.Bird == null || story.Bird.OwnerId != userId.Value) return Forbid();
+
+            // Check bird premium status
+            var active = await _db.BirdPremiumSubscriptions.FirstOrDefaultAsync(s => s.BirdId == story.BirdId && s.Status == "active");
+            if (active == null) return Forbid("Bird is not premium");
+
+            // When highlighting, enforce a max of 3 highlights
+            if (dto.IsHighlighted)
+            {
+                var count = await _db.Stories.CountAsync(s => s.BirdId == story.BirdId && s.IsHighlighted);
+                if (count >= 3) return BadRequest("Maximum of 3 highlights allowed");
+
+                // If pin requested, set highlight order to 1 and bump others
+                if (dto.PinToProfile)
+                {
+                    var existing = await _db.Stories.Where(s => s.BirdId == story.BirdId && s.IsHighlighted).ToListAsync();
+                    foreach (var ex in existing)
+                    {
+                        ex.HighlightOrder = (ex.HighlightOrder ?? 1) + 1;
+                    }
+                    story.HighlightOrder = 1;
+                }
+                else
+                {
+                    // set next order
+                    int? maxOrderNullable = await _db.Stories.Where(s => s.BirdId == story.BirdId && s.IsHighlighted && s.HighlightOrder != null).MaxAsync(s => (int?)s.HighlightOrder);
+                    var nextOrder = (maxOrderNullable.HasValue) ? maxOrderNullable.Value + 1 : 1;
+                    story.HighlightOrder = nextOrder;
+                }
+            }
+            else
+            {
+                // Clearing highlight, compact orders
+                if (story.IsHighlighted && story.HighlightOrder != null)
+                {
+                    var currentOrder = story.HighlightOrder.Value;
+                    var others = await _db.Stories.Where(s => s.BirdId == story.BirdId && s.IsHighlighted && s.HighlightOrder > currentOrder).ToListAsync();
+                    foreach (var o in others)
+                    {
+                        o.HighlightOrder = o.HighlightOrder - 1;
+                    }
+                }
+                story.HighlightOrder = null;
+            }
+
+            story.IsHighlighted = dto.IsHighlighted;
+
+            await _db.SaveChangesAsync();
+            return Ok();
         }
     }
 }
