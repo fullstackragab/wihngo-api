@@ -35,7 +35,13 @@ namespace Wihngo.Profiles
 
             CreateMap<Bird, BirdSummaryDto>()
                 .ForMember(dest => dest.BirdId, opt => opt.MapFrom(src => src.BirdId))
-                .ForMember(dest => dest.Name, opt => opt.MapFrom(src => src.Name));
+                .ForMember(dest => dest.Name, opt => opt.MapFrom(src => src.Name))
+                .ForMember(dest => dest.Species, opt => opt.MapFrom(src => src.Species))
+                .ForMember(dest => dest.ImageUrl, opt => opt.MapFrom(src => src.ImageUrl))
+                .ForMember(dest => dest.Tagline, opt => opt.MapFrom(src => src.Tagline))
+                .ForMember(dest => dest.LovedBy, opt => opt.MapFrom(src => src.LovedCount))
+                .ForMember(dest => dest.SupportedBy, opt => opt.MapFrom(src => src.SupportedCount))
+                .ForMember(dest => dest.OwnerId, opt => opt.MapFrom(src => src.OwnerId));
 
             CreateMap<User, UserSummaryDto>()
                 .ForMember(dest => dest.UserId, opt => opt.MapFrom(src => src.UserId))

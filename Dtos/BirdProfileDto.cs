@@ -10,11 +10,13 @@ namespace Wihngo.Dtos
         public string Emoji { get; set; } = string.Empty;
         public string Tagline { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
+        public string? ImageUrl { get; set; }
         public List<string> Personality { get; set; } = new();
         public ConservationDto Conservation { get; set; } = new();
         public List<string> FunFacts { get; set; } = new();
         public int LovedBy { get; set; }
         public int SupportedBy { get; set; }
+        public UserSummaryDto? Owner { get; set; }
     }
 
     public class ConservationDto

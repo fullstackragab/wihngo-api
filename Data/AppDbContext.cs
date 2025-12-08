@@ -14,6 +14,8 @@ namespace Wihngo.Data
         public DbSet<Bird> Birds { get; set; } = null!;
         public DbSet<Story> Stories { get; set; } = null!;
         public DbSet<SupportTransaction> SupportTransactions { get; set; } = null!;
+        public DbSet<Love> Loves { get; set; } = null!;
+        public DbSet<SupportUsage> SupportUsage { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -23,7 +25,13 @@ namespace Wihngo.Data
             modelBuilder.Entity<User>().ToTable("users");
             modelBuilder.Entity<Bird>().ToTable("birds");
             modelBuilder.Entity<Story>().ToTable("stories");
-            modelBuilder.Entity<SupportTransaction>().ToTable("supporttransactions");
+            // Use underscore-separated plural table name to match SQL scripts
+            modelBuilder.Entity<SupportTransaction>().ToTable("support_transactions");
+            modelBuilder.Entity<Love>().ToTable("loves");
+            modelBuilder.Entity<SupportUsage>().ToTable("support_usage");
+
+            // Configure composite primary key for Love join table
+            modelBuilder.Entity<Love>().HasKey(l => new { l.UserId, l.BirdId });
 
             modelBuilder.Entity<User>()
                 .HasMany(u => u.Birds)
@@ -43,6 +51,12 @@ namespace Wihngo.Data
                 .HasForeignKey(t => t.SupporterId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            modelBuilder.Entity<User>()
+                .HasMany(u => u.Loves)
+                .WithOne(l => l.User)
+                .HasForeignKey(l => l.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
             modelBuilder.Entity<Bird>()
                 .HasMany(b => b.Stories)
                 .WithOne(s => s.Bird)
@@ -53,6 +67,12 @@ namespace Wihngo.Data
                 .HasMany(b => b.SupportTransactions)
                 .WithOne(t => t.Bird)
                 .HasForeignKey(t => t.BirdId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<Bird>()
+                .HasMany(b => b.Loves)
+                .WithOne(l => l.Bird)
+                .HasForeignKey(l => l.BirdId)
                 .OnDelete(DeleteBehavior.Cascade);
 
             // Apply snake_case column naming for all properties so EF maps to typical Postgres column names

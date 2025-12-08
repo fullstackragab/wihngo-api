@@ -10,6 +10,7 @@ using Microsoft.IdentityModel.Tokens;
 using Wihngo.Data;
 using Wihngo.Dtos;
 using Wihngo.Models;
+using System.Security.Cryptography;
 
 // For more information on enabling Web API for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
 
@@ -90,7 +91,17 @@ namespace Wihngo.Controllers
         private string GenerateToken(User user)
         {
             var jwtSecret = _config["Jwt:Secret"] ?? "please_change_this_secret";
-            var key = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(jwtSecret));
+
+            // Ensure the signing key meets the minimum size for HmacSha256 (256 bits)
+            // Derive a 256-bit key deterministically from the secret using SHA-256
+            var secretBytes = Encoding.UTF8.GetBytes(jwtSecret);
+            byte[] keyBytes;
+            using (var sha = SHA256.Create())
+            {
+                keyBytes = sha.ComputeHash(secretBytes);
+            }
+
+            var key = new SymmetricSecurityKey(keyBytes);
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
             var claims = new List<Claim>

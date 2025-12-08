@@ -41,5 +41,9 @@ namespace Wihngo.Models
         public List<Story> Stories { get; set; } = new();
 
         public List<SupportTransaction> SupportTransactions { get; set; } = new();
+
+        public List<Love> Loves { get; set; } = new();
+
+        public List<SupportUsage> SupportUsages { get; set; } = new();
     }
 }

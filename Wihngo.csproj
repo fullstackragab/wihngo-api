@@ -25,4 +25,11 @@
     <PackageReference Include="AutoMapper.Extensions.Microsoft.DependencyInjection" Version="12.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Treat all SQL scripts as non-build artifacts to avoid SQL validation errors during dotnet build -->
+    <None Include="Database\**\*.sql">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

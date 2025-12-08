@@ -37,6 +37,10 @@
         // Transactions where this user is the supporter
         public List<SupportTransaction> SupportTransactions { get; set; } = new();
 
+        public List<Love> Loves { get; set; } = new();
+
+        public List<SupportUsage> ReportedSupportUsage { get; set; } = new();
+
         public string GetDisplayName() => Name;
     }
 }
