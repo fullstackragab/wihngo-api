@@ -2,11 +2,11 @@ using AutoMapper;
 using Wihngo.Dtos;
 using Wihngo.Models;
 
-namespace Wihngo.Profiles
+namespace Wihngo.Mapping
 {
-    public class MappingProfile : Profile
+    public class AutoMapperProfile : Profile
     {
-        public MappingProfile()
+        public AutoMapperProfile()
         {
             CreateMap<UserCreateDto, User>();
             CreateMap<User, UserReadDto>();

@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Wihngo.Data;
 using System.Text.Json.Serialization;
+using Wihngo.Mapping;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,8 +18,8 @@ builder.Services.AddControllers().AddJsonOptions(opts =>
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
-// Register AutoMapper
-builder.Services.AddAutoMapper(typeof(Program));
+// Register AutoMapper with explicit profile
+builder.Services.AddAutoMapper(cfg => cfg.AddProfile<AutoMapperProfile>());
 
 // Register DbContext using PostgreSQL (Npgsql)
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
