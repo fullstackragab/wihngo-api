@@ -11,6 +11,16 @@ namespace Wihngo.Mapping
             CreateMap<UserCreateDto, User>();
             CreateMap<User, UserReadDto>();
 
+            CreateMap<BirdCreateDto, Bird>()
+                .ForMember(dest => dest.Name, opt => opt.MapFrom(src => src.Name))
+                .ForMember(dest => dest.Species, opt => opt.MapFrom(src => src.Species))
+                .ForMember(dest => dest.Tagline, opt => opt.MapFrom(src => src.Tagline))
+                .ForMember(dest => dest.Description, opt => opt.MapFrom(src => src.Description))
+                .ForMember(dest => dest.ImageUrl, opt => opt.MapFrom(src => src.ImageUrl))
+                .ForMember(dest => dest.OwnerId, opt => opt.Ignore())
+                .ForMember(dest => dest.BirdId, opt => opt.Ignore())
+                .ForMember(dest => dest.CreatedAt, opt => opt.Ignore());
+
             CreateMap<Bird, BirdProfileDto>()
                 .ForMember(dest => dest.CommonName, opt => opt.MapFrom(src => src.Name))
                 .ForMember(dest => dest.ScientificName, opt => opt.MapFrom(src => src.Species))

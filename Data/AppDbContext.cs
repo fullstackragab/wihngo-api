@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Wihngo.Models;
+using Wihngo.Models.Entities;
 using System.Text.RegularExpressions;
 
 namespace Wihngo.Data
@@ -18,6 +19,13 @@ namespace Wihngo.Data
         public DbSet<SupportUsage> SupportUsages { get; set; } = null!; // plural set name to match entity
         public DbSet<BirdPremiumSubscription> BirdPremiumSubscriptions { get; set; } = null!;
 
+        // Crypto Payment Entities
+        public DbSet<PlatformWallet> PlatformWallets { get; set; } = null!;
+        public DbSet<CryptoPaymentRequest> CryptoPaymentRequests { get; set; } = null!;
+        public DbSet<CryptoTransaction> CryptoTransactions { get; set; } = null!;
+        public DbSet<CryptoExchangeRate> CryptoExchangeRates { get; set; } = null!;
+        public DbSet<CryptoPaymentMethod> CryptoPaymentMethods { get; set; } = null!;
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -34,6 +42,11 @@ namespace Wihngo.Data
 
             // Configure composite primary key for Love join table
             modelBuilder.Entity<Love>().HasKey(l => new { l.UserId, l.BirdId });
+
+            // Explicitly map DonationCents to donation_cents (temporary fix)
+            modelBuilder.Entity<Bird>()
+                .Property(b => b.DonationCents)
+                .HasColumnName("donation_cents");
 
             modelBuilder.Entity<User>()
                 .HasMany(u => u.Birds)
@@ -76,6 +89,59 @@ namespace Wihngo.Data
                 .WithOne(l => l.Bird)
                 .HasForeignKey(l => l.BirdId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            // Crypto Payment Configurations
+            
+            // Unique constraints
+            modelBuilder.Entity<PlatformWallet>()
+                .HasIndex(w => new { w.Currency, w.Network, w.Address })
+                .IsUnique();
+
+            modelBuilder.Entity<CryptoExchangeRate>()
+                .HasIndex(r => r.Currency)
+                .IsUnique();
+
+            modelBuilder.Entity<CryptoPaymentMethod>()
+                .HasIndex(m => new { m.UserId, m.WalletAddress, m.Currency, m.Network })
+                .IsUnique();
+
+            modelBuilder.Entity<CryptoTransaction>()
+                .HasIndex(t => t.TransactionHash)
+                .IsUnique();
+
+            // Indexes
+            modelBuilder.Entity<CryptoPaymentRequest>()
+                .HasIndex(p => p.Status);
+
+            modelBuilder.Entity<CryptoPaymentRequest>()
+                .HasIndex(p => p.TransactionHash);
+
+            modelBuilder.Entity<CryptoPaymentRequest>()
+                .HasIndex(p => p.ExpiresAt);
+
+            // Seed initial data
+            modelBuilder.Entity<PlatformWallet>().HasData(
+                new PlatformWallet
+                {
+                    Id = Guid.NewGuid(),
+                    Currency = "USDT",
+                    Network = "tron",
+                    Address = "TGRzhw2kwBW5PzncWfKCnqsvkrBezfsgiA",
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                }
+            );
+
+            modelBuilder.Entity<CryptoExchangeRate>().HasData(
+                new CryptoExchangeRate { Id = Guid.NewGuid(), Currency = "BTC", UsdRate = 50000, Source = "coingecko" },
+                new CryptoExchangeRate { Id = Guid.NewGuid(), Currency = "ETH", UsdRate = 3000, Source = "coingecko" },
+                new CryptoExchangeRate { Id = Guid.NewGuid(), Currency = "USDT", UsdRate = 1, Source = "coingecko" },
+                new CryptoExchangeRate { Id = Guid.NewGuid(), Currency = "USDC", UsdRate = 1, Source = "coingecko" },
+                new CryptoExchangeRate { Id = Guid.NewGuid(), Currency = "BNB", UsdRate = 500, Source = "coingecko" },
+                new CryptoExchangeRate { Id = Guid.NewGuid(), Currency = "SOL", UsdRate = 100, Source = "coingecko" },
+                new CryptoExchangeRate { Id = Guid.NewGuid(), Currency = "DOGE", UsdRate = 0.1m, Source = "coingecko" }
+            );
 
             // Apply snake_case column naming for all properties so EF maps to typical Postgres column names
             foreach (var entity in modelBuilder.Model.GetEntityTypes())

@@ -120,14 +120,26 @@ namespace Wihngo.Controllers
             return await Get(id);
         }
 
+        [Authorize]
         [HttpPost]
-        public async Task<ActionResult<Bird>> Post([FromBody] Bird bird)
+        public async Task<ActionResult<BirdSummaryDto>> Post([FromBody] BirdCreateDto dto)
         {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
+            var bird = _mapper.Map<Bird>(dto);
             bird.BirdId = Guid.NewGuid();
+            bird.OwnerId = userId.Value;
             bird.CreatedAt = DateTime.UtcNow;
+
             _db.Birds.Add(bird);
             await _db.SaveChangesAsync();
-            return CreatedAtAction(nameof(Get), new { id = bird.BirdId }, bird);
+
+            var summary = _mapper.Map<BirdSummaryDto>(bird);
+
+            return CreatedAtAction(nameof(Get), new { id = bird.BirdId }, summary);
         }
 
         [HttpPut("{id}")]
