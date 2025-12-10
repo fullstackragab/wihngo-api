@@ -8,6 +8,8 @@ namespace Wihngo.Controllers
     using Wihngo.Data;
     using Wihngo.Dtos;
     using Wihngo.Models;
+    using Wihngo.Models.Enums;
+    using Wihngo.Services.Interfaces;
     using System.Text.Json;
 
     [Route("api/[controller]")]
@@ -16,11 +18,13 @@ namespace Wihngo.Controllers
     {
         private readonly AppDbContext _db;
         private readonly IMapper _mapper;
+        private readonly INotificationService _notificationService;
 
-        public BirdsController(AppDbContext db, IMapper mapper)
+        public BirdsController(AppDbContext db, IMapper mapper, INotificationService notificationService)
         {
             _db = db;
             _mapper = mapper;
+            _notificationService = notificationService;
         }
 
         private Guid? GetUserIdClaim()
@@ -42,6 +46,19 @@ namespace Wihngo.Controllers
         [HttpGet]
         public async Task<ActionResult<IEnumerable<BirdSummaryDto>>> Get()
         {
+            var userId = GetUserIdClaim();
+            
+            // Get all bird IDs this user has loved (if authenticated)
+            HashSet<Guid> lovedBirdIds = new HashSet<Guid>();
+            if (userId.HasValue)
+            {
+                var lovedIds = await _db.Loves
+                    .Where(l => l.UserId == userId.Value)
+                    .Select(l => l.BirdId)
+                    .ToListAsync();
+                lovedBirdIds = new HashSet<Guid>(lovedIds);
+            }
+
             // Project only necessary fields and counts to avoid loading all support transaction details
             var birds = await _db.Birds
                 .AsNoTracking()
@@ -54,9 +71,16 @@ namespace Wihngo.Controllers
                     Tagline = b.Tagline,
                     LovedBy = b.LovedCount,
                     SupportedBy = b.SupportTransactions.Count(),
-                    OwnerId = b.OwnerId
+                    OwnerId = b.OwnerId,
+                    IsLoved = false // Will be set after query
                 })
                 .ToListAsync();
+
+            // Set IsLoved status for each bird
+            foreach (var bird in birds)
+            {
+                bird.IsLoved = lovedBirdIds.Contains(bird.BirdId);
+            }
 
             return Ok(birds);
         }
@@ -79,6 +103,17 @@ namespace Wihngo.Controllers
             dto.LovedBy = bird.LovedCount;
             dto.SupportedBy = bird.SupportTransactions?.Count ?? 0;
             dto.ImageUrl = bird.ImageUrl;
+
+            // Check if current user has loved this bird
+            var userId = GetUserIdClaim();
+            if (userId.HasValue)
+            {
+                dto.IsLoved = await _db.Loves.AnyAsync(l => l.UserId == userId.Value && l.BirdId == id);
+            }
+            else
+            {
+                dto.IsLoved = false;
+            }
 
             // Map owner summary
             if (bird.Owner != null)
@@ -192,6 +227,53 @@ namespace Wihngo.Controllers
             // Atomic increment
             await _db.Database.ExecuteSqlInterpolatedAsync($"UPDATE birds SET loved_count = loved_count + 1 WHERE bird_id = {id}");
             await _db.SaveChangesAsync();
+
+            // Send notification to bird owner
+            if (bird.OwnerId != userId) // Don't notify if user loves their own bird
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var updatedBird = await _db.Birds.AsNoTracking().FirstOrDefaultAsync(b => b.BirdId == id);
+                        var loveCount = updatedBird?.LovedCount ?? 0;
+
+                        await _notificationService.CreateNotificationAsync(new CreateNotificationDto
+                        {
+                            UserId = bird.OwnerId,
+                            Type = NotificationType.BirdLoved,
+                            Title = "Heart " + user.Name + " loved " + bird.Name + "!",
+                            Message = $"{user.Name} loved your {bird.Species ?? "bird"}. You now have {loveCount} loves!",
+                            Priority = NotificationPriority.Medium,
+                            Channels = NotificationChannel.InApp | NotificationChannel.Push,
+                            DeepLink = $"/birds/{id}",
+                            BirdId = id,
+                            ActorUserId = userId
+                        });
+
+                        // Check for milestone
+                        if (loveCount > 0 && IsMilestone(loveCount))
+                        {
+                            await _notificationService.CreateNotificationAsync(new CreateNotificationDto
+                            {
+                                UserId = bird.OwnerId,
+                                Type = NotificationType.MilestoneAchieved,
+                                Title = "Celebration " + bird.Name + " reached " + loveCount + " loves!",
+                                Message = $"Congratulations! Your bird is loved by {loveCount} people.",
+                                Priority = NotificationPriority.High,
+                                Channels = NotificationChannel.InApp | NotificationChannel.Push,
+                                DeepLink = $"/birds/{id}",
+                                BirdId = id
+                            });
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore notification errors
+                    }
+                });
+            }
+
             return Ok();
         }
 
@@ -210,6 +292,27 @@ namespace Wihngo.Controllers
             _db.Loves.Remove(love);
             await _db.SaveChangesAsync();
             return NoContent();
+        }
+
+        [Authorize]
+        [HttpDelete("{id}/love")]
+        public async Task<IActionResult> UnloveDelete(Guid id)
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userIdClaim, out var userId)) return Unauthorized();
+
+            var love = await _db.Loves.FindAsync(userId, id);
+            if (love == null) return NotFound("Love record not found");
+
+            // Verify bird exists
+            var bird = await _db.Birds.FindAsync(id);
+            if (bird == null) return NotFound("Bird not found");
+
+            // Atomic decrement but not below zero
+            await _db.Database.ExecuteSqlInterpolatedAsync($"UPDATE birds SET loved_count = GREATEST(loved_count - 1, 0) WHERE bird_id = {id}");
+            _db.Loves.Remove(love);
+            await _db.SaveChangesAsync();
+            return Ok();
         }
 
         [HttpGet("{id}/lovers")]
@@ -406,7 +509,59 @@ namespace Wihngo.Controllers
             bird.SupportedCount = await _db.SupportTransactions.CountAsync(t => t.BirdId == id);
 
             await _db.SaveChangesAsync();
+
+            // Send notification to bird owner
+            if (bird.OwnerId != supporterId)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var supporter = await _db.Users.FindAsync(supporterId);
+                        var amountDisplay = (cents / 100m).ToString("F2");
+
+                        await _notificationService.CreateNotificationAsync(new CreateNotificationDto
+                        {
+                            UserId = bird.OwnerId,
+                            Type = NotificationType.BirdSupported,
+                            Title = "Corn " + (supporter?.Name ?? "Someone") + " supported " + bird.Name + "!",
+                            Message = $"{supporter?.Name ?? "Someone"} contributed ${amountDisplay} to support {bird.Name}. Total: ${bird.DonationCents / 100m:F2}",
+                            Priority = NotificationPriority.High,
+                            Channels = NotificationChannel.InApp | NotificationChannel.Push | NotificationChannel.Email,
+                            DeepLink = $"/birds/{id}",
+                            BirdId = id,
+                            TransactionId = tx.TransactionId,
+                            ActorUserId = supporterId
+                        });
+
+                        // Also notify supporter
+                        await _notificationService.CreateNotificationAsync(new CreateNotificationDto
+                        {
+                            UserId = supporterId,
+                            Type = NotificationType.PaymentReceived,
+                            Title = "Checkmark Payment confirmed",
+                            Message = $"Your ${amountDisplay} support for {bird.Name} was processed!",
+                            Priority = NotificationPriority.High,
+                            Channels = NotificationChannel.InApp | NotificationChannel.Push | NotificationChannel.Email,
+                            DeepLink = $"/support/{tx.TransactionId}",
+                            BirdId = id,
+                            TransactionId = tx.TransactionId
+                        });
+                    }
+                    catch
+                    {
+                        // Ignore notification errors
+                    }
+                });
+            }
+
             return Ok(new { totalDonated = bird.DonationCents });
+        }
+
+        private bool IsMilestone(int count)
+        {
+            int[] milestones = { 10, 50, 100, 500, 1000, 5000 };
+            return milestones.Contains(count);
         }
     }
 }

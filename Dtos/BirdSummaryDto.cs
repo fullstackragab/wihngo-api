@@ -12,5 +12,6 @@ namespace Wihngo.Dtos
         public int LovedBy { get; set; }
         public int SupportedBy { get; set; }
         public Guid OwnerId { get; set; }
+        public bool IsLoved { get; set; }
     }
 }

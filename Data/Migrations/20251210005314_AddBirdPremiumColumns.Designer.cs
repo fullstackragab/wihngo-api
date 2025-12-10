@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Wihngo.Data;
@@ -11,9 +12,11 @@ using Wihngo.Data;
 namespace Wihngo.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251210005314_AddBirdPremiumColumns")]
+    partial class AddBirdPremiumColumns
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -101,11 +104,9 @@ namespace Wihngo.Data.Migrations
                         .HasColumnType("character varying(500)")
                         .HasColumnName("tagline");
 
-                    b.HasKey("BirdId")
-                        .HasName("pk_birds");
+                    b.HasKey("BirdId");
 
-                    b.HasIndex("OwnerId")
-                        .HasDatabaseName("ix_birds_owner_id");
+                    b.HasIndex("OwnerId");
 
                     b.ToTable("birds", (string)null);
                 });
@@ -175,14 +176,11 @@ namespace Wihngo.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
-                    b.HasKey("Id")
-                        .HasName("pk_bird_premium_subscriptions");
+                    b.HasKey("Id");
 
-                    b.HasIndex("BirdId")
-                        .HasDatabaseName("ix_bird_premium_subscriptions_bird_id");
+                    b.HasIndex("BirdId");
 
-                    b.HasIndex("OwnerId")
-                        .HasDatabaseName("ix_bird_premium_subscriptions_owner_id");
+                    b.HasIndex("OwnerId");
 
                     b.ToTable("bird_premium_subscriptions", (string)null);
                 });
@@ -214,69 +212,67 @@ namespace Wihngo.Data.Migrations
                         .HasColumnType("decimal(20,2)")
                         .HasColumnName("usd_rate");
 
-                    b.HasKey("Id")
-                        .HasName("pk_crypto_exchange_rates");
+                    b.HasKey("Id");
 
                     b.HasIndex("Currency")
-                        .IsUnique()
-                        .HasDatabaseName("ix_crypto_exchange_rates_currency");
+                        .IsUnique();
 
-                    b.ToTable("crypto_exchange_rates", (string)null);
+                    b.ToTable("crypto_exchange_rates");
 
                     b.HasData(
                         new
                         {
-                            Id = new Guid("1092e093-1918-48c0-a120-16dc1eb05d70"),
+                            Id = new Guid("269e39df-8fc8-4b37-9b37-5ee3491ea04e"),
                             Currency = "BTC",
-                            LastUpdated = new DateTime(2025, 12, 10, 1, 1, 1, 277, DateTimeKind.Utc).AddTicks(3205),
+                            LastUpdated = new DateTime(2025, 12, 10, 0, 53, 14, 206, DateTimeKind.Utc).AddTicks(2547),
                             Source = "coingecko",
                             UsdRate = 50000m
                         },
                         new
                         {
-                            Id = new Guid("cd429602-84cc-4069-803c-f651c6d3ae17"),
+                            Id = new Guid("92860bc0-7342-4749-ac2d-0727f0264b4e"),
                             Currency = "ETH",
-                            LastUpdated = new DateTime(2025, 12, 10, 1, 1, 1, 277, DateTimeKind.Utc).AddTicks(3211),
+                            LastUpdated = new DateTime(2025, 12, 10, 0, 53, 14, 206, DateTimeKind.Utc).AddTicks(2553),
                             Source = "coingecko",
                             UsdRate = 3000m
                         },
                         new
                         {
-                            Id = new Guid("7c4c55e3-ca02-4e90-b554-a537a74fa76c"),
+                            Id = new Guid("7df322cb-48c3-445f-8380-5c52ee6a0ec4"),
                             Currency = "USDT",
-                            LastUpdated = new DateTime(2025, 12, 10, 1, 1, 1, 277, DateTimeKind.Utc).AddTicks(3214),
+                            LastUpdated = new DateTime(2025, 12, 10, 0, 53, 14, 206, DateTimeKind.Utc).AddTicks(2555),
                             Source = "coingecko",
                             UsdRate = 1m
                         },
                         new
                         {
-                            Id = new Guid("ed756e42-9858-4a72-bb56-989b38555def"),
+                            Id = new Guid("26106c54-99bb-4f9a-81f5-9845a95a05ec"),
                             Currency = "USDC",
-                            LastUpdated = new DateTime(2025, 12, 10, 1, 1, 1, 277, DateTimeKind.Utc).AddTicks(3229),
+                            LastUpdated = new DateTime(2025, 12, 10, 0, 53, 14, 206, DateTimeKind.Utc).AddTicks(2568),
                             Source = "coingecko",
                             UsdRate = 1m
                         },
                         new
                         {
-                            Id = new Guid("e1f45915-f340-4d5d-b252-da1436e06cf9"),
+                            Id = new Guid("b3ab45ce-c2ee-4a74-8feb-70ee37d86071"),
                             Currency = "BNB",
-                            LastUpdated = new DateTime(2025, 12, 10, 1, 1, 1, 277, DateTimeKind.Utc).AddTicks(3232),
+                            LastUpdated = new DateTime(2025, 12, 10, 0, 53, 14, 206, DateTimeKind.Utc).AddTicks(2570),
                             Source = "coingecko",
                             UsdRate = 500m
                         },
                         new
                         {
-                            Id = new Guid("ff5a7387-2396-48aa-a474-aa89c3a2f8a8"),
+                            Id = new Guid("3b8b5ffc-8dde-4a0f-b2d9-f9f356c528ee"),
                             Currency = "SOL",
-                            LastUpdated = new DateTime(2025, 12, 10, 1, 1, 1, 277, DateTimeKind.Utc).AddTicks(3236),
+                            LastUpdated = new DateTime(2025, 12, 10, 0, 53, 14, 206, DateTimeKind.Utc).AddTicks(2573),
                             Source = "coingecko",
                             UsdRate = 100m
                         },
                         new
                         {
-                            Id = new Guid("a954c8c9-15ea-4545-a7b3-dd1481272df7"),
+                            Id = new Guid("2ab74aaa-79b0-48ac-b463-1c31631f8ff9"),
                             Currency = "DOGE",
-                            LastUpdated = new DateTime(2025, 12, 10, 1, 1, 1, 277, DateTimeKind.Utc).AddTicks(3243),
+                            LastUpdated = new DateTime(2025, 12, 10, 0, 53, 14, 206, DateTimeKind.Utc).AddTicks(2575),
                             Source = "coingecko",
                             UsdRate = 0.1m
                         });
@@ -332,14 +328,12 @@ namespace Wihngo.Data.Migrations
                         .HasColumnType("character varying(255)")
                         .HasColumnName("wallet_address");
 
-                    b.HasKey("Id")
-                        .HasName("pk_crypto_payment_methods");
+                    b.HasKey("Id");
 
                     b.HasIndex("UserId", "WalletAddress", "Currency", "Network")
-                        .IsUnique()
-                        .HasDatabaseName("ix_crypto_payment_methods_user_id_wallet_address_currency_netw");
+                        .IsUnique();
 
-                    b.ToTable("crypto_payment_methods", (string)null);
+                    b.ToTable("crypto_payment_methods");
                 });
 
             modelBuilder.Entity("Wihngo.Models.Entities.CryptoPaymentRequest", b =>
@@ -456,19 +450,15 @@ namespace Wihngo.Data.Migrations
                         .HasColumnType("character varying(255)")
                         .HasColumnName("wallet_address");
 
-                    b.HasKey("Id")
-                        .HasName("pk_crypto_payment_requests");
+                    b.HasKey("Id");
 
-                    b.HasIndex("ExpiresAt")
-                        .HasDatabaseName("ix_crypto_payment_requests_expires_at");
+                    b.HasIndex("ExpiresAt");
 
-                    b.HasIndex("Status")
-                        .HasDatabaseName("ix_crypto_payment_requests_status");
+                    b.HasIndex("Status");
 
-                    b.HasIndex("TransactionHash")
-                        .HasDatabaseName("ix_crypto_payment_requests_transaction_hash");
+                    b.HasIndex("TransactionHash");
 
-                    b.ToTable("crypto_payment_requests", (string)null);
+                    b.ToTable("crypto_payment_requests");
                 });
 
             modelBuilder.Entity("Wihngo.Models.Entities.CryptoTransaction", b =>
@@ -555,17 +545,14 @@ namespace Wihngo.Data.Migrations
                         .HasColumnType("character varying(255)")
                         .HasColumnName("transaction_hash");
 
-                    b.HasKey("Id")
-                        .HasName("pk_crypto_transactions");
+                    b.HasKey("Id");
 
-                    b.HasIndex("PaymentRequestId")
-                        .HasDatabaseName("ix_crypto_transactions_payment_request_id");
+                    b.HasIndex("PaymentRequestId");
 
                     b.HasIndex("TransactionHash")
-                        .IsUnique()
-                        .HasDatabaseName("ix_crypto_transactions_transaction_hash");
+                        .IsUnique();
 
-                    b.ToTable("crypto_transactions", (string)null);
+                    b.ToTable("crypto_transactions");
                 });
 
             modelBuilder.Entity("Wihngo.Models.Entities.PlatformWallet", b =>
@@ -614,25 +601,23 @@ namespace Wihngo.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
-                    b.HasKey("Id")
-                        .HasName("pk_platform_wallets");
+                    b.HasKey("Id");
 
                     b.HasIndex("Currency", "Network", "Address")
-                        .IsUnique()
-                        .HasDatabaseName("ix_platform_wallets_currency_network_address");
+                        .IsUnique();
 
-                    b.ToTable("platform_wallets", (string)null);
+                    b.ToTable("platform_wallets");
 
                     b.HasData(
                         new
                         {
-                            Id = new Guid("cfb13d53-384d-4edf-b8e2-29c7c3c537e8"),
+                            Id = new Guid("549b7eb3-329e-4c25-8a0f-1774b3bad08b"),
                             Address = "TGRzhw2kwBW5PzncWfKCnqsvkrBezfsgiA",
-                            CreatedAt = new DateTime(2025, 12, 10, 1, 1, 1, 277, DateTimeKind.Utc).AddTicks(2873),
+                            CreatedAt = new DateTime(2025, 12, 10, 0, 53, 14, 206, DateTimeKind.Utc).AddTicks(2328),
                             Currency = "USDT",
                             IsActive = true,
                             Network = "tron",
-                            UpdatedAt = new DateTime(2025, 12, 10, 1, 1, 1, 277, DateTimeKind.Utc).AddTicks(2873)
+                            UpdatedAt = new DateTime(2025, 12, 10, 0, 53, 14, 206, DateTimeKind.Utc).AddTicks(2329)
                         });
                 });
 
@@ -650,11 +635,9 @@ namespace Wihngo.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
-                    b.HasKey("UserId", "BirdId")
-                        .HasName("pk_loves");
+                    b.HasKey("UserId", "BirdId");
 
-                    b.HasIndex("BirdId")
-                        .HasDatabaseName("ix_loves_bird_id");
+                    b.HasIndex("BirdId");
 
                     b.ToTable("loves", (string)null);
                 });
@@ -697,14 +680,11 @@ namespace Wihngo.Data.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_highlighted");
 
-                    b.HasKey("StoryId")
-                        .HasName("pk_stories");
+                    b.HasKey("StoryId");
 
-                    b.HasIndex("AuthorId")
-                        .HasDatabaseName("ix_stories_author_id");
+                    b.HasIndex("AuthorId");
 
-                    b.HasIndex("BirdId")
-                        .HasDatabaseName("ix_stories_bird_id");
+                    b.HasIndex("BirdId");
 
                     b.ToTable("stories", (string)null);
                 });
@@ -737,14 +717,11 @@ namespace Wihngo.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("supporter_id");
 
-                    b.HasKey("TransactionId")
-                        .HasName("pk_support_transactions");
+                    b.HasKey("TransactionId");
 
-                    b.HasIndex("BirdId")
-                        .HasDatabaseName("ix_support_transactions_bird_id");
+                    b.HasIndex("BirdId");
 
-                    b.HasIndex("SupporterId")
-                        .HasDatabaseName("ix_support_transactions_supporter_id");
+                    b.HasIndex("SupporterId");
 
                     b.ToTable("support_transactions", (string)null);
                 });
@@ -777,14 +754,11 @@ namespace Wihngo.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("reported_by");
 
-                    b.HasKey("UsageId")
-                        .HasName("pk_support_usage");
+                    b.HasKey("UsageId");
 
-                    b.HasIndex("BirdId")
-                        .HasDatabaseName("ix_support_usage_bird_id");
+                    b.HasIndex("BirdId");
 
-                    b.HasIndex("ReportedBy")
-                        .HasDatabaseName("ix_support_usage_reported_by");
+                    b.HasIndex("ReportedBy");
 
                     b.ToTable("support_usage", (string)null);
                 });
@@ -827,8 +801,7 @@ namespace Wihngo.Data.Migrations
                         .HasColumnType("character varying(1000)")
                         .HasColumnName("profile_image");
 
-                    b.HasKey("UserId")
-                        .HasName("pk_users");
+                    b.HasKey("UserId");
 
                     b.ToTable("users", (string)null);
                 });
@@ -839,8 +812,7 @@ namespace Wihngo.Data.Migrations
                         .WithMany("Birds")
                         .HasForeignKey("OwnerId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_birds_users_owner_id");
+                        .IsRequired();
 
                     b.Navigation("Owner");
                 });
@@ -851,15 +823,13 @@ namespace Wihngo.Data.Migrations
                         .WithMany()
                         .HasForeignKey("BirdId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_bird_premium_subscriptions_birds_bird_id");
+                        .IsRequired();
 
                     b.HasOne("Wihngo.Models.User", "Owner")
                         .WithMany()
                         .HasForeignKey("OwnerId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_bird_premium_subscriptions_users_owner_id");
+                        .IsRequired();
 
                     b.Navigation("Bird");
 
@@ -872,8 +842,7 @@ namespace Wihngo.Data.Migrations
                         .WithMany()
                         .HasForeignKey("PaymentRequestId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_crypto_transactions_crypto_payment_requests_payment_request");
+                        .IsRequired();
 
                     b.Navigation("PaymentRequest");
                 });
@@ -884,15 +853,13 @@ namespace Wihngo.Data.Migrations
                         .WithMany("Loves")
                         .HasForeignKey("BirdId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_loves_birds_bird_id");
+                        .IsRequired();
 
                     b.HasOne("Wihngo.Models.User", "User")
                         .WithMany("Loves")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_loves_users_user_id");
+                        .IsRequired();
 
                     b.Navigation("Bird");
 
@@ -905,15 +872,13 @@ namespace Wihngo.Data.Migrations
                         .WithMany("Stories")
                         .HasForeignKey("AuthorId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_stories_users_author_id");
+                        .IsRequired();
 
                     b.HasOne("Wihngo.Models.Bird", "Bird")
                         .WithMany("Stories")
                         .HasForeignKey("BirdId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_stories_birds_bird_id");
+                        .IsRequired();
 
                     b.Navigation("Author");
 
@@ -926,15 +891,13 @@ namespace Wihngo.Data.Migrations
                         .WithMany("SupportTransactions")
                         .HasForeignKey("BirdId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_support_transactions_birds_bird_id");
+                        .IsRequired();
 
                     b.HasOne("Wihngo.Models.User", "Supporter")
                         .WithMany("SupportTransactions")
                         .HasForeignKey("SupporterId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_support_transactions_users_supporter_id");
+                        .IsRequired();
 
                     b.Navigation("Bird");
 
@@ -947,15 +910,13 @@ namespace Wihngo.Data.Migrations
                         .WithMany("SupportUsages")
                         .HasForeignKey("BirdId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_support_usage_birds_bird_id");
+                        .IsRequired();
 
                     b.HasOne("Wihngo.Models.User", "Reporter")
                         .WithMany("ReportedSupportUsage")
                         .HasForeignKey("ReportedBy")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_support_usage_users_reported_by");
+                        .IsRequired();
 
                     b.Navigation("Bird");
 

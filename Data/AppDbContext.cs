@@ -26,6 +26,12 @@ namespace Wihngo.Data
         public DbSet<CryptoExchangeRate> CryptoExchangeRates { get; set; } = null!;
         public DbSet<CryptoPaymentMethod> CryptoPaymentMethods { get; set; } = null!;
 
+        // Notification Entities
+        public DbSet<Notification> Notifications { get; set; } = null!;
+        public DbSet<NotificationPreference> NotificationPreferences { get; set; } = null!;
+        public DbSet<NotificationSettings> NotificationSettings { get; set; } = null!;
+        public DbSet<UserDevice> UserDevices { get; set; } = null!;
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -39,6 +45,12 @@ namespace Wihngo.Data
             modelBuilder.Entity<SupportTransaction>().ToTable("support_transactions");
             modelBuilder.Entity<Love>().ToTable("loves");
             modelBuilder.Entity<SupportUsage>().ToTable("support_usage");
+
+            // Notification table mappings
+            modelBuilder.Entity<Notification>().ToTable("notifications");
+            modelBuilder.Entity<NotificationPreference>().ToTable("notification_preferences");
+            modelBuilder.Entity<NotificationSettings>().ToTable("notification_settings");
+            modelBuilder.Entity<UserDevice>().ToTable("user_devices");
 
             // Configure composite primary key for Love join table
             modelBuilder.Entity<Love>().HasKey(l => new { l.UserId, l.BirdId });
@@ -118,6 +130,34 @@ namespace Wihngo.Data
 
             modelBuilder.Entity<CryptoPaymentRequest>()
                 .HasIndex(p => p.ExpiresAt);
+
+            // Notification indexes
+            modelBuilder.Entity<Notification>()
+                .HasIndex(n => n.UserId);
+
+            modelBuilder.Entity<Notification>()
+                .HasIndex(n => new { n.UserId, n.IsRead });
+
+            modelBuilder.Entity<Notification>()
+                .HasIndex(n => n.GroupId);
+
+            modelBuilder.Entity<Notification>()
+                .HasIndex(n => n.CreatedAt);
+
+            modelBuilder.Entity<NotificationPreference>()
+                .HasIndex(np => new { np.UserId, np.NotificationType })
+                .IsUnique();
+
+            modelBuilder.Entity<NotificationSettings>()
+                .HasIndex(ns => ns.UserId)
+                .IsUnique();
+
+            modelBuilder.Entity<UserDevice>()
+                .HasIndex(d => d.UserId);
+
+            modelBuilder.Entity<UserDevice>()
+                .HasIndex(d => d.PushToken)
+                .IsUnique();
 
             // Seed initial data
             modelBuilder.Entity<PlatformWallet>().HasData(

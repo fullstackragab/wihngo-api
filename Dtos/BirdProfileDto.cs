@@ -17,6 +17,7 @@ namespace Wihngo.Dtos
         public int LovedBy { get; set; }
         public int SupportedBy { get; set; }
         public UserSummaryDto? Owner { get; set; }
+        public bool IsLoved { get; set; }
     }
 
     public class ConservationDto

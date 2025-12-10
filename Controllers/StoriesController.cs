@@ -8,6 +8,8 @@ namespace Wihngo.Controllers
     using Wihngo.Data;
     using Wihngo.Dtos;
     using Wihngo.Models;
+    using Wihngo.Models.Enums;
+    using Wihngo.Services.Interfaces;
 
     [Route("api/[controller]")]
     [ApiController]
@@ -15,11 +17,13 @@ namespace Wihngo.Controllers
     {
         private readonly AppDbContext _db;
         private readonly IMapper _mapper;
+        private readonly INotificationService _notificationService;
 
-        public StoriesController(AppDbContext db, IMapper mapper)
+        public StoriesController(AppDbContext db, IMapper mapper, INotificationService notificationService)
         {
             _db = db;
             _mapper = mapper;
+            _notificationService = notificationService;
         }
 
         private Guid? GetUserIdClaim()
@@ -79,6 +83,43 @@ namespace Wihngo.Controllers
             await _db.SaveChangesAsync();
 
             var created = await _db.Stories.Include(s => s.Bird).Include(s => s.Author).FirstOrDefaultAsync(s => s.StoryId == story.StoryId);
+
+            // Notify users who loved this bird about new story
+            if (created?.Bird != null)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var lovers = await _db.Loves
+                            .Where(l => l.BirdId == story.BirdId && l.UserId != story.AuthorId)
+                            .Select(l => l.UserId)
+                            .ToListAsync();
+
+                        foreach (var loverId in lovers)
+                        {
+                            await _notificationService.CreateNotificationAsync(new CreateNotificationDto
+                            {
+                                UserId = loverId,
+                                Type = NotificationType.NewStory,
+                                Title = "Book New story: " + created.Bird.Name,
+                                Message = $"{created.Bird.Name} has a new story to share!",
+                                Priority = NotificationPriority.Low,
+                                Channels = NotificationChannel.InApp | NotificationChannel.Push,
+                                DeepLink = $"/story/{story.StoryId}",
+                                BirdId = story.BirdId,
+                                StoryId = story.StoryId,
+                                ActorUserId = story.AuthorId
+                            });
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore notification errors
+                    }
+                });
+            }
+
             return CreatedAtAction(nameof(Get), new { id = story.StoryId }, _mapper.Map<StoryReadDto>(created));
         }
 

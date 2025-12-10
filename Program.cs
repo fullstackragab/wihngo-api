@@ -30,7 +30,8 @@ builder.Services.AddAutoMapper(cfg => cfg.AddProfile<AutoMapperProfile>());
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
                        ?? "Host=localhost;Port=5432;Database=wihngo;Username=postgres;Password=postgres";
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString));
+    options.UseNpgsql(connectionString)
+           .UseSnakeCaseNamingConvention());
 
 // HttpClient
 builder.Services.AddHttpClient();
@@ -40,6 +41,14 @@ builder.Services.AddScoped<ICryptoPaymentService, CryptoPaymentService>();
 builder.Services.AddScoped<IBlockchainService, BlockchainVerificationService>();
 builder.Services.AddScoped<ExchangeRateUpdateJob>();
 builder.Services.AddScoped<PaymentMonitorJob>();
+
+// Notification Services
+builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddScoped<IPushNotificationService, PushNotificationService>();
+builder.Services.AddScoped<IEmailNotificationService, EmailNotificationService>();
+builder.Services.AddScoped<NotificationCleanupJob>();
+builder.Services.AddScoped<DailyDigestJob>();
+builder.Services.AddScoped<PremiumExpiryNotificationJob>();
 
 // Hangfire
 builder.Services.AddHangfire(config => config
@@ -138,6 +147,25 @@ RecurringJob.AddOrUpdate<PaymentMonitorJob>(
     "expire-payments",
     job => job.ExpireOldPaymentsAsync(),
     "0 * * * *" // Every hour
+);
+
+// Notification background jobs
+RecurringJob.AddOrUpdate<NotificationCleanupJob>(
+    "cleanup-notifications",
+    job => job.CleanupOldNotificationsAsync(),
+    "0 2 * * *" // Daily at 2 AM UTC
+);
+
+RecurringJob.AddOrUpdate<DailyDigestJob>(
+    "send-daily-digests",
+    job => job.SendDailyDigestsAsync(),
+    "0 * * * *" // Every hour (checks user preferences)
+);
+
+RecurringJob.AddOrUpdate<PremiumExpiryNotificationJob>(
+    "check-premium-expiry",
+    job => job.CheckExpiringPremiumAsync(),
+    "0 10 * * *" // Daily at 10 AM UTC
 );
 
 app.Run();
