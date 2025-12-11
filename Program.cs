@@ -13,6 +13,38 @@ using Wihngo.BackgroundJobs;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ========================================
+// ?? CRYPTO-ONLY LOGGING CONFIGURATION
+// ========================================
+// Clear default providers and configure crypto-payment-only logging
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+
+// Suppress all general framework logs
+builder.Logging.AddFilter("Microsoft", LogLevel.None);
+builder.Logging.AddFilter("System", LogLevel.None);
+// TEMPORARY: Enable Hangfire logs to diagnose dashboard issue
+builder.Logging.AddFilter("Hangfire", LogLevel.Warning);  // Changed from None to see errors
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);  // Enable to see HTTP errors
+builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.None);
+builder.Logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Information);  // Show startup info
+
+// ? Enable ONLY crypto payment logs
+builder.Logging.AddFilter("Wihngo.Services.CryptoPaymentService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.BlockchainVerificationService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Controllers.CryptoPaymentsController", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.BackgroundJobs.ExchangeRateUpdateJob", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.BackgroundJobs.PaymentMonitorJob", LogLevel.Information);
+
+// Configure console logging format
+builder.Logging.AddSimpleConsole(options =>
+{
+    options.SingleLine = true;
+    options.TimestampFormat = "[HH:mm:ss] ";
+    options.ColorBehavior = Microsoft.Extensions.Logging.Console.LoggerColorBehavior.Enabled;
+});
+// ========================================
+
 // Add services to the container.
 
 builder.Services.AddControllers().AddJsonOptions(opts =>
@@ -140,6 +172,41 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// ========================================
+// ?? DIAGNOSTIC: Test Hangfire Initialization
+// ========================================
+Console.WriteLine("???????????????????????????????????????");
+Console.WriteLine("?? HANGFIRE DIAGNOSTIC");
+Console.WriteLine("???????????????????????????????????????");
+try
+{
+    using var scope = app.Services.CreateScope();
+    var storage = scope.ServiceProvider.GetService<JobStorage>();
+    
+    if (storage != null)
+    {
+        Console.WriteLine("? Hangfire storage initialized successfully");
+        Console.WriteLine($"   Type: {storage.GetType().Name}");
+        
+        // Test connection
+        var connection = storage.GetConnection();
+        Console.WriteLine("? Hangfire database connection successful");
+    }
+    else
+    {
+        Console.WriteLine("? Hangfire storage is NULL - check configuration!");
+    }
+}
+catch (Exception ex)
+{
+    Console.WriteLine("? HANGFIRE INITIALIZATION FAILED!");
+    Console.WriteLine($"   Error: {ex.Message}");
+    Console.WriteLine($"   Make sure PostgreSQL is running");
+    Console.WriteLine($"   Database: wihngo");
+}
+Console.WriteLine("???????????????????????????????????????");
+Console.WriteLine("");
+
 // Ensure database is created (best-effort)
 using (var scope = app.Services.CreateScope())
 {
@@ -167,11 +234,33 @@ app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Hangfire Dashboard
+// ========================================
+// ?? HANGFIRE DASHBOARD CONFIGURATION
+// ========================================
+Console.WriteLine("?? Registering Hangfire Dashboard at /hangfire");
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {
     Authorization = new[] { new HangfireAuthorizationFilter() }
 });
+Console.WriteLine("? Hangfire Dashboard registered");
+Console.WriteLine("");
+
+// ========================================
+// ?? TEST ENDPOINTS
+// ========================================
+app.MapGet("/test", () => new
+{
+    status = "OK",
+    timestamp = DateTime.UtcNow,
+    message = "Backend is running",
+    endpoints = new
+    {
+        hangfireDashboard = "/hangfire",
+        cryptoRates = "/api/payments/crypto/rates"
+    }
+}).WithName("HealthCheck").WithTags("Diagnostic");
+
+app.MapGet("/hangfire-test", () => "Hangfire routing is working!").WithTags("Diagnostic");
 
 app.MapControllers();
 
@@ -239,6 +328,32 @@ for (int attempt = 0; attempt < 3; attempt++)
         Thread.Sleep(2000);
     }
 }
+
+// ========================================
+// ?? STARTUP INFORMATION
+// ========================================
+Console.WriteLine("");
+Console.WriteLine("???????????????????????????????????????");
+Console.WriteLine("?? APPLICATION STARTED");
+Console.WriteLine("???????????????????????????????????????");
+Console.WriteLine($"? Time: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+Console.WriteLine("");
+Console.WriteLine("?? Available Endpoints:");
+Console.WriteLine("   ?? Hangfire Dashboard:");
+Console.WriteLine("      http://localhost:5000/hangfire");
+Console.WriteLine("      https://localhost:7001/hangfire");
+Console.WriteLine("");
+Console.WriteLine("   ?? Test Endpoints:");
+Console.WriteLine("      http://localhost:5000/test");
+Console.WriteLine("      http://localhost:5000/hangfire-test");
+Console.WriteLine("");
+Console.WriteLine("   ?? Crypto Payment API:");
+Console.WriteLine("      http://localhost:5000/api/payments/crypto/rates");
+Console.WriteLine("");
+Console.WriteLine("?? NOTE: Use the port shown in 'Now listening on:'");
+Console.WriteLine("         message above this section!");
+Console.WriteLine("???????????????????????????????????????");
+Console.WriteLine("");
 
 app.Run();
 

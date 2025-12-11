@@ -39,10 +39,13 @@ The crypto payment system supports multiple cryptocurrencies and networks. Users
 | **USDT** | Tron | TRC-20 | 6 | `tron` |
 | **USDT** | Ethereum | ERC-20 | 6 | `ethereum` |
 | **USDT** | BSC | BEP-20 | **18** | `binance-smart-chain` |
+| **ETH** | Sepolia (Testnet) | Native | 18 | `sepolia` |
 | USDC | Ethereum | ERC-20 | 6 | `ethereum` |
 | USDC | BSC | BEP-20 | 18 | `binance-smart-chain` |
 
-**?? IMPORTANT:** BEP-20 USDT on Binance Smart Chain uses **18 decimals**, not 6!
+**?? IMPORTANT:** 
+- BEP-20 USDT on Binance Smart Chain uses **18 decimals**, not 6!
+- Sepolia is a **testnet** for development and testing only. Use mainnet networks for production.
 
 ---
 
@@ -417,16 +420,20 @@ const CryptoPaymentScreen = ({ route, navigation }) => {
   const networks = [
     { id: 'tron', name: 'Tron (TRC-20)', fee: 'Low' },
     { id: 'ethereum', name: 'Ethereum (ERC-20)', fee: 'High' },
-    { id: 'binance-smart-chain', name: 'BSC (BEP-20)', fee: 'Medium' }
+    { id: 'binance-smart-chain', name: 'BSC (BEP-20)', fee: 'Medium' },
+    { id: 'sepolia', name: 'Sepolia Testnet (ETH)', fee: 'Low (Test)' }
   ];
 
   // Initialize payment
   useEffect(() => {
     const initPayment = async () => {
       try {
+        // Determine currency based on network
+        const currency = selectedNetwork === 'sepolia' ? 'ETH' : 'USDT';
+        
         await createPayment({
           amountUsd,
-          currency: 'USDT',
+          currency,
           network: selectedNetwork,
           birdId,
           purpose: 'premium_subscription',
@@ -563,7 +570,7 @@ const CryptoPaymentScreen = ({ route, navigation }) => {
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Amount to Pay:</Text>
               <Text style={styles.detailValue}>
-                {payment.amountCrypto.toFixed(6)} USDT
+                {payment.amountCrypto.toFixed(6)} {payment.currency}
               </Text>
             </View>
             <View style={styles.detailRow}>
@@ -660,7 +667,7 @@ const CryptoPaymentScreen = ({ route, navigation }) => {
             <Text style={styles.instructionsText}>
               1. Open your crypto wallet (Trust Wallet, MetaMask, etc.)
               {'\n'}2. Scan QR code or copy address
-              {'\n'}3. Send exactly {payment.amountCrypto.toFixed(6)} USDT
+              {'\n'}3. Send exactly {payment.amountCrypto.toFixed(6)} {payment.currency}
               {'\n'}4. Copy transaction hash from wallet
               {'\n'}5. Paste hash above and submit
               {'\n'}6. Wait for confirmations ({payment.requiredConfirmations} required)
@@ -973,10 +980,12 @@ For frontend integration help:
 ## ?? Notes
 
 - **BEP-20 USDT uses 18 decimals** (different from TRC-20 and ERC-20!)
+- **Sepolia is a testnet** - Only use for development and testing. Requires testnet ETH (no real value).
 - Payment expiration is 30 minutes
 - Confirmations required:
   - Tron: 19 blocks (~57 seconds)
   - Ethereum: 12 blocks (~2.4 minutes)
+  - Sepolia: 6 blocks (~1.2 minutes) - **Testnet only**
   - BSC: 15 blocks (~45 seconds)
 - Always show exact crypto amounts (don't round)
 - Polling interval: 5 seconds recommended
@@ -984,6 +993,108 @@ For frontend integration help:
 
 ---
 
-**Last Updated:** January 2024  
-**API Version:** 1.0  
-**Backend Framework:** .NET 10 / ASP.NET Core
+## ?? Testing with Sepolia Testnet
+
+### Setup for Development
+
+1. **Get Sepolia Test ETH**
+   - Visit [Sepolia Faucet](https://sepoliafaucet.com/)
+   - Alternative faucets:
+     - [Alchemy Sepolia Faucet](https://sepoliafaucet.com/)
+     - [Infura Sepolia Faucet](https://www.infura.io/faucet/sepolia)
+   - Request test ETH (may require social media account verification)
+   - Test ETH has **no real monetary value** - safe for testing!
+
+2. **Configure MetaMask for Sepolia**
+   - Open MetaMask browser extension or mobile app
+   - Click network dropdown at the top
+   - Select "Show test networks" in settings if not visible
+   - Choose "Sepolia" from the network list
+   - Or manually add Sepolia network:
+     - Network Name: Sepolia
+     - RPC URL: https://sepolia.infura.io/v3/YOUR_INFURA_KEY
+     - Chain ID: 11155111
+     - Currency Symbol: ETH
+     - Block Explorer: https://sepolia.etherscan.io
+
+3. **Platform Receive Address (Testnet)**
+   ```
+   0x4cc28f4cea7b440858b903b5c46685cb1478cdc4
+   ```
+   This is the address where your test payments will be sent.
+
+4. **Test Payment Flow Example**
+   ```javascript
+   // Create test payment for Sepolia
+   const payment = await api.createPayment({
+     amountUsd: 10.00,
+     currency: 'ETH',        // Native Sepolia ETH
+     network: 'sepolia',     // Testnet network
+     birdId: 'your-bird-id',
+     purpose: 'premium_subscription',
+     plan: 'monthly'
+   });
+
+   // The response will include:
+   // - walletAddress: "0x4cc28f4cea7b440858b903b5c46685cb1478cdc4"
+   // - amountCrypto: Calculated ETH amount based on exchange rate
+   // - requiredConfirmations: 6 (faster than mainnet)
+
+   // Send test ETH from your MetaMask to the walletAddress
+   // Then verify the transaction
+   await api.verifyPayment(
+     payment.id, 
+     'your-transaction-hash-from-metamask',
+     'your-wallet-address'
+   );
+
+   // Poll for status updates
+   setInterval(async () => {
+     const status = await api.checkPaymentStatus(payment.id);
+     console.log(`Status: ${status.status}, Confirmations: ${status.confirmations}/6`);
+   }, 5000);
+   ```
+
+5. **Important Testing Notes**
+   - ? Sepolia ETH has **no real value** - safe for testing
+   - ? Block times are ~12 seconds (similar to mainnet)
+   - ? Requires only **6 confirmations** (~1.2 minutes vs 2.4 minutes on mainnet)
+   - ? Use Sepolia for integration testing before mainnet deployment
+   - ?? **Never use real money on testnet**
+   - ?? **Always switch to mainnet networks for production**
+
+6. **Verify Your Test Transaction**
+   - Visit [Sepolia Etherscan](https://sepolia.etherscan.io)
+   - Paste your transaction hash to view details
+   - Check confirmations, amount, and recipient address
+
+### Switching to Production
+
+When ready for production:
+
+1. **Update network in your payment creation:**
+   ```javascript
+   // Change from:
+   network: 'sepolia'  // Testnet
+   
+   // To:
+   network: 'ethereum'  // Mainnet (for real ETH)
+   // or
+   network: 'binance-smart-chain'  // BSC mainnet
+   // or
+   network: 'tron'  // Tron mainnet
+   ```
+
+2. **Update currency if using stablecoins:**
+   ```javascript
+   // For production stablecoins:
+   currency: 'USDT'  // or 'USDC'
+   ```
+
+3. **Test thoroughly on testnet first!**
+   - Verify all payment flows
+   - Test error handling
+   - Confirm notifications work
+   - Check premium activation
+
+---

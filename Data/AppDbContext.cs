@@ -208,6 +208,16 @@ namespace Wihngo.Data
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
+                },
+                new PlatformWallet
+                {
+                    Id = Guid.NewGuid(),
+                    Currency = "ETH",
+                    Network = "sepolia",
+                    Address = "0x4cc28f4cea7b440858b903b5c46685cb1478cdc4",
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
                 }
             );
 

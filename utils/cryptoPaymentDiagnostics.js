@@ -1,0 +1,252 @@
+// ?? Crypto Payment UI Update Diagnostics
+// Add this to your component to diagnose why UI isn't updating
+
+import React, { useEffect } from 'react';
+
+// Add this hook to your CryptoPaymentScreen component
+export const useCryptoPaymentDiagnostics = (payment, isPolling, pollIntervalRef) => {
+  
+  // 1. Monitor payment state changes
+  useEffect(() => {
+    console.log('???????????????????????????????????????');
+    console.log('?? PAYMENT STATE CHANGE DETECTED');
+    console.log('???????????????????????????????????????');
+    console.log('Payment ID:', payment?.id);
+    console.log('Status:', payment?.status);
+    console.log('Confirmations:', `${payment?.confirmations || 0}/${payment?.requiredConfirmations || 0}`);
+    console.log('Transaction Hash:', payment?.transactionHash);
+    console.log('Created At:', payment?.createdAt);
+    console.log('Updated At:', payment?.updatedAt);
+    console.log('Completed At:', payment?.completedAt);
+    console.log('???????????????????????????????????????\n');
+  }, [payment]);
+
+  // 2. Monitor polling state
+  useEffect(() => {
+    console.log('?? POLLING STATE:', isPolling ? '? ACTIVE' : '? INACTIVE');
+    console.log('Poll Interval Ref:', pollIntervalRef?.current ? '? EXISTS' : '? NULL');
+    console.log('???????????????????????????????????????\n');
+  }, [isPolling]);
+
+  // 3. Monitor component lifecycle
+  useEffect(() => {
+    console.log('? COMPONENT MOUNTED - CryptoPaymentScreen');
+    
+    return () => {
+      console.log('? COMPONENT UNMOUNTED - CryptoPaymentScreen');
+      console.log('?? WARNING: Polling will stop if component unmounts!');
+    };
+  }, []);
+
+  // 4. Check for payment completion
+  useEffect(() => {
+    if (payment?.status === 'completed') {
+      console.log('?????? PAYMENT COMPLETED DETECTED ??????');
+      console.log('Premium should be activated!');
+      console.log('Check if Alert is showing...');
+    }
+  }, [payment?.status]);
+};
+
+// Usage in your CryptoPaymentScreen:
+/*
+const CryptoPaymentScreen = ({ route, navigation }) => {
+  const { payment, loading, createPayment, verifyPayment, checkStatus } = useCryptoPayment();
+  const [isPolling, setIsPolling] = useState(false);
+  const pollIntervalRef = useRef(null);
+
+  // ?? ADD THIS LINE FOR DIAGNOSTICS
+  useCryptoPaymentDiagnostics(payment, isPolling, pollIntervalRef);
+
+  // ...rest of your code...
+};
+*/
+
+// ???????????????????????????????????????????????????????????????
+// DIAGNOSTIC TEST FUNCTIONS
+// ???????????????????????????????????????????????????????????????
+
+export const testPollingStatus = (payment, isPolling, pollIntervalRef) => {
+  console.log('\n?? RUNNING POLLING DIAGNOSTICS...\n');
+  
+  const checks = {
+    hasPayment: !!payment,
+    hasPaymentId: !!payment?.id,
+    isPolling: isPolling,
+    hasInterval: !!pollIntervalRef?.current,
+    paymentStatus: payment?.status,
+  };
+
+  console.log('? Diagnostic Results:');
+  console.table(checks);
+
+  // Identify issues
+  const issues = [];
+  if (!checks.hasPayment) issues.push('? No payment object');
+  if (!checks.hasPaymentId) issues.push('? No payment ID');
+  if (!checks.isPolling) issues.push('?? Polling is not active');
+  if (!checks.hasInterval) issues.push('? No polling interval set');
+  if (checks.paymentStatus === 'completed') issues.push('? Payment already completed!');
+
+  if (issues.length > 0) {
+    console.log('\n?? ISSUES FOUND:');
+    issues.forEach(issue => console.log(issue));
+  } else {
+    console.log('\n? All checks passed! Polling should be working.');
+  }
+
+  return checks;
+};
+
+// ???????????????????????????????????????????????????????????????
+// MANUAL STATUS CHECK FUNCTION
+// ???????????????????????????????????????????????????????????????
+
+export const manualStatusCheck = async (paymentId, api, onSuccess, onError) => {
+  console.log('\n?? MANUAL STATUS CHECK INITIATED');
+  console.log('Payment ID:', paymentId);
+  
+  try {
+    console.log('?? Calling API...');
+    const startTime = Date.now();
+    
+    const status = await api.checkPaymentStatus(paymentId);
+    
+    const endTime = Date.now();
+    console.log(`? API Response received (${endTime - startTime}ms)`);
+    console.log('\n?? RESPONSE:');
+    console.log(JSON.stringify(status, null, 2));
+    
+    if (status.status === 'completed') {
+      console.log('\n?? STATUS IS COMPLETED!');
+      console.log('If UI is not showing completion, there is a state update issue.');
+      onSuccess && onSuccess(status);
+    } else {
+      console.log(`\n?? Status: ${status.status} (${status.confirmations}/${status.requiredConfirmations} confirmations)`);
+      onSuccess && onSuccess(status);
+    }
+    
+    return status;
+  } catch (error) {
+    console.error('\n? MANUAL CHECK FAILED:');
+    console.error(error);
+    onError && onError(error);
+    throw error;
+  }
+};
+
+// ???????????????????????????????????????????????????????????????
+// DEBUGGING BUTTONS COMPONENT
+// ???????????????????????????????????????????????????????????????
+
+export const DebugButtons = ({ payment, isPolling, pollIntervalRef, checkStatus, api }) => {
+  return (
+    <View style={{ padding: 16, backgroundColor: '#FFF3CD', borderRadius: 8, margin: 16 }}>
+      <Text style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 12, color: '#856404' }}>
+        ?? Debug Tools
+      </Text>
+      
+      {/* Test Polling Status */}
+      <TouchableOpacity
+        style={{ backgroundColor: '#007AFF', padding: 12, borderRadius: 8, marginBottom: 8 }}
+        onPress={() => testPollingStatus(payment, isPolling, pollIntervalRef)}
+      >
+        <Text style={{ color: 'white', textAlign: 'center', fontWeight: 'bold' }}>
+          ?? Test Polling Status
+        </Text>
+      </TouchableOpacity>
+      
+      {/* Manual Refresh */}
+      <TouchableOpacity
+        style={{ backgroundColor: '#28A745', padding: 12, borderRadius: 8, marginBottom: 8 }}
+        onPress={async () => {
+          await manualStatusCheck(
+            payment?.id,
+            api,
+            (status) => {
+              Alert.alert(
+                'Status Check Complete',
+                `Status: ${status.status}\nConfirmations: ${status.confirmations}/${status.requiredConfirmations}`
+              );
+            },
+            (error) => {
+              Alert.alert('Error', error.message);
+            }
+          );
+        }}
+      >
+        <Text style={{ color: 'white', textAlign: 'center', fontWeight: 'bold' }}>
+          ?? Manual Status Check
+        </Text>
+      </TouchableOpacity>
+      
+      {/* Show Payment Object */}
+      <TouchableOpacity
+        style={{ backgroundColor: '#6C757D', padding: 12, borderRadius: 8 }}
+        onPress={() => {
+          console.log('?? PAYMENT OBJECT:');
+          console.log(JSON.stringify(payment, null, 2));
+          Alert.alert('Payment Object', JSON.stringify(payment, null, 2));
+        }}
+      >
+        <Text style={{ color: 'white', textAlign: 'center', fontWeight: 'bold' }}>
+          ?? Show Payment Object
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
+
+// ???????????????????????????????????????????????????????????????
+// USAGE EXAMPLE
+// ???????????????????????????????????????????????????????????????
+
+/*
+import { useCryptoPaymentDiagnostics, DebugButtons } from './cryptoPaymentDiagnostics';
+
+const CryptoPaymentScreen = ({ route, navigation }) => {
+  const { payment, loading, createPayment, verifyPayment, checkStatus, api } = useCryptoPayment();
+  const [isPolling, setIsPolling] = useState(false);
+  const pollIntervalRef = useRef(null);
+
+  // Enable diagnostics
+  useCryptoPaymentDiagnostics(payment, isPolling, pollIntervalRef);
+
+  return (
+    <ScrollView>
+      {/* Your existing UI *}
+      
+      {/* Add debug buttons *}
+      {__DEV__ && (
+        <DebugButtons
+          payment={payment}
+          isPolling={isPolling}
+          pollIntervalRef={pollIntervalRef}
+          checkStatus={checkStatus}
+          api={api}
+        />
+      )}
+    </ScrollView>
+  );
+};
+*/
+
+// ???????????????????????????????????????????????????????????????
+// CONSOLE LOGGING HELPERS
+// ???????????????????????????????????????????????????????????????
+
+export const logPaymentFlow = (step, data) => {
+  const timestamp = new Date().toISOString();
+  console.log(`\n[${timestamp}] ?? PAYMENT FLOW: ${step}`);
+  if (data) {
+    console.log('Data:', data);
+  }
+  console.log('?'.repeat(50));
+};
+
+// Usage:
+// logPaymentFlow('Payment Created', { paymentId: payment.id });
+// logPaymentFlow('Transaction Submitted', { hash: txHash });
+// logPaymentFlow('Polling Started', { paymentId: payment.id });
+// logPaymentFlow('Status Updated', { status: newStatus });
+// logPaymentFlow('Payment Completed', { paymentId: payment.id });

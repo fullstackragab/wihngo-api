@@ -347,6 +347,7 @@ public class CryptoPaymentService : ICryptoPaymentService
         {
             "tron" => 19,
             "ethereum" => 12,
+            "sepolia" => 6,  // Fewer confirmations for testnet
             "bitcoin" => 2,
             "binance-smart-chain" => 15,
             "polygon" => 128,
@@ -360,7 +361,7 @@ public class CryptoPaymentService : ICryptoPaymentService
         return network.ToLower() switch
         {
             "tron" => address,
-            "ethereum" or "polygon" or "binance-smart-chain" => $"ethereum:{address}",
+            "ethereum" or "polygon" or "binance-smart-chain" or "sepolia" => $"ethereum:{address}",
             "bitcoin" => $"bitcoin:{address}?amount={amount}",
             "solana" => $"solana:{address}?amount={amount}",
             _ => address

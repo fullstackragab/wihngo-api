@@ -33,7 +33,7 @@ public class BlockchainVerificationService : IBlockchainService
             return network.ToLower() switch
             {
                 "tron" => await VerifyTronTransactionAsync(txHash, currency),
-                "ethereum" or "polygon" or "binance-smart-chain" =>
+                "ethereum" or "polygon" or "binance-smart-chain" or "sepolia" =>
                     await VerifyEvmTransactionAsync(txHash, currency, network),
                 "bitcoin" => await VerifyBitcoinTransactionAsync(txHash),
                 _ => null
@@ -199,29 +199,57 @@ public class BlockchainVerificationService : IBlockchainService
     {
         try
         {
+            Console.WriteLine($"[BlockchainVerify] Verifying EVM transaction:");
+            Console.WriteLine($"   TxHash: {txHash}");
+            Console.WriteLine($"   Currency: {currency}");
+            Console.WriteLine($"   Network: {network}");
+
             string rpcUrl = network.ToLower() switch
             {
                 "ethereum" => $"https://mainnet.infura.io/v3/{_configuration["BlockchainSettings:Infura:ProjectId"]}",
+                "sepolia" => $"https://sepolia.infura.io/v3/{_configuration["BlockchainSettings:Infura:ProjectId"]}",
                 "binance-smart-chain" => "https://bsc-dataseed.binance.org",
                 "polygon" => "https://polygon-rpc.com",
                 _ => throw new NotSupportedException($"Network {network} not supported")
             };
 
+            Console.WriteLine($"   RPC URL: {rpcUrl.Replace(_configuration["BlockchainSettings:Infura:ProjectId"] ?? "", "***")}");
+
             var web3 = new Web3(rpcUrl);
+            
+            Console.WriteLine($"   Fetching transaction...");
             var tx = await web3.Eth.Transactions.GetTransactionByHash.SendRequestAsync(txHash);
+            
+            Console.WriteLine($"   Fetching receipt...");
             var receipt = await web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(txHash);
 
-            if (tx == null || receipt == null) return null;
+            if (tx == null || receipt == null)
+            {
+                Console.WriteLine($"   ? Transaction or receipt is NULL");
+                Console.WriteLine($"   - Transaction: {(tx == null ? "NULL" : "OK")}");
+                Console.WriteLine($"   - Receipt: {(receipt == null ? "NULL" : "OK")}");
+                return null;
+            }
+
+            Console.WriteLine($"   ? Transaction found!");
+            Console.WriteLine($"   - From: {tx.From}");
+            Console.WriteLine($"   - To: {tx.To}");
+            Console.WriteLine($"   - Block: {receipt.BlockNumber?.Value}");
+            Console.WriteLine($"   - Status: {receipt.Status?.Value}");
 
             // Check if transaction was successful
             if (receipt.Status?.Value != 1)
             {
+                Console.WriteLine($"   ? Transaction FAILED (status != 1)");
                 _logger.LogWarning($"EVM transaction {txHash} failed with status {receipt.Status?.Value}");
                 return null;
             }
 
             var currentBlock = await web3.Eth.Blocks.GetBlockNumber.SendRequestAsync();
             var confirmations = (int)(currentBlock.Value - receipt.BlockNumber.Value + 1);
+            
+            Console.WriteLine($"   - Current block: {currentBlock.Value}");
+            Console.WriteLine($"   - Confirmations: {confirmations}");
 
             decimal amount = 0;
             string toAddress = tx.To ?? "";
@@ -229,12 +257,14 @@ public class BlockchainVerificationService : IBlockchainService
 
             if (currency is "USDT" or "USDC")
             {
-                // ERC-20 token - decode Transfer event from logs
-                _logger.LogInformation($"Processing ERC-20 token {currency} on {network} transaction {txHash}");
+                Console.WriteLine($"   Processing ERC-20 token: {currency}");
                 
                 if (receipt.Logs != null && receipt.Logs.Count > 0)
                 {
+                    Console.WriteLine($"   - Found {receipt.Logs.Count} log entries");
+                    
                     // Find Transfer event in logs
+                    int logIndex = 0;
                     foreach (var log in receipt.Logs)
                     {
                         var topics = log["topics"];
@@ -245,81 +275,86 @@ public class BlockchainVerificationService : IBlockchainService
                             {
                                 var eventSignature = topicsArray[0];
                                 
+                                Console.WriteLine($"   - Log {logIndex}: Event signature = {eventSignature}");
+                                
                                 if (eventSignature.Equals(ERC20_TRANSFER_EVENT_SIGNATURE, StringComparison.OrdinalIgnoreCase))
                                 {
-                                    // Topics[0] = event signature
-                                    // Topics[1] = from address (indexed)
-                                    // Topics[2] = to address (indexed)
-                                    // Data = amount (non-indexed)
+                                    Console.WriteLine($"   ? Found Transfer event!");
                                     
                                     if (topicsArray.Length >= 3)
                                     {
-                                        // Extract from address (remove leading zeros, keep last 20 bytes = 40 hex chars)
                                         var fromHex = topicsArray[1];
                                         if (fromHex.StartsWith("0x") && fromHex.Length >= 66)
                                         {
-                                            fromAddress = "0x" + fromHex.Substring(26); // Skip "0x" + 24 chars of padding
+                                            fromAddress = "0x" + fromHex.Substring(26);
+                                            Console.WriteLine($"   - From address: {fromAddress}");
                                         }
                                         
-                                        // Extract to address
                                         var toHex = topicsArray[2];
                                         if (toHex.StartsWith("0x") && toHex.Length >= 66)
                                         {
                                             toAddress = "0x" + toHex.Substring(26);
+                                            Console.WriteLine($"   - To address: {toAddress}");
                                         }
                                     }
                                     
-                                    // Extract amount from data field
                                     var dataToken = log["data"];
                                     if (dataToken != null)
                                     {
                                         var dataHex = dataToken.ToString();
                                         if (!string.IsNullOrEmpty(dataHex) && dataHex.StartsWith("0x"))
                                         {
-                                            // Remove "0x" prefix
                                             var hexValue = dataHex.Substring(2);
                                             
-                                            // Parse as BigInteger
                                             if (hexValue.Length > 0)
                                             {
                                                 var amountWei = BigInteger.Parse("0" + hexValue, System.Globalization.NumberStyles.HexNumber);
-                                                
-                                                // Get decimals based on currency and network
                                                 var decimals = GetTokenDecimals(currency, network);
                                                 var divisor = (decimal)BigInteger.Pow(10, decimals);
                                                 amount = (decimal)amountWei / divisor;
                                                 
-                                                _logger.LogInformation($"Decoded ERC-20 transfer: {amount} {currency} (decimals: {decimals}) from {fromAddress} to {toAddress}");
+                                                Console.WriteLine($"   - Raw amount: {amountWei}");
+                                                Console.WriteLine($"   - Decimals: {decimals}");
+                                                Console.WriteLine($"   - Final amount: {amount} {currency}");
                                             }
                                         }
                                     }
                                     
-                                    // Found the Transfer event, break
                                     break;
                                 }
                             }
                         }
+                        logIndex++;
                     }
                     
                     if (amount == 0)
                     {
+                        Console.WriteLine($"   ? WARNING: Could not decode amount from Transfer event");
                         _logger.LogWarning($"Could not decode amount from ERC-20 Transfer event for {txHash}");
                     }
                 }
                 else
                 {
+                    Console.WriteLine($"   ? WARNING: No logs found in receipt");
                     _logger.LogWarning($"No logs found in receipt for ERC-20 transaction {txHash}");
                 }
             }
             else
             {
-                // Native ETH/BNB
+                // Native ETH/BNB/Sepolia ETH
                 amount = Web3.Convert.FromWei(tx.Value.Value);
+                Console.WriteLine($"   Native token amount: {amount} {currency}");
             }
 
             var gasUsed = receipt.GasUsed?.Value ?? 0;
             var gasPrice = tx.GasPrice?.Value ?? 0;
             var fee = Web3.Convert.FromWei(gasUsed * gasPrice);
+
+            Console.WriteLine($"   ? Verification complete!");
+            Console.WriteLine($"   - Amount: {amount}");
+            Console.WriteLine($"   - From: {fromAddress}");
+            Console.WriteLine($"   - To: {toAddress}");
+            Console.WriteLine($"   - Confirmations: {confirmations}");
 
             return new TransactionInfo
             {
@@ -334,6 +369,8 @@ public class BlockchainVerificationService : IBlockchainService
         }
         catch (Exception ex)
         {
+            Console.WriteLine($"   ? ERROR: {ex.Message}");
+            Console.WriteLine($"   Stack trace: {ex.StackTrace}");
             _logger.LogError(ex, $"EVM verification error for {txHash}");
             return null;
         }
@@ -351,13 +388,19 @@ public class BlockchainVerificationService : IBlockchainService
             // USDT implementations
             "USDT_tron" => 6,                    // TRC-20 USDT
             "USDT_ethereum" => 6,                // ERC-20 USDT
+            "USDT_sepolia" => 6,                 // Sepolia Testnet USDT
             "USDT_binance-smart-chain" => 18,   // BEP-20 USDT
             "USDT_polygon" => 6,                 // Polygon USDT
             
             // USDC implementations
             "USDC_ethereum" => 6,                // ERC-20 USDC
+            "USDC_sepolia" => 6,                 // Sepolia Testnet USDC
             "USDC_binance-smart-chain" => 18,   // BEP-20 USDC
             "USDC_polygon" => 6,                 // Polygon USDC
+            
+            // ETH implementations
+            "ETH_ethereum" => 18,                // Mainnet ETH
+            "ETH_sepolia" => 18,                 // Sepolia Testnet ETH
             
             // Default to 6 decimals (most common for stablecoins)
             _ => 6

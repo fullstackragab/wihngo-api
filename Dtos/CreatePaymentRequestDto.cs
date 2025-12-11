@@ -15,7 +15,7 @@ public class CreatePaymentRequestDto
     public string Currency { get; set; } = string.Empty;
 
     [Required]
-    [RegularExpression("^(bitcoin|ethereum|tron|binance-smart-chain|polygon|solana)$")]
+    [RegularExpression("^(bitcoin|ethereum|tron|binance-smart-chain|polygon|solana|sepolia)$")]
     public string Network { get; set; } = string.Empty;
 
     [Required]
