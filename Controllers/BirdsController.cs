@@ -68,6 +68,7 @@ namespace Wihngo.Controllers
                     Name = b.Name,
                     Species = b.Species,
                     ImageUrl = b.ImageUrl,
+                    VideoUrl = b.VideoUrl,
                     Tagline = b.Tagline,
                     LovedBy = b.LovedCount,
                     SupportedBy = b.SupportTransactions.Count(),
@@ -103,6 +104,7 @@ namespace Wihngo.Controllers
             dto.LovedBy = bird.LovedCount;
             dto.SupportedBy = bird.SupportTransactions?.Count ?? 0;
             dto.ImageUrl = bird.ImageUrl;
+            dto.VideoUrl = bird.VideoUrl;
 
             // Check if current user has loved this bird
             var userId = GetUserIdClaim();
@@ -187,6 +189,7 @@ namespace Wihngo.Controllers
             bird.Species = updated.Species;
             bird.Description = updated.Description;
             bird.ImageUrl = updated.ImageUrl;
+            bird.VideoUrl = updated.VideoUrl;
             bird.Tagline = updated.Tagline;
 
             await _db.SaveChangesAsync();

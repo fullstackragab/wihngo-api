@@ -11,6 +11,7 @@ namespace Wihngo.Dtos
         public string Tagline { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
         public string? ImageUrl { get; set; }
+        public string? VideoUrl { get; set; }
         public List<string> Personality { get; set; } = new();
         public ConservationDto Conservation { get; set; } = new();
         public List<string> FunFacts { get; set; } = new();

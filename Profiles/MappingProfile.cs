@@ -17,6 +17,7 @@ namespace Wihngo.Mapping
                 .ForMember(dest => dest.Tagline, opt => opt.MapFrom(src => src.Tagline))
                 .ForMember(dest => dest.Description, opt => opt.MapFrom(src => src.Description))
                 .ForMember(dest => dest.ImageUrl, opt => opt.MapFrom(src => src.ImageUrl))
+                .ForMember(dest => dest.VideoUrl, opt => opt.MapFrom(src => src.VideoUrl))
                 .ForMember(dest => dest.OwnerId, opt => opt.Ignore())
                 .ForMember(dest => dest.BirdId, opt => opt.Ignore())
                 .ForMember(dest => dest.CreatedAt, opt => opt.Ignore());
@@ -48,6 +49,7 @@ namespace Wihngo.Mapping
                 .ForMember(dest => dest.Name, opt => opt.MapFrom(src => src.Name))
                 .ForMember(dest => dest.Species, opt => opt.MapFrom(src => src.Species))
                 .ForMember(dest => dest.ImageUrl, opt => opt.MapFrom(src => src.ImageUrl))
+                .ForMember(dest => dest.VideoUrl, opt => opt.MapFrom(src => src.VideoUrl))
                 .ForMember(dest => dest.Tagline, opt => opt.MapFrom(src => src.Tagline))
                 .ForMember(dest => dest.LovedBy, opt => opt.MapFrom(src => src.LovedCount))
                 .ForMember(dest => dest.SupportedBy, opt => opt.MapFrom(src => src.SupportedCount))
