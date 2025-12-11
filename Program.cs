@@ -53,6 +53,12 @@ builder.Services.AddScoped<NotificationCleanupJob>();
 builder.Services.AddScoped<DailyDigestJob>();
 builder.Services.AddScoped<PremiumExpiryNotificationJob>();
 
+// Premium Subscription Services
+builder.Services.AddScoped<IPaymentService, PaymentService>();
+builder.Services.AddScoped<IPremiumSubscriptionService, PremiumSubscriptionService>();
+builder.Services.AddScoped<ICharityService, CharityService>();
+builder.Services.AddScoped<CharityAllocationJob>();
+
 // Hangfire
 builder.Services.AddHangfire(config => config
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
@@ -209,6 +215,12 @@ for (int attempt = 0; attempt < 3; attempt++)
             "check-premium-expiry",
             job => job.CheckExpiringPremiumAsync(),
             "0 10 * * *" // Daily at 10 AM UTC
+        );
+
+        RecurringJob.AddOrUpdate<CharityAllocationJob>(
+            "process-charity-allocations",
+            job => job.ProcessMonthlyAllocationsAsync(),
+            Cron.Monthly // Monthly on the 1st
         );
         
         break; // Success - exit retry loop

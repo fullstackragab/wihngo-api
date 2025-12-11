@@ -18,6 +18,9 @@ namespace Wihngo.Data
         public DbSet<Love> Loves { get; set; } = null!;
         public DbSet<SupportUsage> SupportUsages { get; set; } = null!; // plural set name to match entity
         public DbSet<BirdPremiumSubscription> BirdPremiumSubscriptions { get; set; } = null!;
+        public DbSet<PremiumStyle> PremiumStyles { get; set; } = null!;
+        public DbSet<CharityAllocation> CharityAllocations { get; set; } = null!;
+        public DbSet<CharityImpactStats> CharityImpactStats { get; set; } = null!;
 
         // Crypto Payment Entities
         public DbSet<PlatformWallet> PlatformWallets { get; set; } = null!;
@@ -41,6 +44,9 @@ namespace Wihngo.Data
             modelBuilder.Entity<Bird>().ToTable("birds");
             modelBuilder.Entity<Story>().ToTable("stories");
             modelBuilder.Entity<BirdPremiumSubscription>().ToTable("bird_premium_subscriptions");
+            modelBuilder.Entity<PremiumStyle>().ToTable("premium_styles");
+            modelBuilder.Entity<CharityAllocation>().ToTable("charity_allocations");
+            modelBuilder.Entity<CharityImpactStats>().ToTable("charity_impact_stats");
             // Use underscore-separated plural table name to match SQL scripts
             modelBuilder.Entity<SupportTransaction>().ToTable("support_transactions");
             modelBuilder.Entity<Love>().ToTable("loves");
@@ -54,6 +60,18 @@ namespace Wihngo.Data
 
             // Configure composite primary key for Love join table
             modelBuilder.Entity<Love>().HasKey(l => new { l.UserId, l.BirdId });
+
+            // Configure unique constraint for PremiumStyle (one per bird)
+            modelBuilder.Entity<PremiumStyle>()
+                .HasIndex(ps => ps.BirdId)
+                .IsUnique();
+
+            // Configure indexes for CharityAllocation
+            modelBuilder.Entity<CharityAllocation>()
+                .HasIndex(ca => ca.SubscriptionId);
+
+            modelBuilder.Entity<CharityAllocation>()
+                .HasIndex(ca => ca.AllocatedAt);
 
             // Explicitly map DonationCents to donation_cents (temporary fix)
             modelBuilder.Entity<Bird>()
