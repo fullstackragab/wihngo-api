@@ -11,4 +11,5 @@ public interface ICryptoPaymentService
     Task<List<PaymentResponseDto>> GetPaymentHistoryAsync(Guid userId, int page, int pageSize);
     Task<PlatformWallet?> GetPlatformWalletAsync(string currency, string network);
     Task CompletePaymentAsync(CryptoPaymentRequest payment);
+    Task<PaymentResponseDto?> CancelPaymentAsync(Guid paymentId, Guid userId);
 }

@@ -68,14 +68,95 @@ public class CryptoPaymentController : ControllerBase
         try
         {
             var userId = GetUserId();
-            var payment = await _paymentService.GetPaymentRequestAsync(paymentId, userId);
+            var payment = await _context.CryptoPaymentRequests
+                .FirstOrDefaultAsync(p => p.Id == paymentId && p.UserId == userId);
 
             if (payment == null)
             {
                 return NotFound(new { error = "Payment not found" });
             }
 
-            return Ok(payment);
+            // Check if expired
+            if (payment.Status == "pending" && DateTime.UtcNow > payment.ExpiresAt)
+            {
+                payment.Status = "expired";
+                payment.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
+
+            // If payment has a transaction hash and is pending/confirming, check blockchain immediately
+            // This provides real-time updates without requiring a separate check-status endpoint call
+            if (payment.TransactionHash != null && 
+                (payment.Status == "pending" || payment.Status == "confirming"))
+            {
+                try
+                {
+                    var blockchainService = HttpContext.RequestServices.GetRequiredService<IBlockchainService>();
+                    var txInfo = await blockchainService.VerifyTransactionAsync(
+                        payment.TransactionHash,
+                        payment.Currency,
+                        payment.Network
+                    );
+
+                    if (txInfo != null)
+                    {
+                        payment.Confirmations = txInfo.Confirmations;
+
+                        if (txInfo.Confirmations >= payment.RequiredConfirmations)
+                        {
+                            payment.Status = "confirmed";
+                            payment.ConfirmedAt = DateTime.UtcNow;
+                            payment.UpdatedAt = DateTime.UtcNow;
+
+                            await _context.SaveChangesAsync();
+                            await _paymentService.CompletePaymentAsync(payment);
+
+                            _logger.LogInformation($"Payment {payment.Id} confirmed via GetPayment poll");
+                        }
+                        else if (payment.Status != "confirming")
+                        {
+                            payment.Status = "confirming";
+                            payment.UpdatedAt = DateTime.UtcNow;
+                            await _context.SaveChangesAsync();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error checking blockchain status in GetPayment for {PaymentId}", paymentId);
+                    // Don't fail the request, just return current status
+                }
+            }
+
+            // Reload to ensure we have the latest data
+            await _context.Entry(payment).ReloadAsync();
+
+            return Ok(new PaymentResponseDto
+            {
+                Id = payment.Id,
+                UserId = payment.UserId,
+                BirdId = payment.BirdId,
+                AmountUsd = payment.AmountUsd,
+                AmountCrypto = payment.AmountCrypto,
+                Currency = payment.Currency,
+                Network = payment.Network,
+                ExchangeRate = payment.ExchangeRate,
+                WalletAddress = payment.WalletAddress,
+                UserWalletAddress = payment.UserWalletAddress,
+                QrCodeData = payment.QrCodeData,
+                PaymentUri = payment.PaymentUri,
+                TransactionHash = payment.TransactionHash,
+                Confirmations = payment.Confirmations,
+                RequiredConfirmations = payment.RequiredConfirmations,
+                Status = payment.Status,
+                Purpose = payment.Purpose,
+                Plan = payment.Plan,
+                ExpiresAt = DateTime.SpecifyKind(payment.ExpiresAt, DateTimeKind.Utc),
+                ConfirmedAt = payment.ConfirmedAt.HasValue ? DateTime.SpecifyKind(payment.ConfirmedAt.Value, DateTimeKind.Utc) : null,
+                CompletedAt = payment.CompletedAt.HasValue ? DateTime.SpecifyKind(payment.CompletedAt.Value, DateTimeKind.Utc) : null,
+                CreatedAt = DateTime.SpecifyKind(payment.CreatedAt, DateTimeKind.Utc),
+                UpdatedAt = DateTime.SpecifyKind(payment.UpdatedAt, DateTimeKind.Utc)
+            });
         }
         catch (Exception ex)
         {
@@ -233,6 +314,151 @@ public class CryptoPaymentController : ControllerBase
         {
             _logger.LogError(ex, "Error getting wallet");
             return StatusCode(500, new { error = "Failed to get wallet info" });
+        }
+    }
+
+    /// <summary>
+    /// Cancel a pending payment
+    /// </summary>
+    [HttpPost("{paymentId}/cancel")]
+    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CancelPayment(Guid paymentId)
+    {
+        try
+        {
+            var userId = GetUserId();
+            var payment = await _paymentService.CancelPaymentAsync(paymentId, userId);
+
+            if (payment == null)
+            {
+                return NotFound(new { error = "Payment not found" });
+            }
+
+            return Ok(new
+            {
+                id = payment.Id,
+                status = payment.Status,
+                message = "Payment cancelled successfully"
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error cancelling payment {PaymentId}", paymentId);
+            return StatusCode(500, new { error = "Failed to cancel payment" });
+        }
+    }
+
+    /// <summary>
+    /// Force check payment status - triggers immediate blockchain verification
+    /// Use this for real-time status updates when polling for payment confirmation
+    /// </summary>
+    [HttpPost("{paymentId}/check-status")]
+    [ProducesResponseType(typeof(PaymentResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CheckPaymentStatus(Guid paymentId)
+    {
+        try
+        {
+            var userId = GetUserId();
+            var payment = await _context.CryptoPaymentRequests
+                .FirstOrDefaultAsync(p => p.Id == paymentId && p.UserId == userId);
+
+            if (payment == null)
+            {
+                return NotFound(new { error = "Payment not found" });
+            }
+
+            // Check if expired
+            if (payment.Status == "pending" && DateTime.UtcNow > payment.ExpiresAt)
+            {
+                payment.Status = "expired";
+                payment.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
+
+            // If payment has a transaction hash and is pending/confirming, check blockchain immediately
+            if (payment.TransactionHash != null && 
+                (payment.Status == "pending" || payment.Status == "confirming"))
+            {
+                try
+                {
+                    var blockchainService = HttpContext.RequestServices.GetRequiredService<IBlockchainService>();
+                    var txInfo = await blockchainService.VerifyTransactionAsync(
+                        payment.TransactionHash,
+                        payment.Currency,
+                        payment.Network
+                    );
+
+                    if (txInfo != null)
+                    {
+                        payment.Confirmations = txInfo.Confirmations;
+
+                        if (txInfo.Confirmations >= payment.RequiredConfirmations)
+                        {
+                            payment.Status = "confirmed";
+                            payment.ConfirmedAt = DateTime.UtcNow;
+                            payment.UpdatedAt = DateTime.UtcNow;
+
+                            await _context.SaveChangesAsync();
+                            await _paymentService.CompletePaymentAsync(payment);
+
+                            _logger.LogInformation($"Payment {payment.Id} confirmed via status check");
+                        }
+                        else
+                        {
+                            payment.Status = "confirming";
+                            payment.UpdatedAt = DateTime.UtcNow;
+                            await _context.SaveChangesAsync();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error checking blockchain status for payment {PaymentId}", paymentId);
+                    // Don't fail the request, just return current status
+                }
+            }
+
+            // Reload to get updated status
+            await _context.Entry(payment).ReloadAsync();
+
+            return Ok(new PaymentResponseDto
+            {
+                Id = payment.Id,
+                UserId = payment.UserId,
+                BirdId = payment.BirdId,
+                AmountUsd = payment.AmountUsd,
+                AmountCrypto = payment.AmountCrypto,
+                Currency = payment.Currency,
+                Network = payment.Network,
+                ExchangeRate = payment.ExchangeRate,
+                WalletAddress = payment.WalletAddress,
+                UserWalletAddress = payment.UserWalletAddress,
+                QrCodeData = payment.QrCodeData,
+                PaymentUri = payment.PaymentUri,
+                TransactionHash = payment.TransactionHash,
+                Confirmations = payment.Confirmations,
+                RequiredConfirmations = payment.RequiredConfirmations,
+                Status = payment.Status,
+                Purpose = payment.Purpose,
+                Plan = payment.Plan,
+                ExpiresAt = DateTime.SpecifyKind(payment.ExpiresAt, DateTimeKind.Utc),
+                ConfirmedAt = payment.ConfirmedAt.HasValue ? DateTime.SpecifyKind(payment.ConfirmedAt.Value, DateTimeKind.Utc) : null,
+                CompletedAt = payment.CompletedAt.HasValue ? DateTime.SpecifyKind(payment.CompletedAt.Value, DateTimeKind.Utc) : null,
+                CreatedAt = DateTime.SpecifyKind(payment.CreatedAt, DateTimeKind.Utc),
+                UpdatedAt = DateTime.SpecifyKind(payment.UpdatedAt, DateTimeKind.Utc)
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking payment status {PaymentId}", paymentId);
+            return StatusCode(500, new { error = "Failed to check payment status" });
         }
     }
 

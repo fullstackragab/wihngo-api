@@ -31,15 +31,16 @@ public class PaymentMonitorJob
 
         try
         {
-            var payments = await _context.CryptoPaymentRequests
+            // Monitor payments that already have a transaction hash
+            var paymentsWithHash = await _context.CryptoPaymentRequests
                 .Where(p => (p.Status == "pending" || p.Status == "confirming") &&
                            p.ExpiresAt > DateTime.UtcNow &&
                            p.TransactionHash != null)
                 .ToListAsync();
 
-            _logger.LogInformation($"Found {payments.Count} payments to monitor");
+            _logger.LogInformation($"Found {paymentsWithHash.Count} payments with transaction hash to monitor");
 
-            foreach (var payment in payments)
+            foreach (var payment in paymentsWithHash)
             {
                 try
                 {
@@ -62,7 +63,7 @@ public class PaymentMonitorJob
                             await _context.SaveChangesAsync();
                             await _paymentService.CompletePaymentAsync(payment);
 
-                            _logger.LogInformation($"Payment {payment.Id} confirmed and completed");
+                            _logger.LogInformation($"Payment {payment.Id} confirmed and completed with {txInfo.Confirmations} confirmations");
                         }
                         else
                         {
@@ -73,10 +74,39 @@ public class PaymentMonitorJob
                             _logger.LogInformation($"Payment {payment.Id} has {txInfo.Confirmations}/{payment.RequiredConfirmations} confirmations");
                         }
                     }
+                    else
+                    {
+                        _logger.LogWarning($"Transaction {payment.TransactionHash} not found on blockchain for payment {payment.Id}");
+                    }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, $"Error monitoring payment {payment.Id}");
+                    _logger.LogError(ex, $"Error monitoring payment {payment.Id} with tx {payment.TransactionHash}");
+                }
+            }
+
+            // Also check for pending payments without hash that might have received funds
+            // This helps catch cases where users sent payment but didn't call verify endpoint
+            var paymentsWithoutHash = await _context.CryptoPaymentRequests
+                .Where(p => p.Status == "pending" &&
+                           p.ExpiresAt > DateTime.UtcNow &&
+                           p.TransactionHash == null)
+                .Take(50) // Limit to avoid overload
+                .ToListAsync();
+
+            if (paymentsWithoutHash.Any())
+            {
+                _logger.LogInformation($"Checking {paymentsWithoutHash.Count} payments without transaction hash for incoming funds");
+
+                // Note: Proactive blockchain scanning would require chain-specific APIs
+                // For now, we log this for visibility. Implementation would need:
+                // - Wallet address monitoring via blockchain explorers
+                // - Websocket connections to blockchain nodes
+                // - Third-party services like Tatum, Moralis, etc.
+                
+                foreach (var payment in paymentsWithoutHash)
+                {
+                    _logger.LogDebug($"Payment {payment.Id} waiting for funds to {payment.WalletAddress} ({payment.Currency} on {payment.Network})");
                 }
             }
         }

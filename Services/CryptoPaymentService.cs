@@ -61,9 +61,9 @@ public class CryptoPaymentService : ICryptoPaymentService
         var paymentUri = GeneratePaymentUri(dto.Currency, dto.Network, wallet.Address, amountCrypto);
         var qrCodeData = paymentUri;
 
-        // Calculate expiration
-        var expirationMinutes = _configuration.GetValue<int>("PaymentSettings:ExpirationMinutes", 30);
-        var expiresAt = DateTime.UtcNow.AddMinutes(expirationMinutes);
+        // Calculate expiration - 30 minutes from now
+        // Ensure DateTime is set to UTC with DateTimeKind.Utc
+        var expiresAt = DateTime.SpecifyKind(DateTime.UtcNow.AddMinutes(30), DateTimeKind.Utc);
 
         // Create payment request
         var payment = new CryptoPaymentRequest
@@ -358,11 +358,37 @@ public class CryptoPaymentService : ICryptoPaymentService
             Status = payment.Status,
             Purpose = payment.Purpose,
             Plan = payment.Plan,
-            ExpiresAt = payment.ExpiresAt,
-            ConfirmedAt = payment.ConfirmedAt,
-            CompletedAt = payment.CompletedAt,
-            CreatedAt = payment.CreatedAt,
-            UpdatedAt = payment.UpdatedAt
+            // Ensure DateTime is treated as UTC when serialized
+            ExpiresAt = DateTime.SpecifyKind(payment.ExpiresAt, DateTimeKind.Utc),
+            ConfirmedAt = payment.ConfirmedAt.HasValue ? DateTime.SpecifyKind(payment.ConfirmedAt.Value, DateTimeKind.Utc) : null,
+            CompletedAt = payment.CompletedAt.HasValue ? DateTime.SpecifyKind(payment.CompletedAt.Value, DateTimeKind.Utc) : null,
+            CreatedAt = DateTime.SpecifyKind(payment.CreatedAt, DateTimeKind.Utc),
+            UpdatedAt = DateTime.SpecifyKind(payment.UpdatedAt, DateTimeKind.Utc)
         };
+    }
+
+    public async Task<PaymentResponseDto?> CancelPaymentAsync(Guid paymentId, Guid userId)
+    {
+        var payment = await _context.CryptoPaymentRequests
+            .FirstOrDefaultAsync(p => p.Id == paymentId && p.UserId == userId);
+
+        if (payment == null)
+        {
+            return null;
+        }
+
+        // Only allow cancellation of pending payments
+        if (payment.Status != "pending")
+        {
+            throw new InvalidOperationException($"Cannot cancel payment with status '{payment.Status}'");
+        }
+
+        payment.Status = "cancelled";
+        payment.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation($"Payment {payment.Id} cancelled by user {userId}");
+
+        return MapToDto(payment);
     }
 }

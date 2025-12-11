@@ -91,14 +91,64 @@ public class BlockchainVerificationService : IBlockchainService
                     var data = log.GetProperty("data").GetString() ?? "";
                     var topics = log.GetProperty("topics").EnumerateArray().ToList();
 
-                    // Decode amount (6 decimals)
-                    amount = Convert.ToDecimal(BigInteger.Parse(data, System.Globalization.NumberStyles.HexNumber)) / 1_000_000m;
+                    // Decode amount (6 decimals for USDT)
+                    if (!string.IsNullOrEmpty(data))
+                    {
+                        amount = Convert.ToDecimal(BigInteger.Parse(data, System.Globalization.NumberStyles.HexNumber)) / 1_000_000m;
+                    }
 
-                    // Decode addresses
+                    // Decode addresses from topics
                     if (topics.Count >= 3)
                     {
-                        toAddress = TronAddressFromHex("41" + topics[2].GetString()?.Substring(24));
-                        fromAddress = TronAddressFromHex("41" + topics[1].GetString()?.Substring(24));
+                        var toHex = topics[2].GetString();
+                        var fromHex = topics[1].GetString();
+                        
+                        if (!string.IsNullOrEmpty(toHex) && toHex.Length >= 24)
+                        {
+                            toAddress = TronAddressConverter.HexToBase58("41" + toHex.Substring(24));
+                        }
+                        
+                        if (!string.IsNullOrEmpty(fromHex) && fromHex.Length >= 24)
+                        {
+                            fromAddress = TronAddressConverter.HexToBase58("41" + fromHex.Substring(24));
+                        }
+                    }
+                }
+            }
+            else if (currency == "TRX")
+            {
+                // Native TRX transfer
+                if (tx.RootElement.TryGetProperty("raw_data", out var rawData))
+                {
+                    if (rawData.TryGetProperty("contract", out var contracts) && contracts.GetArrayLength() > 0)
+                    {
+                        var contract = contracts[0];
+                        if (contract.TryGetProperty("parameter", out var parameter))
+                        {
+                            if (parameter.TryGetProperty("value", out var value))
+                            {
+                                if (value.TryGetProperty("amount", out var amountProp))
+                                {
+                                    amount = amountProp.GetDecimal() / 1_000_000m; // TRX has 6 decimals
+                                }
+                                if (value.TryGetProperty("to_address", out var toAddressProp))
+                                {
+                                    var toHex = toAddressProp.GetString();
+                                    if (!string.IsNullOrEmpty(toHex))
+                                    {
+                                        toAddress = TronAddressConverter.HexToBase58(toHex);
+                                    }
+                                }
+                                if (value.TryGetProperty("owner_address", out var ownerAddressProp))
+                                {
+                                    var fromHex = ownerAddressProp.GetString();
+                                    if (!string.IsNullOrEmpty(fromHex))
+                                    {
+                                        fromAddress = TronAddressConverter.HexToBase58(fromHex);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -256,12 +306,5 @@ public class BlockchainVerificationService : IBlockchainService
             _logger.LogError(ex, $"Bitcoin verification error for {txHash}");
             return null;
         }
-    }
-
-    private string TronAddressFromHex(string hex)
-    {
-        // Simplified TRON address conversion
-        // In production, use proper TRON SDK
-        return "T" + hex; // Placeholder
     }
 }

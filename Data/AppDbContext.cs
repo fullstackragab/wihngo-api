@@ -170,6 +170,26 @@ namespace Wihngo.Data
                     IsActive = true,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
+                },
+                new PlatformWallet
+                {
+                    Id = Guid.NewGuid(),
+                    Currency = "USDT",
+                    Network = "ethereum",
+                    Address = "0x4cc28f4cea7b440858b903b5c46685cb1478cdc4",
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                },
+                new PlatformWallet
+                {
+                    Id = Guid.NewGuid(),
+                    Currency = "USDT",
+                    Network = "binance-smart-chain",
+                    Address = "0x83675000ac9915614afff618906421a2baea0020",
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
                 }
             );
 
