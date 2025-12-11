@@ -1,0 +1,520 @@
+{
+  "info": {
+    "name": "Wihngo Crypto Payments API",
+    "description": "Complete API collection for testing crypto payment endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://api.wihngo.com/api/payments/crypto",
+      "type": "string"
+    },
+    {
+      "key": "authToken",
+      "value": "your_jwt_token_here",
+      "type": "string"
+    },
+    {
+      "key": "paymentId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Public Endpoints",
+      "item": [
+        {
+          "name": "Get All Exchange Rates",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rates",
+              "host": ["{{baseUrl}}"],
+              "path": ["rates"]
+            },
+            "description": "Get current exchange rates for all supported cryptocurrencies. No authentication required."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Specific Exchange Rate",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/rates/USDT",
+              "host": ["{{baseUrl}}"],
+              "path": ["rates", "USDT"]
+            },
+            "description": "Get exchange rate for a specific currency (USDT, USDC, etc.)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Platform Wallet - Tron",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/wallet/USDT/tron",
+              "host": ["{{baseUrl}}"],
+              "path": ["wallet", "USDT", "tron"]
+            },
+            "description": "Get platform wallet address for USDT on Tron network"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Platform Wallet - Ethereum",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/wallet/USDT/ethereum",
+              "host": ["{{baseUrl}}"],
+              "path": ["wallet", "USDT", "ethereum"]
+            },
+            "description": "Get platform wallet address for USDT on Ethereum network"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Platform Wallet - BSC",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/wallet/USDT/binance-smart-chain",
+              "host": ["{{baseUrl}}"],
+              "path": ["wallet", "USDT", "binance-smart-chain"]
+            },
+            "description": "Get platform wallet address for USDT on Binance Smart Chain"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Payment Lifecycle",
+      "item": [
+        {
+          "name": "1. Create Payment - Tron",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('paymentId', response.paymentRequest.id);",
+                  "    console.log('Payment ID saved:', response.paymentRequest.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountUsd\": 9.99,\n  \"currency\": \"USDT\",\n  \"network\": \"tron\",\n  \"birdId\": \"123e4567-e89b-12d3-a456-426614174000\",\n  \"purpose\": \"premium_subscription\",\n  \"plan\": \"monthly\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/create",
+              "host": ["{{baseUrl}}"],
+              "path": ["create"]
+            },
+            "description": "Create a new payment request for Tron TRC-20 USDT"
+          },
+          "response": []
+        },
+        {
+          "name": "1. Create Payment - Ethereum",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('paymentId', response.paymentRequest.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountUsd\": 9.99,\n  \"currency\": \"USDT\",\n  \"network\": \"ethereum\",\n  \"birdId\": \"123e4567-e89b-12d3-a456-426614174000\",\n  \"purpose\": \"premium_subscription\",\n  \"plan\": \"monthly\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/create",
+              "host": ["{{baseUrl}}"],
+              "path": ["create"]
+            },
+            "description": "Create a new payment request for Ethereum ERC-20 USDT"
+          },
+          "response": []
+        },
+        {
+          "name": "1. Create Payment - BSC",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('paymentId', response.paymentRequest.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountUsd\": 9.99,\n  \"currency\": \"USDT\",\n  \"network\": \"binance-smart-chain\",\n  \"birdId\": \"123e4567-e89b-12d3-a456-426614174000\",\n  \"purpose\": \"premium_subscription\",\n  \"plan\": \"monthly\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/create",
+              "host": ["{{baseUrl}}"],
+              "path": ["create"]
+            },
+            "description": "Create a new payment request for BSC BEP-20 USDT (18 decimals!)"
+          },
+          "response": []
+        },
+        {
+          "name": "2. Verify Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionHash\": \"0xabc123def456...\",\n  \"userWalletAddress\": \"TXYZuser123...\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{paymentId}}/verify",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{paymentId}}", "verify"]
+            },
+            "description": "Submit transaction hash to verify payment. Replace transactionHash with actual value."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Get Payment Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/{{paymentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{paymentId}}"]
+            },
+            "description": "Get payment status with automatic blockchain check"
+          },
+          "response": []
+        },
+        {
+          "name": "4. Check Payment Status (Force)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/{{paymentId}}/check-status",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{paymentId}}", "check-status"]
+            },
+            "description": "Force immediate blockchain verification (use for polling)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Payment Management",
+      "item": [
+        {
+          "name": "Get Payment History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/history?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["history"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Get paginated payment history"
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/{{paymentId}}/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{paymentId}}", "cancel"]
+            },
+            "description": "Cancel a pending payment"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Test Scenarios",
+      "item": [
+        {
+          "name": "Test: Minimum Amount ($5)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountUsd\": 5.00,\n  \"currency\": \"USDT\",\n  \"network\": \"tron\",\n  \"purpose\": \"premium_subscription\",\n  \"plan\": \"monthly\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/create",
+              "host": ["{{baseUrl}}"],
+              "path": ["create"]
+            },
+            "description": "Test minimum allowed payment amount"
+          },
+          "response": []
+        },
+        {
+          "name": "Test: Below Minimum (Should Fail)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountUsd\": 4.99,\n  \"currency\": \"USDT\",\n  \"network\": \"tron\",\n  \"purpose\": \"premium_subscription\",\n  \"plan\": \"monthly\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/create",
+              "host": ["{{baseUrl}}"],
+              "path": ["create"]
+            },
+            "description": "Test validation: Should return 400 error"
+          },
+          "response": []
+        },
+        {
+          "name": "Test: Invalid Currency (Should Fail)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountUsd\": 9.99,\n  \"currency\": \"DOGE\",\n  \"network\": \"tron\",\n  \"purpose\": \"premium_subscription\",\n  \"plan\": \"monthly\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/create",
+              "host": ["{{baseUrl}}"],
+              "path": ["create"]
+            },
+            "description": "Test with unsupported currency: Should return 400 error"
+          },
+          "response": []
+        },
+        {
+          "name": "Test: Invalid Network (Should Fail)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountUsd\": 9.99,\n  \"currency\": \"USDT\",\n  \"network\": \"solana\",\n  \"purpose\": \"premium_subscription\",\n  \"plan\": \"monthly\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/create",
+              "host": ["{{baseUrl}}"],
+              "path": ["create"]
+            },
+            "description": "Test with unsupported network: Should return 400 error"
+          },
+          "response": []
+        },
+        {
+          "name": "Test: Invalid Transaction Hash",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{authToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionHash\": \"invalid_hash_123\",\n  \"userWalletAddress\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{paymentId}}/verify",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{paymentId}}", "verify"]
+            },
+            "description": "Test with invalid transaction hash: Should return 400 error"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{authToken}}",
+        "type": "string"
+      }
+    ]
+  }
+}
