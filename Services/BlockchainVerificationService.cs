@@ -99,7 +99,9 @@ public class BlockchainVerificationService : IBlockchainService
                     // Decode amount (6 decimals for USDT)
                     if (!string.IsNullOrEmpty(data))
                     {
-                        amount = Convert.ToDecimal(BigInteger.Parse(data, System.Globalization.NumberStyles.HexNumber)) / 1_000_000m;
+                        // Use explicit cast from BigInteger to decimal to avoid InvalidCastException
+                        var big = BigInteger.Parse(data, System.Globalization.NumberStyles.HexNumber);
+                        amount = (decimal)big / 1_000_000m;
                     }
 
                     // Decode addresses from topics

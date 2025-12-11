@@ -44,6 +44,9 @@ public class CryptoPaymentRequest
     [MaxLength(255)]
     public string WalletAddress { get; set; } = string.Empty;
 
+    [Column("address_index")]
+    public int? AddressIndex { get; set; }
+
     [Column("user_wallet_address")]
     [MaxLength(255)]
     public string? UserWalletAddress { get; set; }

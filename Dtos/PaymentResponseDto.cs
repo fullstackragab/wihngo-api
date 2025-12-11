@@ -11,6 +11,7 @@ public class PaymentResponseDto
     public string Network { get; set; } = string.Empty;
     public decimal ExchangeRate { get; set; }
     public string WalletAddress { get; set; } = string.Empty;
+    public int? AddressIndex { get; set; }
     public string? UserWalletAddress { get; set; }
     public string QrCodeData { get; set; } = string.Empty;
     public string PaymentUri { get; set; } = string.Empty;

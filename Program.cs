@@ -74,6 +74,8 @@ builder.Services.AddScoped<TokenService>();
 // Crypto Payment Services
 builder.Services.AddScoped<ICryptoPaymentService, CryptoPaymentService>();
 builder.Services.AddScoped<IBlockchainService, BlockchainVerificationService>();
+// Register HdWalletService if mnemonic-based derivation is desired
+builder.Services.AddScoped<IHdWalletService, HdWalletService>();
 builder.Services.AddScoped<ExchangeRateUpdateJob>();
 builder.Services.AddScoped<PaymentMonitorJob>();
 

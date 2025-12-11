@@ -187,6 +187,7 @@ public class PaymentMonitorJob
                     Console.WriteLine($"   Amount: {payment.AmountCrypto} {payment.Currency}");
                     Console.WriteLine($"   Network: {payment.Network}");
                     Console.WriteLine($"   Wallet: {payment.WalletAddress}");
+                    Console.WriteLine($"   HD Index: {payment.AddressIndex?.ToString() ?? "N/A (static wallet)"}");
                     Console.WriteLine($"   Expires in: {timeLeft.TotalMinutes:F1} minutes");
 
                     try
@@ -202,11 +203,12 @@ public class PaymentMonitorJob
 
                         if (incomingTx != null)
                         {
-                            Console.WriteLine($"   ?? INCOMING TRANSACTION DETECTED!");
+                            Console.WriteLine($"   ? INCOMING TRANSACTION DETECTED!");
                             Console.WriteLine($"   - Transaction Hash: {incomingTx.TxHash}");
                             Console.WriteLine($"   - Amount: {incomingTx.Amount} {payment.Currency}");
                             Console.WriteLine($"   - From: {incomingTx.FromAddress}");
                             Console.WriteLine($"   - Confirmations: {incomingTx.Confirmations}");
+                            Console.WriteLine($"   - HD Derivation: Index {payment.AddressIndex?.ToString() ?? "N/A"}");
 
                             // Update payment with discovered transaction
                             payment.TransactionHash = incomingTx.TxHash;
@@ -221,15 +223,15 @@ public class PaymentMonitorJob
                                 await _context.SaveChangesAsync();
 
                                 // Complete payment immediately
-                                Console.WriteLine($"   ?? Payment has sufficient confirmations, completing now...");
+                                Console.WriteLine($"   ? Payment has sufficient confirmations, completing now...");
                                 await _paymentService.CompletePaymentAsync(payment);
                                 await _context.Entry(payment).ReloadAsync();
-                                Console.WriteLine($"   ?? PAYMENT {payment.Id} AUTO-COMPLETED!");
+                                Console.WriteLine($"   ? PAYMENT {payment.Id} AUTO-COMPLETED!");
                             }
                             else
                             {
                                 await _context.SaveChangesAsync();
-                                Console.WriteLine($"   ?? Transaction found but waiting for confirmations ({incomingTx.Confirmations}/{payment.RequiredConfirmations})");
+                                Console.WriteLine($"   ? Transaction found but waiting for confirmations ({incomingTx.Confirmations}/{payment.RequiredConfirmations})");
                             }
                         }
                         else
@@ -315,7 +317,9 @@ public class PaymentMonitorJob
                 // Get TRC-20 transactions for this address
                 var url = $"{apiUrl}/v1/accounts/{walletAddress}/transactions/trc20?only_to=true&limit=20&contract_address={usdtContract}";
                 
-                Console.WriteLine($"   ?? Scanning Tron wallet via: {url.Replace(apiKey ?? "", "***")}");
+                // Mask API key in logs if present
+                var logUrl = !string.IsNullOrEmpty(apiKey) ? url.Replace(apiKey, "***") : url;
+                Console.WriteLine($"   ?? Scanning Tron wallet via: {logUrl}");
                 
                 var response = await client.GetAsync(url);
                 

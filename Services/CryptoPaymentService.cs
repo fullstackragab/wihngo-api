@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Wihngo.Data;
 using Wihngo.Dtos;
 using Wihngo.Models.Entities;
@@ -13,17 +14,51 @@ public class CryptoPaymentService : ICryptoPaymentService
     private readonly IBlockchainService _blockchainService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<CryptoPaymentService> _logger;
+    private readonly IHdWalletService? _hdWalletService;
 
     public CryptoPaymentService(
         AppDbContext context,
         IBlockchainService blockchainService,
         IConfiguration configuration,
-        ILogger<CryptoPaymentService> logger)
+        ILogger<CryptoPaymentService> logger,
+        IHdWalletService? hdWalletService = null)
     {
         _context = context;
         _blockchainService = blockchainService;
         _configuration = configuration;
         _logger = logger;
+        _hdWalletService = hdWalletService;
+    }
+
+    // New helper: allocate a unique index from Postgres sequence (optionally per-network)
+    private async Task<long> AllocateHdIndexAsync(string network)
+    {
+        var conn = _context.Database.GetDbConnection();
+        await conn.OpenAsync();
+        try
+        {
+            // Map network to a safe sequence name
+            var net = (network ?? string.Empty).ToLower().Trim();
+            string sequenceName = net switch
+            {
+                "ethereum" => "hd_address_index_seq_ethereum",
+                "sepolia" => "hd_address_index_seq_sepolia",
+                "tron" => "hd_address_index_seq_tron",
+                "binance-smart-chain" => "hd_address_index_seq_binance_smart_chain",
+                "polygon" => "hd_address_index_seq_polygon",
+                _ => "hd_address_index_seq"
+            };
+
+            using var cmd = conn.CreateCommand();
+            // sequenceName is selected from a whitelist above to avoid injection
+            cmd.CommandText = $"SELECT nextval('{sequenceName}')";
+            var result = await cmd.ExecuteScalarAsync();
+            return Convert.ToInt64(result);
+        }
+        finally
+        {
+            await conn.CloseAsync();
+        }
     }
 
     public async Task<PaymentResponseDto> CreatePaymentRequestAsync(Guid userId, CreatePaymentRequestDto dto)
@@ -54,6 +89,55 @@ public class CryptoPaymentService : ICryptoPaymentService
             throw new InvalidOperationException($"No wallet configured for {dto.Currency} on {dto.Network}");
         }
 
+        int? addressIndex = null;
+        
+        // If HD mnemonic configured and service available, derive a unique address per payment
+        var hdMnemonic = _configuration["PlatformWallets:HdMnemonic"];
+        if (!string.IsNullOrEmpty(hdMnemonic) && _hdWalletService != null)
+        {
+            try
+            {
+                // Allocate index atomically from Postgres sequence to avoid collisions
+                var index = (int)await AllocateHdIndexAsync(dto.Network);
+                addressIndex = index;
+
+                var derived = _hdWalletService.DeriveAddress(hdMnemonic, dto.Network, index);
+                if (!string.IsNullOrEmpty(derived))
+                {
+                    _logger.LogInformation(
+                        "[HD Wallet] Allocated index {Index} for {Network}, derived address: {Address}, path: m/44'/60'/0'/0/{Index}",
+                        index, dto.Network, derived, index);
+                    
+                    // Use derived address as unique wallet for this payment
+                    wallet = new PlatformWallet
+                    {
+                        Id = Guid.NewGuid(),
+                        Currency = wallet.Currency,
+                        Network = wallet.Network,
+                        Address = derived,
+                        IsActive = true,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow,
+                        DerivationPath = $"m/44'/60'/0'/0/{index}"
+                    };
+                }
+                else
+                {
+                    _logger.LogWarning("[HD Wallet] Failed to derive address for index {Index}, falling back to static wallet", index);
+                    addressIndex = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[HD Wallet] Failed to derive per-payment address; falling back to platform wallet");
+                addressIndex = null;
+            }
+        }
+        else
+        {
+            _logger.LogInformation("[HD Wallet] HD mnemonic not configured, using static platform wallet");
+        }
+
         // Get required confirmations
         var requiredConfirmations = GetRequiredConfirmations(dto.Network);
 
@@ -76,6 +160,7 @@ public class CryptoPaymentService : ICryptoPaymentService
             Network = dto.Network.ToLower(),
             ExchangeRate = rate.UsdRate,
             WalletAddress = wallet.Address,
+            AddressIndex = addressIndex,
             QrCodeData = qrCodeData,
             PaymentUri = paymentUri,
             RequiredConfirmations = requiredConfirmations,
@@ -88,7 +173,9 @@ public class CryptoPaymentService : ICryptoPaymentService
         _context.CryptoPaymentRequests.Add(payment);
         await _context.SaveChangesAsync();
 
-        _logger.LogInformation($"Payment request {payment.Id} created for user {userId}");
+        _logger.LogInformation(
+            "[Payment] Created payment request {PaymentId} for user {UserId} - Amount: {Amount} {Currency}, Wallet: {Wallet}, HD Index: {Index}",
+            payment.Id, userId, amountCrypto, dto.Currency, wallet.Address, addressIndex?.ToString() ?? "N/A");
 
         return MapToDto(payment);
     }
@@ -381,6 +468,7 @@ public class CryptoPaymentService : ICryptoPaymentService
             Network = payment.Network,
             ExchangeRate = payment.ExchangeRate,
             WalletAddress = payment.WalletAddress,
+            AddressIndex = payment.AddressIndex,
             UserWalletAddress = payment.UserWalletAddress,
             QrCodeData = payment.QrCodeData,
             PaymentUri = payment.PaymentUri,
