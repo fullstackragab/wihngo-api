@@ -129,6 +129,8 @@ public class CryptoPaymentService : ICryptoPaymentService
             throw new InvalidOperationException($"Payment already {payment.Status}");
         }
 
+        _logger.LogInformation($"[VerifyPayment] Verifying payment {paymentId} with tx hash {dto.TransactionHash}");
+
         // Verify transaction on blockchain
         var txInfo = await _blockchainService.VerifyTransactionAsync(
             dto.TransactionHash,
@@ -138,13 +140,15 @@ public class CryptoPaymentService : ICryptoPaymentService
 
         if (txInfo == null)
         {
+            _logger.LogWarning($"[VerifyPayment] Transaction {dto.TransactionHash} not found on blockchain");
             throw new InvalidOperationException("Transaction not found on blockchain");
         }
 
         // Verify amount (allow 1% tolerance)
         var minAmount = payment.AmountCrypto * 0.99m;
-        if (txInfo.Amount < minAmount)
+        if (txInfo.Amount < minAmount && txInfo.Amount > 0)
         {
+            _logger.LogWarning($"[VerifyPayment] Amount mismatch. Expected: {payment.AmountCrypto}, Received: {txInfo.Amount}");
             throw new InvalidOperationException(
                 $"Incorrect amount. Expected {payment.AmountCrypto}, received {txInfo.Amount}");
         }
@@ -152,8 +156,11 @@ public class CryptoPaymentService : ICryptoPaymentService
         // Verify recipient address
         if (!txInfo.ToAddress.Equals(payment.WalletAddress, StringComparison.OrdinalIgnoreCase))
         {
+            _logger.LogWarning($"[VerifyPayment] Address mismatch. Expected: {payment.WalletAddress}, Received: {txInfo.ToAddress}");
             throw new InvalidOperationException("Incorrect recipient address");
         }
+
+        var previousStatus = payment.Status;
 
         // Update payment
         payment.TransactionHash = dto.TransactionHash;
@@ -187,13 +194,19 @@ public class CryptoPaymentService : ICryptoPaymentService
         _context.CryptoTransactions.Add(transaction);
         await _context.SaveChangesAsync();
 
+        _logger.LogInformation($"[VerifyPayment] Payment {payment.Id} verified - Status: {previousStatus} -> {payment.Status}, Confirmations: {txInfo.Confirmations}/{payment.RequiredConfirmations}");
+
         // Complete payment if confirmed
         if (payment.Status == "confirmed")
         {
+            _logger.LogInformation($"[VerifyPayment] Payment {payment.Id} has required confirmations, completing now");
             await CompletePaymentAsync(payment);
+            
+            // Reload to get updated status
+            await _context.Entry(payment).ReloadAsync();
+            
+            Console.WriteLine($"? Payment {payment.Id} completed via VerifyPayment endpoint");
         }
-
-        _logger.LogInformation($"Payment {payment.Id} verified with tx {dto.TransactionHash}");
 
         return MapToDto(payment);
     }
@@ -226,22 +239,40 @@ public class CryptoPaymentService : ICryptoPaymentService
     {
         try
         {
+            var previousStatus = payment.Status;
+            
+            _logger.LogInformation($"[CompletePayment] Starting completion for payment {payment.Id} (Current status: {previousStatus})");
+            
             payment.Status = "completed";
             payment.CompletedAt = DateTime.UtcNow;
             payment.UpdatedAt = DateTime.UtcNow;
 
             if (payment.Purpose == "premium_subscription" && payment.BirdId != null)
             {
+                _logger.LogInformation($"[CompletePayment] Activating premium subscription for bird {payment.BirdId}");
                 await ActivatePremiumSubscriptionAsync(payment);
             }
 
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation($"Payment {payment.Id} completed successfully");
+            Console.WriteLine($"??? PAYMENT COMPLETED SUCCESSFULLY ???");
+            Console.WriteLine($"Payment ID: {payment.Id}");
+            Console.WriteLine($"User ID: {payment.UserId}");
+            Console.WriteLine($"Amount: {payment.AmountCrypto} {payment.Currency} (${payment.AmountUsd})");
+            Console.WriteLine($"Purpose: {payment.Purpose}");
+            Console.WriteLine($"Plan: {payment.Plan}");
+            Console.WriteLine($"Status: {previousStatus} -> {payment.Status}");
+            Console.WriteLine($"Completed At: {payment.CompletedAt:yyyy-MM-dd HH:mm:ss} UTC");
+            Console.WriteLine($"Transaction Hash: {payment.TransactionHash}");
+            Console.WriteLine($"===========================================");
+
+            _logger.LogInformation($"[CompletePayment] ? Payment {payment.Id} completed successfully - Status changed from '{previousStatus}' to '{payment.Status}'");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, $"Failed to complete payment {payment.Id}");
+            _logger.LogError(ex, $"[CompletePayment] ? Failed to complete payment {payment.Id}");
+            Console.WriteLine($"? ERROR: Failed to complete payment {payment.Id}: {ex.Message}");
+            
             payment.Status = "failed";
             await _context.SaveChangesAsync();
         }

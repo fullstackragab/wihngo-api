@@ -1,6 +1,8 @@
 using System.Numerics;
 using System.Text.Json;
 using Nethereum.Web3;
+using Nethereum.Hex.HexTypes;
+using Nethereum.ABI.FunctionEncoding;
 using Wihngo.Services.Interfaces;
 
 namespace Wihngo.Services;
@@ -10,6 +12,9 @@ public class BlockchainVerificationService : IBlockchainService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly ILogger<BlockchainVerificationService> _logger;
+
+    // ERC-20 Transfer event signature: Transfer(address,address,uint256)
+    private const string ERC20_TRANSFER_EVENT_SIGNATURE = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
     public BlockchainVerificationService(
         IHttpClientFactory httpClientFactory,
@@ -224,16 +229,87 @@ public class BlockchainVerificationService : IBlockchainService
 
             if (currency is "USDT" or "USDC")
             {
-                // ERC-20 token - simplified verification
-                // For production, use Nethereum's event decoding or manual parsing
-                // For now, just check if transaction succeeded and assume amount is correct
-                // The frontend will need to specify the amount, and we'll verify it matches
+                // ERC-20 token - decode Transfer event from logs
+                _logger.LogInformation($"Processing ERC-20 token {currency} on {network} transaction {txHash}");
                 
-                // Log contains the actual transfer data but requires more complex parsing
-                _logger.LogWarning($"ERC-20 token verification for {currency} is simplified. Manual amount verification recommended.");
-                
-                // Return basic info - amount will be verified against payment request
-                amount = 0; // Will be validated against expected amount in service
+                if (receipt.Logs != null && receipt.Logs.Count > 0)
+                {
+                    // Find Transfer event in logs
+                    foreach (var log in receipt.Logs)
+                    {
+                        var topics = log["topics"];
+                        if (topics != null && topics.HasValues)
+                        {
+                            var topicsArray = topics.ToObject<string[]>();
+                            if (topicsArray != null && topicsArray.Length > 0)
+                            {
+                                var eventSignature = topicsArray[0];
+                                
+                                if (eventSignature.Equals(ERC20_TRANSFER_EVENT_SIGNATURE, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // Topics[0] = event signature
+                                    // Topics[1] = from address (indexed)
+                                    // Topics[2] = to address (indexed)
+                                    // Data = amount (non-indexed)
+                                    
+                                    if (topicsArray.Length >= 3)
+                                    {
+                                        // Extract from address (remove leading zeros, keep last 20 bytes = 40 hex chars)
+                                        var fromHex = topicsArray[1];
+                                        if (fromHex.StartsWith("0x") && fromHex.Length >= 66)
+                                        {
+                                            fromAddress = "0x" + fromHex.Substring(26); // Skip "0x" + 24 chars of padding
+                                        }
+                                        
+                                        // Extract to address
+                                        var toHex = topicsArray[2];
+                                        if (toHex.StartsWith("0x") && toHex.Length >= 66)
+                                        {
+                                            toAddress = "0x" + toHex.Substring(26);
+                                        }
+                                    }
+                                    
+                                    // Extract amount from data field
+                                    var dataToken = log["data"];
+                                    if (dataToken != null)
+                                    {
+                                        var dataHex = dataToken.ToString();
+                                        if (!string.IsNullOrEmpty(dataHex) && dataHex.StartsWith("0x"))
+                                        {
+                                            // Remove "0x" prefix
+                                            var hexValue = dataHex.Substring(2);
+                                            
+                                            // Parse as BigInteger
+                                            if (hexValue.Length > 0)
+                                            {
+                                                var amountWei = BigInteger.Parse("0" + hexValue, System.Globalization.NumberStyles.HexNumber);
+                                                
+                                                // Get decimals based on currency and network
+                                                var decimals = GetTokenDecimals(currency, network);
+                                                var divisor = (decimal)BigInteger.Pow(10, decimals);
+                                                amount = (decimal)amountWei / divisor;
+                                                
+                                                _logger.LogInformation($"Decoded ERC-20 transfer: {amount} {currency} (decimals: {decimals}) from {fromAddress} to {toAddress}");
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Found the Transfer event, break
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (amount == 0)
+                    {
+                        _logger.LogWarning($"Could not decode amount from ERC-20 Transfer event for {txHash}");
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning($"No logs found in receipt for ERC-20 transaction {txHash}");
+                }
             }
             else
             {
@@ -261,6 +337,31 @@ public class BlockchainVerificationService : IBlockchainService
             _logger.LogError(ex, $"EVM verification error for {txHash}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Get the number of decimals for a specific token on a specific network
+    /// </summary>
+    private int GetTokenDecimals(string currency, string network)
+    {
+        var key = $"{currency.ToUpper()}_{network.ToLower()}";
+        
+        return key switch
+        {
+            // USDT implementations
+            "USDT_tron" => 6,                    // TRC-20 USDT
+            "USDT_ethereum" => 6,                // ERC-20 USDT
+            "USDT_binance-smart-chain" => 18,   // BEP-20 USDT
+            "USDT_polygon" => 6,                 // Polygon USDT
+            
+            // USDC implementations
+            "USDC_ethereum" => 6,                // ERC-20 USDC
+            "USDC_binance-smart-chain" => 18,   // BEP-20 USDC
+            "USDC_polygon" => 6,                 // Polygon USDC
+            
+            // Default to 6 decimals (most common for stablecoins)
+            _ => 6
+        };
     }
 
     private async Task<TransactionInfo?> VerifyBitcoinTransactionAsync(string txHash)

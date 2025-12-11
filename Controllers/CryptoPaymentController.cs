@@ -87,10 +87,11 @@ public class CryptoPaymentController : ControllerBase
             // If payment has a transaction hash and is pending/confirming, check blockchain immediately
             // This provides real-time updates without requiring a separate check-status endpoint call
             if (payment.TransactionHash != null && 
-                (payment.Status == "pending" || payment.Status == "confirming"))
+                (payment.Status == "pending" || payment.Status == "confirming" || payment.Status == "confirmed"))
             {
                 try
                 {
+                    var previousStatus = payment.Status;
                     var blockchainService = HttpContext.RequestServices.GetRequiredService<IBlockchainService>();
                     var txInfo = await blockchainService.VerifyTransactionAsync(
                         payment.TransactionHash,
@@ -104,20 +105,40 @@ public class CryptoPaymentController : ControllerBase
 
                         if (txInfo.Confirmations >= payment.RequiredConfirmations)
                         {
-                            payment.Status = "confirmed";
-                            payment.ConfirmedAt = DateTime.UtcNow;
-                            payment.UpdatedAt = DateTime.UtcNow;
+                            if (payment.Status == "confirmed")
+                            {
+                                // Already confirmed but not completed - complete it now
+                                _logger.LogInformation($"[GetPayment] Payment {payment.Id} is confirmed, completing now");
+                                await _paymentService.CompletePaymentAsync(payment);
+                                await _context.Entry(payment).ReloadAsync();
+                                
+                                Console.WriteLine($"? Payment {payment.Id} completed via GetPayment endpoint");
+                                _logger.LogInformation($"[GetPayment] Payment {payment.Id} completed - Status: {previousStatus} -> {payment.Status}");
+                            }
+                            else if (payment.Status != "completed")
+                            {
+                                // First time reaching required confirmations
+                                payment.Status = "confirmed";
+                                payment.ConfirmedAt = DateTime.UtcNow;
+                                payment.UpdatedAt = DateTime.UtcNow;
 
-                            await _context.SaveChangesAsync();
-                            await _paymentService.CompletePaymentAsync(payment);
+                                await _context.SaveChangesAsync();
+                                
+                                _logger.LogInformation($"[GetPayment] Payment {payment.Id} confirmed, completing now");
+                                await _paymentService.CompletePaymentAsync(payment);
+                                await _context.Entry(payment).ReloadAsync();
 
-                            _logger.LogInformation($"Payment {payment.Id} confirmed via GetPayment poll");
+                                Console.WriteLine($"? Payment {payment.Id} completed via GetPayment endpoint");
+                                _logger.LogInformation($"[GetPayment] Payment {payment.Id} completed - Status: {previousStatus} -> {payment.Status}");
+                            }
                         }
                         else if (payment.Status != "confirming")
                         {
                             payment.Status = "confirming";
                             payment.UpdatedAt = DateTime.UtcNow;
                             await _context.SaveChangesAsync();
+                            
+                            _logger.LogInformation($"[GetPayment] Payment {payment.Id} status changed to 'confirming' ({txInfo.Confirmations}/{payment.RequiredConfirmations} confirmations)");
                         }
                     }
                 }
@@ -384,10 +405,11 @@ public class CryptoPaymentController : ControllerBase
 
             // If payment has a transaction hash and is pending/confirming, check blockchain immediately
             if (payment.TransactionHash != null && 
-                (payment.Status == "pending" || payment.Status == "confirming"))
+                (payment.Status == "pending" || payment.Status == "confirming" || payment.Status == "confirmed"))
             {
                 try
                 {
+                    var previousStatus = payment.Status;
                     var blockchainService = HttpContext.RequestServices.GetRequiredService<IBlockchainService>();
                     var txInfo = await blockchainService.VerifyTransactionAsync(
                         payment.TransactionHash,
@@ -401,20 +423,40 @@ public class CryptoPaymentController : ControllerBase
 
                         if (txInfo.Confirmations >= payment.RequiredConfirmations)
                         {
-                            payment.Status = "confirmed";
-                            payment.ConfirmedAt = DateTime.UtcNow;
-                            payment.UpdatedAt = DateTime.UtcNow;
+                            if (payment.Status == "confirmed")
+                            {
+                                // Already confirmed but not completed - complete it now
+                                _logger.LogInformation($"[CheckStatus] Payment {payment.Id} is confirmed, completing now");
+                                await _paymentService.CompletePaymentAsync(payment);
+                                await _context.Entry(payment).ReloadAsync();
+                                
+                                Console.WriteLine($"? Payment {payment.Id} completed via CheckStatus endpoint");
+                                _logger.LogInformation($"[CheckStatus] Payment {payment.Id} completed - Status: {previousStatus} -> {payment.Status}");
+                            }
+                            else if (payment.Status != "completed")
+                            {
+                                // First time reaching required confirmations
+                                payment.Status = "confirmed";
+                                payment.ConfirmedAt = DateTime.UtcNow;
+                                payment.UpdatedAt = DateTime.UtcNow;
 
-                            await _context.SaveChangesAsync();
-                            await _paymentService.CompletePaymentAsync(payment);
+                                await _context.SaveChangesAsync();
+                                
+                                _logger.LogInformation($"[CheckStatus] Payment {payment.Id} confirmed, completing now");
+                                await _paymentService.CompletePaymentAsync(payment);
+                                await _context.Entry(payment).ReloadAsync();
 
-                            _logger.LogInformation($"Payment {payment.Id} confirmed via status check");
+                                Console.WriteLine($"? Payment {payment.Id} completed via CheckStatus endpoint");
+                                _logger.LogInformation($"[CheckStatus] Payment {payment.Id} completed - Status: {previousStatus} -> {payment.Status}");
+                            }
                         }
                         else
                         {
                             payment.Status = "confirming";
                             payment.UpdatedAt = DateTime.UtcNow;
                             await _context.SaveChangesAsync();
+                            
+                            _logger.LogInformation($"[CheckStatus] Payment {payment.Id} status changed to 'confirming' ({txInfo.Confirmations}/{payment.RequiredConfirmations} confirmations)");
                         }
                     }
                 }
