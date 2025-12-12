@@ -10,6 +10,8 @@ using Hangfire.PostgreSql;
 using Wihngo.Services;
 using Wihngo.Services.Interfaces;
 using Wihngo.BackgroundJobs;
+using Wihngo.Configuration;
+using Wihngo.Models.Entities;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,10 +26,10 @@ builder.Logging.AddConsole();
 builder.Logging.AddFilter("Microsoft", LogLevel.None);
 builder.Logging.AddFilter("System", LogLevel.None);
 // TEMPORARY: Enable Hangfire logs to diagnose dashboard issue
-builder.Logging.AddFilter("Hangfire", LogLevel.Warning);  // Changed from None to see errors
-builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);  // Enable to see HTTP errors
+builder.Logging.AddFilter("Hangfire", LogLevel.Warning);
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.None);
-builder.Logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Information);  // Show startup info
+builder.Logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Information);
 
 // ? Enable ONLY crypto payment logs
 builder.Logging.AddFilter("Wihngo.Services.CryptoPaymentService", LogLevel.Information);
@@ -43,6 +45,15 @@ builder.Logging.AddFilter("Wihngo.Services.EvmBlockchainMonitor", LogLevel.Infor
 builder.Logging.AddFilter("Wihngo.Services.SolanaBlockchainMonitor", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Services.StellarBlockchainMonitor", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Controllers.OnChainDepositController", LogLevel.Information);
+
+// ? Enable invoice/payment system logs
+builder.Logging.AddFilter("Wihngo.Services.InvoiceService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.PayPalService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.SolanaListenerService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.EvmListenerService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Controllers.InvoicesController", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Controllers.PaymentsController", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Controllers.WebhooksController", LogLevel.Information);
 
 // Configure console logging format
 builder.Logging.AddSimpleConsole(options =>
@@ -60,7 +71,7 @@ builder.Services.AddControllers().AddJsonOptions(opts =>
     // Prevent circular reference errors when returning EF entities with navigation properties
     opts.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
 });
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+
 builder.Services.AddOpenApi();
 
 // Register AutoMapper with explicit profile
@@ -68,10 +79,17 @@ builder.Services.AddAutoMapper(cfg => cfg.AddProfile<AutoMapperProfile>());
 
 // Register DbContext using PostgreSQL (Npgsql)
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-                       ?? "Host=localhost;Port=5432;Database=wihngo;Username=postgres;Password=postgres";
+                       ?? "Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;SSL Mode=Require;Trust Server Certificate=true";
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString)
            .UseSnakeCaseNamingConvention());
+
+// Configuration Options
+builder.Services.Configure<InvoiceConfiguration>(builder.Configuration.GetSection("Invoice"));
+builder.Services.Configure<SolanaConfiguration>(builder.Configuration.GetSection("Solana"));
+builder.Services.Configure<Wihngo.Configuration.BaseConfiguration>(builder.Configuration.GetSection("Base"));
+builder.Services.Configure<PayPalConfiguration>(builder.Configuration.GetSection("PayPal"));
+builder.Services.Configure<SmtpConfiguration>(builder.Configuration.GetSection("Smtp"));
 
 // HttpClient
 builder.Services.AddHttpClient();
@@ -82,7 +100,6 @@ builder.Services.AddScoped<TokenService>();
 // Crypto Payment Services
 builder.Services.AddScoped<ICryptoPaymentService, CryptoPaymentService>();
 builder.Services.AddScoped<IBlockchainService, BlockchainVerificationService>();
-// Register HdWalletService if mnemonic-based derivation is desired
 builder.Services.AddScoped<IHdWalletService, HdWalletService>();
 builder.Services.AddScoped<ExchangeRateUpdateJob>();
 builder.Services.AddScoped<PaymentMonitorJob>();
@@ -93,6 +110,19 @@ builder.Services.AddScoped<IEvmBlockchainMonitor, EvmBlockchainMonitor>();
 builder.Services.AddScoped<ISolanaBlockchainMonitor, SolanaBlockchainMonitor>();
 builder.Services.AddScoped<IStellarBlockchainMonitor, StellarBlockchainMonitor>();
 builder.Services.AddHostedService<OnChainDepositBackgroundService>();
+
+// Invoice & Payment System Services
+builder.Services.AddScoped<IInvoiceService, InvoiceService>();
+builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
+builder.Services.AddScoped<IInvoiceEmailService, InvoiceEmailService>();
+builder.Services.AddScoped<IPayPalService, PayPalService>();
+builder.Services.AddScoped<IPaymentAuditService, PaymentAuditService>();
+builder.Services.AddScoped<IRefundService, RefundService>();
+builder.Services.AddScoped<ReconciliationJob>();
+
+// Blockchain Listener Services
+builder.Services.AddHostedService<SolanaListenerService>();
+builder.Services.AddHostedService<EvmListenerService>();
 
 // Notification Services
 builder.Services.AddScoped<INotificationService, NotificationService>();
@@ -186,7 +216,6 @@ builder.Services.AddCors(options =>
         });
 });
 
-
 var app = builder.Build();
 
 // ========================================
@@ -230,11 +259,111 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        db.Database.EnsureCreated();
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        
+        logger.LogInformation("Checking database connection...");
+        
+        // For a fresh database, create all tables
+        var created = db.Database.EnsureCreated();
+        
+        if (created)
+        {
+            logger.LogInformation("? Database created successfully!");
+            
+            // Seed initial data
+            await SeedDatabaseAsync(db, logger);
+        }
+        else
+        {
+            logger.LogInformation("? Database already exists");
+        }
     }
-    catch
+    catch (Exception ex)
     {
-        // ignore if DB not reachable during build step
+        Console.WriteLine($"?? Database initialization warning: {ex.Message}");
+        // Continue anyway - migrations might handle it
+    }
+}
+
+// Add this method before app.Run()
+async Task SeedDatabaseAsync(AppDbContext db, ILogger logger)
+{
+    try
+    {
+        // Create invoice sequence if it doesn't exist
+        await db.Database.ExecuteSqlRawAsync(@"
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_sequences WHERE schemaname = 'public' AND sequencename = 'wihngo_invoice_seq') THEN
+                    CREATE SEQUENCE wihngo_invoice_seq START 1;
+                END IF;
+            END $$;
+        ");
+        
+        logger.LogInformation("? Invoice sequence created");
+        
+        // Seed supported tokens if not exist
+        if (!await db.SupportedTokens.AnyAsync())
+        {
+            var tokens = new[]
+            {
+                new SupportedToken
+                {
+                    Id = Guid.NewGuid(),
+                    TokenSymbol = "USDC",
+                    Chain = "solana",
+                    MintAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    Decimals = 6,
+                    IsActive = true,
+                    TolerancePercent = 0.5m,
+                    CreatedAt = DateTime.UtcNow
+                },
+                new SupportedToken
+                {
+                    Id = Guid.NewGuid(),
+                    TokenSymbol = "EURC",
+                    Chain = "solana",
+                    MintAddress = "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr",
+                    Decimals = 6,
+                    IsActive = true,
+                    TolerancePercent = 0.5m,
+                    CreatedAt = DateTime.UtcNow
+                },
+                new SupportedToken
+                {
+                    Id = Guid.NewGuid(),
+                    TokenSymbol = "USDC",
+                    Chain = "base",
+                    MintAddress = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+                    Decimals = 6,
+                    IsActive = true,
+                    TolerancePercent = 0.5m,
+                    CreatedAt = DateTime.UtcNow
+                },
+                new SupportedToken
+                {
+                    Id = Guid.NewGuid(),
+                    TokenSymbol = "EURC",
+                    Chain = "base",
+                    MintAddress = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42",
+                    Decimals = 6,
+                    IsActive = true,
+                    TolerancePercent = 0.5m,
+                    CreatedAt = DateTime.UtcNow
+                }
+            };
+            
+            await db.SupportedTokens.AddRangeAsync(tokens);
+            await db.SaveChangesAsync();
+            
+            logger.LogInformation("? Seeded {Count} supported tokens", tokens.Length);
+        }
+        
+        logger.LogInformation("? Database seeding complete");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "? Error seeding database");
     }
 }
 
@@ -261,6 +390,7 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 });
 Console.WriteLine("? Hangfire Dashboard registered");
 Console.WriteLine("");
+
 
 // ========================================
 // ?? TEST ENDPOINTS
@@ -327,6 +457,13 @@ for (int attempt = 0; attempt < 3; attempt++)
             "process-charity-allocations",
             job => job.ProcessMonthlyAllocationsAsync(),
             Cron.Monthly // Monthly on the 1st
+        );
+
+        // Invoice & Payment System Jobs
+        RecurringJob.AddOrUpdate<ReconciliationJob>(
+            "reconcile-payments",
+            job => job.ReconcilePaymentsAsync(),
+            "0 3 * * *" // Daily at 3 AM UTC
         );
         
         break; // Success - exit retry loop

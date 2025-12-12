@@ -3,6 +3,8 @@ namespace Wihngo.Controllers
     using AutoMapper;
     using Microsoft.AspNetCore.Mvc;
     using Microsoft.EntityFrameworkCore;
+    using System.Security.Claims;
+    using Microsoft.AspNetCore.Authorization;
     using Wihngo.Data;
     using Wihngo.Dtos;
     using Wihngo.Models;
@@ -13,11 +15,13 @@ namespace Wihngo.Controllers
     {
         private readonly AppDbContext _db;
         private readonly IMapper _mapper;
+        private readonly ILogger<UsersController> _logger;
 
-        public UsersController(AppDbContext db, IMapper mapper)
+        public UsersController(AppDbContext db, IMapper mapper, ILogger<UsersController> logger)
         {
             _db = db;
             _mapper = mapper;
+            _logger = logger;
         }
 
         [HttpGet]
@@ -133,5 +137,85 @@ namespace Wihngo.Controllers
             await _db.SaveChangesAsync();
             return NoContent();
         }
+
+        /// <summary>
+        /// Register or update push token for user
+        /// POST /api/users/{userId}/push-token
+        /// </summary>
+        [HttpPost("{userId}/push-token")]
+        [Authorize]
+        public async Task<IActionResult> RegisterPushToken(Guid userId, [FromBody] RegisterPushTokenRequest request)
+        {
+            try
+            {
+                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var authenticatedUserId))
+                {
+                    return Unauthorized(new { message = "Invalid user authentication" });
+                }
+
+                // Verify the user is updating their own push token
+                if (userId != authenticatedUserId)
+                {
+                    return Forbid();
+                }
+
+                if (string.IsNullOrEmpty(request.PushToken))
+                {
+                    return BadRequest(new { message = "Push token is required" });
+                }
+
+                // Check if device already exists
+                var existingDevice = await _db.UserDevices
+                    .FirstOrDefaultAsync(d => d.UserId == userId && d.PushToken == request.PushToken);
+
+                if (existingDevice != null)
+                {
+                    // Update existing device
+                    existingDevice.DeviceType = request.DeviceType ?? existingDevice.DeviceType;
+                    existingDevice.DeviceName = request.DeviceName ?? existingDevice.DeviceName;
+                    existingDevice.IsActive = true;
+                    existingDevice.LastUsedAt = DateTime.UtcNow;
+                }
+                else
+                {
+                    // Create new device
+                    var device = new UserDevice
+                    {
+                        UserId = userId,
+                        PushToken = request.PushToken,
+                        DeviceType = request.DeviceType ?? "unknown",
+                        DeviceName = request.DeviceName,
+                        IsActive = true,
+                        CreatedAt = DateTime.UtcNow,
+                        LastUsedAt = DateTime.UtcNow
+                    };
+
+                    _db.UserDevices.Add(device);
+                }
+
+                await _db.SaveChangesAsync();
+
+                _logger.LogInformation("Registered push token for user {UserId}", userId);
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "Push token registered successfully"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to register push token for user {UserId}", userId);
+                return StatusCode(500, new { message = "Failed to register push token", error = ex.Message });
+            }
+        }
+    }
+
+    public class RegisterPushTokenRequest
+    {
+        public string PushToken { get; set; } = string.Empty;
+        public string? DeviceType { get; set; }
+        public string? DeviceName { get; set; }
     }
 }

@@ -150,5 +150,42 @@ namespace Wihngo.Services
                 _logger.LogError(ex, $"Error deactivating device token: {pushToken}");
             }
         }
+
+        public async Task SendInvoiceIssuedNotificationAsync(Guid userId, string invoiceNumber)
+        {
+            try
+            {
+                var devices = await _db.UserDevices
+                    .Where(d => d.UserId == userId && d.IsActive)
+                    .ToListAsync();
+
+                if (!devices.Any())
+                {
+                    _logger.LogInformation("No active devices found for user {UserId}", userId);
+                    return;
+                }
+
+                var title = "Payment Receipt Ready";
+                var message = $"Your Wihngo payment receipt {invoiceNumber} is ready";
+                var data = new Dictionary<string, object>
+                {
+                    { "type", "invoice_issued" },
+                    { "invoiceNumber", invoiceNumber },
+                    { "deepLink", $"wihngo://invoices/{invoiceNumber}" }
+                };
+
+                var tasks = devices.Select(device =>
+                    SendToDeviceAsync(device.PushToken, title, message, data));
+
+                await Task.WhenAll(tasks);
+
+                _logger.LogInformation("Sent invoice issued notification to {DeviceCount} devices for user {UserId}",
+                    devices.Count, userId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending invoice issued notification for user {UserId}", userId);
+            }
+        }
     }
 }

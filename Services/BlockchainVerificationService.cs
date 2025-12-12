@@ -237,69 +237,60 @@ public class BlockchainVerificationService : IBlockchainService
             {
                 Console.WriteLine($"   Processing ERC-20/BEP-20 token: {currency}");
                 
-                if (receipt.Logs != null && receipt.Logs.Count > 0)
+                if (receipt.Logs != null && receipt.Logs.Length > 0)
                 {
-                    Console.WriteLine($"   - Found {receipt.Logs.Count} log entries");
+                    Console.WriteLine($"   - Found {receipt.Logs.Length} log entries");
                     
                     // Find Transfer event in logs
                     int logIndex = 0;
                     foreach (var log in receipt.Logs)
                     {
-                        var topics = log["topics"];
-                        if (topics != null && topics.HasValues)
+                        if (log.Topics != null && log.Topics.Length > 0)
                         {
-                            var topicsArray = topics.ToObject<string[]>();
-                            if (topicsArray != null && topicsArray.Length > 0)
+                            var eventSignature = log.Topics[0]?.ToString() ?? "";
+                            
+                            Console.WriteLine($"   - Log {logIndex}: Event signature = {eventSignature}");
+                            
+                            if (string.Equals(eventSignature, ERC20_TRANSFER_EVENT_SIGNATURE, StringComparison.OrdinalIgnoreCase))
                             {
-                                var eventSignature = topicsArray[0];
+                                Console.WriteLine($"   ? Found Transfer event!");
                                 
-                                Console.WriteLine($"   - Log {logIndex}: Event signature = {eventSignature}");
-                                
-                                if (eventSignature.Equals(ERC20_TRANSFER_EVENT_SIGNATURE, StringComparison.OrdinalIgnoreCase))
+                                if (log.Topics.Length >= 3)
                                 {
-                                    Console.WriteLine($"   ? Found Transfer event!");
-                                    
-                                    if (topicsArray.Length >= 3)
+                                    var fromHex = log.Topics[1]?.ToString() ?? "";
+                                    if (fromHex.StartsWith("0x") && fromHex.Length >= 66)
                                     {
-                                        var fromHex = topicsArray[1];
-                                        if (fromHex.StartsWith("0x") && fromHex.Length >= 66)
-                                        {
-                                            fromAddress = "0x" + fromHex.Substring(26);
-                                            Console.WriteLine($"   - From address: {fromAddress}");
-                                        }
-                                        
-                                        var toHex = topicsArray[2];
-                                        if (toHex.StartsWith("0x") && toHex.Length >= 66)
-                                        {
-                                            toAddress = "0x" + toHex.Substring(26);
-                                            Console.WriteLine($"   - To address: {toAddress}");
-                                        }
+                                        fromAddress = "0x" + fromHex.Substring(26);
+                                        Console.WriteLine($"   - From address: {fromAddress}");
                                     }
                                     
-                                    var dataToken = log["data"];
-                                    if (dataToken != null)
+                                    var toHex = log.Topics[2]?.ToString() ?? "";
+                                    if (toHex.StartsWith("0x") && toHex.Length >= 66)
                                     {
-                                        var dataHex = dataToken.ToString();
-                                        if (!string.IsNullOrEmpty(dataHex) && dataHex.StartsWith("0x"))
-                                        {
-                                            var hexValue = dataHex.Substring(2);
-                                            
-                                            if (hexValue.Length > 0)
-                                            {
-                                                var amountWei = BigInteger.Parse("0" + hexValue, System.Globalization.NumberStyles.HexNumber);
-                                                var decimals = GetTokenDecimals(currency, network);
-                                                var divisor = (decimal)BigInteger.Pow(10, decimals);
-                                                amount = (decimal)amountWei / divisor;
-                                                
-                                                Console.WriteLine($"   - Raw amount: {amountWei}");
-                                                Console.WriteLine($"   - Decimals: {decimals}");
-                                                Console.WriteLine($"   - Final amount: {amount} {currency}");
-                                            }
-                                        }
+                                        toAddress = "0x" + toHex.Substring(26);
+                                        Console.WriteLine($"   - To address: {toAddress}");
                                     }
-                                    
-                                    break;
                                 }
+                                
+                                var dataHex = log.Data;
+                                if (!string.IsNullOrEmpty(dataHex) && dataHex.StartsWith("0x"))
+                                {
+                                    var hexValue = dataHex.Substring(2);
+                                    
+                                    if (hexValue.Length > 0)
+                                    {
+                                        var amountWei = BigInteger.Parse("0" + hexValue, System.Globalization.NumberStyles.HexNumber);
+                                        var decimals = GetTokenDecimals(currency, network);
+                                        var divisor = (decimal)BigInteger.Pow(10, decimals);
+                                        amount = (decimal)amountWei / divisor;
+                                        
+                                        Console.WriteLine($"   - Raw amount: {amountWei}");
+                                        Console.WriteLine($"   - Decimals: {decimals}");
+                                        Console.WriteLine($"   - Final amount: {amount} {currency}");
+                                    }
+                                }
+                                
+                                break;
                             }
                         }
                         logIndex++;
