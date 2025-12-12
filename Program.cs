@@ -36,6 +36,14 @@ builder.Logging.AddFilter("Wihngo.Controllers.CryptoPaymentsController", LogLeve
 builder.Logging.AddFilter("Wihngo.BackgroundJobs.ExchangeRateUpdateJob", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.BackgroundJobs.PaymentMonitorJob", LogLevel.Information);
 
+// ? Enable on-chain deposit monitoring logs
+builder.Logging.AddFilter("Wihngo.Services.OnChainDepositService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.OnChainDepositBackgroundService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.EvmBlockchainMonitor", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.SolanaBlockchainMonitor", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.StellarBlockchainMonitor", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Controllers.OnChainDepositController", LogLevel.Information);
+
 // Configure console logging format
 builder.Logging.AddSimpleConsole(options =>
 {
@@ -78,6 +86,13 @@ builder.Services.AddScoped<IBlockchainService, BlockchainVerificationService>();
 builder.Services.AddScoped<IHdWalletService, HdWalletService>();
 builder.Services.AddScoped<ExchangeRateUpdateJob>();
 builder.Services.AddScoped<PaymentMonitorJob>();
+
+// On-Chain Deposit Services
+builder.Services.AddScoped<IOnChainDepositService, OnChainDepositService>();
+builder.Services.AddScoped<IEvmBlockchainMonitor, EvmBlockchainMonitor>();
+builder.Services.AddScoped<ISolanaBlockchainMonitor, SolanaBlockchainMonitor>();
+builder.Services.AddScoped<IStellarBlockchainMonitor, StellarBlockchainMonitor>();
+builder.Services.AddHostedService<OnChainDepositBackgroundService>();
 
 // Notification Services
 builder.Services.AddScoped<INotificationService, NotificationService>();

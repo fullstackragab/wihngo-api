@@ -28,6 +28,8 @@ namespace Wihngo.Data
         public DbSet<CryptoTransaction> CryptoTransactions { get; set; } = null!;
         public DbSet<CryptoExchangeRate> CryptoExchangeRates { get; set; } = null!;
         public DbSet<CryptoPaymentMethod> CryptoPaymentMethods { get; set; } = null!;
+        public DbSet<OnChainDeposit> OnChainDeposits { get; set; } = null!;
+        public DbSet<TokenConfiguration> TokenConfigurations { get; set; } = null!;
 
         // Notification Entities
         public DbSet<Notification> Notifications { get; set; } = null!;
@@ -148,6 +150,31 @@ namespace Wihngo.Data
 
             modelBuilder.Entity<CryptoPaymentRequest>()
                 .HasIndex(p => p.ExpiresAt);
+
+            // OnChainDeposit indexes
+            modelBuilder.Entity<OnChainDeposit>()
+                .HasIndex(d => d.UserId);
+
+            modelBuilder.Entity<OnChainDeposit>()
+                .HasIndex(d => d.TxHashOrSig)
+                .IsUnique();
+
+            modelBuilder.Entity<OnChainDeposit>()
+                .HasIndex(d => d.Status);
+
+            modelBuilder.Entity<OnChainDeposit>()
+                .HasIndex(d => new { d.Chain, d.AddressOrAccount });
+
+            modelBuilder.Entity<OnChainDeposit>()
+                .HasIndex(d => d.DetectedAt);
+
+            // TokenConfiguration indexes and unique constraint
+            modelBuilder.Entity<TokenConfiguration>()
+                .HasIndex(t => new { t.Token, t.Chain })
+                .IsUnique();
+
+            modelBuilder.Entity<TokenConfiguration>()
+                .HasIndex(t => t.IsActive);
 
             // Notification indexes
             modelBuilder.Entity<Notification>()

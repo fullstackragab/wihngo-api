@@ -30,8 +30,10 @@
     <PackageReference Include="Hangfire.Core" Version="1.8.14" />
     <PackageReference Include="Hangfire.PostgreSql" Version="1.20.9" />
     <PackageReference Include="Hangfire.AspNetCore" Version="1.8.14" />
-    <PackageReference Include="Nethereum.Web3" Version="4.19.0" />
+    <PackageReference Include="Nethereum.Web3" Version="5.0.0" />
     <PackageReference Include="NBitcoin" Version="7.0.36" />
+    <PackageReference Include="Solnet.Wallet" Version="6.1.0" />
+    <PackageReference Include="stellar-dotnet-sdk" Version="14.0.1" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.1.2" />
   </ItemGroup>
 
