@@ -263,7 +263,8 @@ public class PaymentMonitorJob
     }
 
     /// <summary>
-    /// Scan a wallet address for incoming transactions matching the expected amount
+    /// Scan a wallet address for incoming transactions.
+    /// Supports: Tron, Ethereum, and Binance Smart Chain networks.
     /// </summary>
     private async Task<IncomingTransaction?> ScanWalletForIncomingTransactionAsync(
         string walletAddress,
@@ -274,12 +275,15 @@ public class PaymentMonitorJob
     {
         try
         {
-            if (network.ToLower() == "tron")
+            var normalizedNetwork = network.ToLower();
+            
+            return normalizedNetwork switch
             {
-                return await ScanTronWalletAsync(walletAddress, currency, expectedAmount, since);
-            }
-            // Add support for other networks as needed
-            return null;
+                "tron" => await ScanTronWalletAsync(walletAddress, currency, expectedAmount, since),
+                "ethereum" => await ScanEvmWalletAsync(walletAddress, currency, "ethereum", expectedAmount, since),
+                "binance-smart-chain" => await ScanEvmWalletAsync(walletAddress, currency, "binance-smart-chain", expectedAmount, since),
+                _ => null
+            };
         }
         catch (Exception ex)
         {
@@ -289,7 +293,9 @@ public class PaymentMonitorJob
     }
 
     /// <summary>
-    /// Scan Tron wallet for incoming USDT/TRX transactions
+    /// Scan Tron wallet for incoming USDT transactions.
+    /// With HD wallets, we match ONLY the destination address (to our unique HD address).
+    /// Supported currencies: USDT
     /// </summary>
     private async Task<IncomingTransaction?> ScanTronWalletAsync(
         string walletAddress,
@@ -340,9 +346,8 @@ public class PaymentMonitorJob
 
                 Console.WriteLine($"   ?? Found {transactions.GetArrayLength()} recent TRC-20 transactions");
 
-                // Look for matching transaction
+                // Look for ANY transaction to this address (no amount matching with HD wallets)
                 var sinceTimestamp = new DateTimeOffset(since).ToUnixTimeMilliseconds();
-                var tolerance = expectedAmount * 0.01m; // 1% tolerance
 
                 foreach (var tx in transactions.EnumerateArray())
                 {
@@ -358,6 +363,7 @@ public class PaymentMonitorJob
                     var value = tx.GetProperty("value").GetString();
                     var txId = tx.GetProperty("transaction_id").GetString();
 
+                    // HD Wallet: Only match destination address (our unique address)
                     if (to?.Equals(walletAddress, StringComparison.OrdinalIgnoreCase) == true && 
                         !string.IsNullOrEmpty(value) && 
                         !string.IsNullOrEmpty(txId))
@@ -365,78 +371,38 @@ public class PaymentMonitorJob
                         // TRC-20 USDT has 6 decimals
                         var amount = decimal.Parse(value) / 1_000_000m;
                         
-                        Console.WriteLine($"   ?? Checking tx {txId}: {amount} USDT");
+                        Console.WriteLine($"   ? Found USDT transaction to HD address {walletAddress}");
+                        Console.WriteLine($"   - TxID: {txId}");
+                        Console.WriteLine($"   - Amount: {amount} USDT (expected: {expectedAmount} USDT)");
 
-                        // Check if amount matches (within tolerance)
-                        if (Math.Abs(amount - expectedAmount) <= tolerance)
+                        // Verify transaction to get confirmations
+                        var txInfo = await _blockchainService.VerifyTransactionAsync(txId, currency, "tron");
+                        
+                        if (txInfo != null)
                         {
-                            Console.WriteLine($"   ? AMOUNT MATCHES! ({amount} ? {expectedAmount})");
-
-                            // Verify transaction to get confirmations
-                            var txInfo = await _blockchainService.VerifyTransactionAsync(txId, currency, "tron");
+                            Console.WriteLine($"   ? Transaction verified on blockchain");
+                            Console.WriteLine($"   - From: {txInfo.FromAddress}");
+                            Console.WriteLine($"   - To: {txInfo.ToAddress}");
+                            Console.WriteLine($"   - Confirmations: {txInfo.Confirmations}");
                             
-                            if (txInfo != null)
+                            return new IncomingTransaction
                             {
-                                return new IncomingTransaction
-                                {
-                                    TxHash = txId,
-                                    Amount = amount,
-                                    FromAddress = txInfo.FromAddress,
-                                    ToAddress = to,
-                                    Confirmations = txInfo.Confirmations,
-                                    Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(timestamp).UtcDateTime
-                                };
-                            }
+                                TxHash = txId,
+                                Amount = amount,
+                                FromAddress = txInfo.FromAddress,
+                                ToAddress = to,
+                                Confirmations = txInfo.Confirmations,
+                                Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(timestamp).UtcDateTime
+                            };
                         }
                     }
                 }
 
-                Console.WriteLine($"   ? No matching transaction found for {expectedAmount} USDT");
+                Console.WriteLine($"   ? No USDT transaction found to address {walletAddress} since {since:yyyy-MM-dd HH:mm:ss}");
             }
-            else if (currency.ToUpper() == "TRX")
+            else
             {
-                // Native TRX transfers
-                var url = $"{apiUrl}/v1/accounts/{walletAddress}/transactions?only_to=true&limit=20";
-                
-                var response = await client.GetAsync(url);
-                if (!response.IsSuccessStatusCode) return null;
-
-                var json = await response.Content.ReadAsStringAsync();
-                var data = System.Text.Json.JsonDocument.Parse(json);
-
-                if (!data.RootElement.TryGetProperty("data", out var transactions))
-                {
-                    return null;
-                }
-
-                var sinceTimestamp = new DateTimeOffset(since).ToUnixTimeMilliseconds();
-                var tolerance = expectedAmount * 0.01m;
-
-                foreach (var tx in transactions.EnumerateArray())
-                {
-                    var timestamp = tx.GetProperty("block_timestamp").GetInt64();
-                    if (timestamp < sinceTimestamp) continue;
-
-                    var txId = tx.GetProperty("txID").GetString();
-                    if (string.IsNullOrEmpty(txId)) continue;
-
-                    var txInfo = await _blockchainService.VerifyTransactionAsync(txId, currency, "tron");
-                    
-                    if (txInfo != null && 
-                        txInfo.ToAddress.Equals(walletAddress, StringComparison.OrdinalIgnoreCase) &&
-                        Math.Abs(txInfo.Amount - expectedAmount) <= tolerance)
-                    {
-                        return new IncomingTransaction
-                        {
-                            TxHash = txId,
-                            Amount = txInfo.Amount,
-                            FromAddress = txInfo.FromAddress,
-                            ToAddress = txInfo.ToAddress,
-                            Confirmations = txInfo.Confirmations,
-                            Timestamp = DateTimeOffset.FromUnixTimeMilliseconds(timestamp).UtcDateTime
-                        };
-                    }
-                }
+                Console.WriteLine($"   ?? Unsupported currency {currency} on Tron. Only USDT is supported.");
             }
 
             return null;
@@ -444,6 +410,45 @@ public class PaymentMonitorJob
         catch (Exception ex)
         {
             _logger.LogError(ex, $"Error scanning Tron wallet {walletAddress}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Scan EVM-compatible wallet (Ethereum, BSC) for incoming token transactions.
+    /// With HD wallets, we match ONLY the destination address.
+    /// Supported currencies: USDT, USDC, ETH, BNB
+    /// </summary>
+    private async Task<IncomingTransaction?> ScanEvmWalletAsync(
+        string walletAddress,
+        string currency,
+        string network,
+        decimal expectedAmount,
+        DateTime since)
+    {
+        try
+        {
+            // For EVM chains, we need to use blockchain explorers or node APIs
+            // This is a placeholder - you'll need to implement using:
+            // - Etherscan API for Ethereum
+            // - BSCScan API for Binance Smart Chain
+            // - Or use Web3 providers like Infura, Alchemy
+            
+            Console.WriteLine($"   ?? Scanning {network} wallet {walletAddress} for {currency}");
+            Console.WriteLine($"   ?? EVM wallet scanning not yet implemented");
+            Console.WriteLine($"   ?? User should submit transaction hash manually via verify endpoint");
+            
+            // TODO: Implement EVM wallet scanning
+            // Options:
+            // 1. Use Etherscan/BSCScan API to get transaction history
+            // 2. Use Web3 providers (Infura, Alchemy) with event logs
+            // 3. For now, rely on user submitting transaction hash
+            
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Error scanning {network} wallet {walletAddress}");
             return null;
         }
     }

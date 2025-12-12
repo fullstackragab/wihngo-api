@@ -7,6 +7,11 @@ using Wihngo.Services.Interfaces;
 
 namespace Wihngo.Services;
 
+/// <summary>
+/// Blockchain verification service for supported networks and currencies.
+/// Supported Networks: Tron, Ethereum, Binance Smart Chain
+/// Supported Currencies: USDT, USDC, ETH, BNB
+/// </summary>
 public class BlockchainVerificationService : IBlockchainService
 {
     private readonly IHttpClientFactory _httpClientFactory;
@@ -33,9 +38,8 @@ public class BlockchainVerificationService : IBlockchainService
             return network.ToLower() switch
             {
                 "tron" => await VerifyTronTransactionAsync(txHash, currency),
-                "ethereum" or "polygon" or "binance-smart-chain" or "sepolia" =>
-                    await VerifyEvmTransactionAsync(txHash, currency, network),
-                "bitcoin" => await VerifyBitcoinTransactionAsync(txHash),
+                "ethereum" => await VerifyEvmTransactionAsync(txHash, currency, "ethereum"),
+                "binance-smart-chain" => await VerifyEvmTransactionAsync(txHash, currency, "binance-smart-chain"),
                 _ => null
             };
         }
@@ -46,6 +50,9 @@ public class BlockchainVerificationService : IBlockchainService
         }
     }
 
+    /// <summary>
+    /// Verify Tron transaction (TRC-20 USDT only).
+    /// </summary>
     private async Task<TransactionInfo?> VerifyTronTransactionAsync(string txHash, string currency)
     {
         try
@@ -57,6 +64,13 @@ public class BlockchainVerificationService : IBlockchainService
             if (!string.IsNullOrEmpty(apiKey))
             {
                 client.DefaultRequestHeaders.Add("TRON-PRO-API-KEY", apiKey);
+            }
+
+            // Only USDT is supported on Tron
+            if (currency.ToUpper() != "USDT")
+            {
+                _logger.LogWarning($"Unsupported currency {currency} on Tron. Only USDT is supported.");
+                return null;
             }
 
             // Get transaction
@@ -87,75 +101,34 @@ public class BlockchainVerificationService : IBlockchainService
             string toAddress = "";
             string fromAddress = "";
 
-            if (currency == "USDT")
+            // TRC-20 USDT
+            if (txInfo.RootElement.TryGetProperty("log", out var logs) && logs.GetArrayLength() > 0)
             {
-                // TRC-20 USDT
-                if (txInfo.RootElement.TryGetProperty("log", out var logs) && logs.GetArrayLength() > 0)
+                var log = logs[0];
+                var data = log.GetProperty("data").GetString() ?? "";
+                var topics = log.GetProperty("topics").EnumerateArray().ToList();
+
+                // Decode amount (6 decimals for USDT)
+                if (!string.IsNullOrEmpty(data))
                 {
-                    var log = logs[0];
-                    var data = log.GetProperty("data").GetString() ?? "";
-                    var topics = log.GetProperty("topics").EnumerateArray().ToList();
-
-                    // Decode amount (6 decimals for USDT)
-                    if (!string.IsNullOrEmpty(data))
-                    {
-                        // Use explicit cast from BigInteger to decimal to avoid InvalidCastException
-                        var big = BigInteger.Parse(data, System.Globalization.NumberStyles.HexNumber);
-                        amount = (decimal)big / 1_000_000m;
-                    }
-
-                    // Decode addresses from topics
-                    if (topics.Count >= 3)
-                    {
-                        var toHex = topics[2].GetString();
-                        var fromHex = topics[1].GetString();
-                        
-                        if (!string.IsNullOrEmpty(toHex) && toHex.Length >= 24)
-                        {
-                            toAddress = TronAddressConverter.HexToBase58("41" + toHex.Substring(24));
-                        }
-                        
-                        if (!string.IsNullOrEmpty(fromHex) && fromHex.Length >= 24)
-                        {
-                            fromAddress = TronAddressConverter.HexToBase58("41" + fromHex.Substring(24));
-                        }
-                    }
+                    var big = BigInteger.Parse(data, System.Globalization.NumberStyles.HexNumber);
+                    amount = (decimal)big / 1_000_000m;
                 }
-            }
-            else if (currency == "TRX")
-            {
-                // Native TRX transfer
-                if (tx.RootElement.TryGetProperty("raw_data", out var rawData))
+
+                // Decode addresses from topics
+                if (topics.Count >= 3)
                 {
-                    if (rawData.TryGetProperty("contract", out var contracts) && contracts.GetArrayLength() > 0)
+                    var toHex = topics[2].GetString();
+                    var fromHex = topics[1].GetString();
+                    
+                    if (!string.IsNullOrEmpty(toHex) && toHex.Length >= 24)
                     {
-                        var contract = contracts[0];
-                        if (contract.TryGetProperty("parameter", out var parameter))
-                        {
-                            if (parameter.TryGetProperty("value", out var value))
-                            {
-                                if (value.TryGetProperty("amount", out var amountProp))
-                                {
-                                    amount = amountProp.GetDecimal() / 1_000_000m; // TRX has 6 decimals
-                                }
-                                if (value.TryGetProperty("to_address", out var toAddressProp))
-                                {
-                                    var toHex = toAddressProp.GetString();
-                                    if (!string.IsNullOrEmpty(toHex))
-                                    {
-                                        toAddress = TronAddressConverter.HexToBase58(toHex);
-                                    }
-                                }
-                                if (value.TryGetProperty("owner_address", out var ownerAddressProp))
-                                {
-                                    var fromHex = ownerAddressProp.GetString();
-                                    if (!string.IsNullOrEmpty(fromHex))
-                                    {
-                                        fromAddress = TronAddressConverter.HexToBase58(fromHex);
-                                    }
-                                }
-                            }
-                        }
+                        toAddress = TronAddressConverter.HexToBase58("41" + toHex.Substring(24));
+                    }
+                    
+                    if (!string.IsNullOrEmpty(fromHex) && fromHex.Length >= 24)
+                    {
+                        fromAddress = TronAddressConverter.HexToBase58("41" + fromHex.Substring(24));
                     }
                 }
             }
@@ -197,6 +170,10 @@ public class BlockchainVerificationService : IBlockchainService
         }
     }
 
+    /// <summary>
+    /// Verify EVM-compatible transaction (Ethereum, BSC).
+    /// Supports: USDT, USDC (ERC-20/BEP-20), ETH, BNB (native)
+    /// </summary>
     private async Task<TransactionInfo?> VerifyEvmTransactionAsync(string txHash, string currency, string network)
     {
         try
@@ -209,9 +186,7 @@ public class BlockchainVerificationService : IBlockchainService
             string rpcUrl = network.ToLower() switch
             {
                 "ethereum" => $"https://mainnet.infura.io/v3/{_configuration["BlockchainSettings:Infura:ProjectId"]}",
-                "sepolia" => $"https://sepolia.infura.io/v3/{_configuration["BlockchainSettings:Infura:ProjectId"]}",
                 "binance-smart-chain" => "https://bsc-dataseed.binance.org",
-                "polygon" => "https://polygon-rpc.com",
                 _ => throw new NotSupportedException($"Network {network} not supported")
             };
 
@@ -257,9 +232,10 @@ public class BlockchainVerificationService : IBlockchainService
             string toAddress = tx.To ?? "";
             string fromAddress = tx.From ?? "";
 
+            // Supported ERC-20/BEP-20 tokens: USDT, USDC
             if (currency is "USDT" or "USDC")
             {
-                Console.WriteLine($"   Processing ERC-20 token: {currency}");
+                Console.WriteLine($"   Processing ERC-20/BEP-20 token: {currency}");
                 
                 if (receipt.Logs != null && receipt.Logs.Count > 0)
                 {
@@ -331,21 +307,27 @@ public class BlockchainVerificationService : IBlockchainService
                     
                     if (amount == 0)
                     {
-                        Console.WriteLine($"   ? WARNING: Could not decode amount from Transfer event");
+                        Console.WriteLine($"   ?? WARNING: Could not decode amount from Transfer event");
                         _logger.LogWarning($"Could not decode amount from ERC-20 Transfer event for {txHash}");
                     }
                 }
                 else
                 {
-                    Console.WriteLine($"   ? WARNING: No logs found in receipt");
+                    Console.WriteLine($"   ?? WARNING: No logs found in receipt");
                     _logger.LogWarning($"No logs found in receipt for ERC-20 transaction {txHash}");
                 }
             }
-            else
+            // Native tokens: ETH, BNB
+            else if (currency is "ETH" or "BNB")
             {
-                // Native ETH/BNB/Sepolia ETH
                 amount = Web3.Convert.FromWei(tx.Value.Value);
                 Console.WriteLine($"   Native token amount: {amount} {currency}");
+            }
+            else
+            {
+                Console.WriteLine($"   ?? Unsupported currency: {currency}");
+                _logger.LogWarning($"Unsupported currency {currency} on {network}");
+                return null;
             }
 
             var gasUsed = receipt.GasUsed?.Value ?? 0;
@@ -379,7 +361,9 @@ public class BlockchainVerificationService : IBlockchainService
     }
 
     /// <summary>
-    /// Get the number of decimals for a specific token on a specific network
+    /// Get the number of decimals for a specific token on a specific network.
+    /// Supported currencies: USDT, USDC (tokens), ETH, BNB (native).
+    /// Supported networks: Tron, Ethereum, Binance Smart Chain.
     /// </summary>
     private int GetTokenDecimals(string currency, string network)
     {
@@ -390,67 +374,18 @@ public class BlockchainVerificationService : IBlockchainService
             // USDT implementations
             "USDT_tron" => 6,                    // TRC-20 USDT
             "USDT_ethereum" => 6,                // ERC-20 USDT
-            "USDT_sepolia" => 6,                 // Sepolia Testnet USDT
             "USDT_binance-smart-chain" => 18,   // BEP-20 USDT
-            "USDT_polygon" => 6,                 // Polygon USDT
             
             // USDC implementations
             "USDC_ethereum" => 6,                // ERC-20 USDC
-            "USDC_sepolia" => 6,                 // Sepolia Testnet USDC
             "USDC_binance-smart-chain" => 18,   // BEP-20 USDC
-            "USDC_polygon" => 6,                 // Polygon USDC
             
-            // ETH implementations
-            "ETH_ethereum" => 18,                // Mainnet ETH
-            "ETH_sepolia" => 18,                 // Sepolia Testnet ETH
+            // Native tokens
+            "ETH_ethereum" => 18,                // Native ETH
+            "BNB_binance-smart-chain" => 18,    // Native BNB
             
             // Default to 6 decimals (most common for stablecoins)
             _ => 6
         };
-    }
-
-    private async Task<TransactionInfo?> VerifyBitcoinTransactionAsync(string txHash)
-    {
-        try
-        {
-            var client = _httpClientFactory.CreateClient();
-            var response = await client.GetAsync($"https://blockchain.info/rawtx/{txHash}");
-
-            if (!response.IsSuccessStatusCode) return null;
-
-            var json = await response.Content.ReadAsStringAsync();
-            var tx = JsonDocument.Parse(json);
-
-            var latestBlockResponse = await client.GetAsync("https://blockchain.info/latestblock");
-            var latestBlockJson = await latestBlockResponse.Content.ReadAsStringAsync();
-            var latestBlock = JsonDocument.Parse(latestBlockJson);
-            var currentHeight = latestBlock.RootElement.GetProperty("height").GetInt64();
-
-            long? blockHeight = null;
-            if (tx.RootElement.TryGetProperty("block_height", out var blockProp))
-            {
-                blockHeight = blockProp.GetInt64();
-            }
-
-            var confirmations = blockHeight.HasValue ? (int)(currentHeight - blockHeight.Value + 1) : 0;
-
-            var outputs = tx.RootElement.GetProperty("out").EnumerateArray().ToList();
-            var inputs = tx.RootElement.GetProperty("inputs").EnumerateArray().ToList();
-
-            return new TransactionInfo
-            {
-                Amount = outputs[0].GetProperty("value").GetDecimal() / 100_000_000m,
-                ToAddress = outputs[0].GetProperty("addr").GetString() ?? "",
-                FromAddress = inputs[0].GetProperty("prev_out").GetProperty("addr").GetString() ?? "",
-                Confirmations = confirmations,
-                BlockNumber = blockHeight,
-                Fee = tx.RootElement.GetProperty("fee").GetDecimal() / 100_000_000m
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, $"Bitcoin verification error for {txHash}");
-            return null;
-        }
     }
 }

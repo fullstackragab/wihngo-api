@@ -41,11 +41,11 @@ public class CryptoPaymentService : ICryptoPaymentService
             var net = (network ?? string.Empty).ToLower().Trim();
             string sequenceName = net switch
             {
+                "solana" => "hd_address_index_seq_solana",
                 "ethereum" => "hd_address_index_seq_ethereum",
-                "sepolia" => "hd_address_index_seq_sepolia",
-                "tron" => "hd_address_index_seq_tron",
-                "binance-smart-chain" => "hd_address_index_seq_binance_smart_chain",
                 "polygon" => "hd_address_index_seq_polygon",
+                "base" => "hd_address_index_seq_base",
+                "stellar" => "hd_address_index_seq_stellar",
                 _ => "hd_address_index_seq"
             };
 
@@ -432,14 +432,12 @@ public class CryptoPaymentService : ICryptoPaymentService
     {
         return network.ToLower() switch
         {
-            "tron" => 19,
-            "ethereum" => 12,
-            "sepolia" => 6,  // Fewer confirmations for testnet
-            "bitcoin" => 2,
-            "binance-smart-chain" => 15,
-            "polygon" => 128,
             "solana" => 32,
-            _ => 6
+            "ethereum" => 12,
+            "polygon" => 128,
+            "base" => 12,
+            "stellar" => 1,
+            _ => 12  // Default to 12 confirmations
         };
     }
 
@@ -447,10 +445,11 @@ public class CryptoPaymentService : ICryptoPaymentService
     {
         return network.ToLower() switch
         {
-            "tron" => address,
-            "ethereum" or "polygon" or "binance-smart-chain" or "sepolia" => $"ethereum:{address}",
-            "bitcoin" => $"bitcoin:{address}?amount={amount}",
-            "solana" => $"solana:{address}?amount={amount}",
+            "solana" => $"solana:{address}",
+            "ethereum" => $"ethereum:{address}",
+            "polygon" => $"ethereum:{address}",  // Polygon uses Ethereum URI scheme
+            "base" => $"ethereum:{address}",  // Base uses Ethereum URI scheme
+            "stellar" => $"web+stellar:pay?destination={address}&amount={amount}&asset_code={currency}",
             _ => address
         };
     }
