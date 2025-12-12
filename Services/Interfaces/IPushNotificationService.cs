@@ -19,5 +19,10 @@ namespace Wihngo.Services.Interfaces
         /// Validate if a push token is valid (Expo format)
         /// </summary>
         bool IsValidPushToken(string pushToken);
+
+        /// <summary>
+        /// Send invoice issued notification to user
+        /// </summary>
+        Task SendInvoiceIssuedNotificationAsync(Guid userId, string invoiceNumber);
     }
 }

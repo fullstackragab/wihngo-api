@@ -33,8 +33,17 @@
     <PackageReference Include="Nethereum.Web3" Version="5.0.0" />
     <PackageReference Include="NBitcoin" Version="7.0.36" />
     <PackageReference Include="Solnet.Wallet" Version="6.1.0" />
+    <PackageReference Include="Solnet.Rpc" Version="6.1.0" />
     <PackageReference Include="stellar-dotnet-sdk" Version="14.0.1" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.1.2" />
+    
+    <!-- Invoice & Payment System Dependencies -->
+    <PackageReference Include="QuestPDF" Version="2024.12.3" />
+    <PackageReference Include="MailKit" Version="4.9.0" />
+    <PackageReference Include="PayPalCheckoutSdk" Version="1.0.4" />
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.3" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
   </ItemGroup>
 
   <ItemGroup>

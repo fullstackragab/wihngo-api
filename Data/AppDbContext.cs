@@ -37,6 +37,16 @@ namespace Wihngo.Data
         public DbSet<NotificationSettings> NotificationSettings { get; set; } = null!;
         public DbSet<UserDevice> UserDevices { get; set; } = null!;
 
+        // Invoice & Payment System Entities
+        public DbSet<Invoice> Invoices { get; set; } = null!;
+        public DbSet<Payment> Payments { get; set; } = null!;
+        public DbSet<SupportedToken> SupportedTokens { get; set; } = null!;
+        public DbSet<RefundRequest> RefundRequests { get; set; } = null!;
+        public DbSet<PaymentEvent> PaymentEvents { get; set; } = null!;
+        public DbSet<AuditLog> AuditLogs { get; set; } = null!;
+        public DbSet<WebhookReceived> WebhooksReceived { get; set; } = null!;
+        public DbSet<BlockchainCursor> BlockchainCursors { get; set; } = null!;
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -59,6 +69,16 @@ namespace Wihngo.Data
             modelBuilder.Entity<NotificationPreference>().ToTable("notification_preferences");
             modelBuilder.Entity<NotificationSettings>().ToTable("notification_settings");
             modelBuilder.Entity<UserDevice>().ToTable("user_devices");
+
+            // Invoice & Payment System table mappings
+            modelBuilder.Entity<Invoice>().ToTable("invoices");
+            modelBuilder.Entity<Payment>().ToTable("payments");
+            modelBuilder.Entity<SupportedToken>().ToTable("supported_tokens");
+            modelBuilder.Entity<RefundRequest>().ToTable("refund_requests");
+            modelBuilder.Entity<PaymentEvent>().ToTable("payment_events");
+            modelBuilder.Entity<AuditLog>().ToTable("audit_logs");
+            modelBuilder.Entity<WebhookReceived>().ToTable("webhook_received");
+            modelBuilder.Entity<BlockchainCursor>().ToTable("blockchain_cursors");
 
             // Configure composite primary key for Love join table
             modelBuilder.Entity<Love>().HasKey(l => new { l.UserId, l.BirdId });
@@ -202,6 +222,83 @@ namespace Wihngo.Data
 
             modelBuilder.Entity<UserDevice>()
                 .HasIndex(d => d.PushToken)
+                .IsUnique();
+
+            // Invoice & Payment System Configurations
+            
+            // Invoice unique constraints and indexes
+            modelBuilder.Entity<Invoice>()
+                .HasIndex(i => i.InvoiceNumber)
+                .IsUnique()
+                .HasFilter("invoice_number IS NOT NULL");
+
+            modelBuilder.Entity<Invoice>()
+                .HasIndex(i => i.UserId);
+
+            modelBuilder.Entity<Invoice>()
+                .HasIndex(i => i.State);
+
+            modelBuilder.Entity<Invoice>()
+                .HasIndex(i => i.ExpiresAt);
+
+            // Payment unique constraints and indexes
+            modelBuilder.Entity<Payment>()
+                .HasIndex(p => p.TxHash)
+                .IsUnique()
+                .HasFilter("tx_hash IS NOT NULL");
+
+            modelBuilder.Entity<Payment>()
+                .HasIndex(p => p.InvoiceId);
+
+            modelBuilder.Entity<Payment>()
+                .HasIndex(p => p.ProviderTxId)
+                .HasFilter("provider_tx_id IS NOT NULL");
+
+            // SupportedToken unique constraint
+            modelBuilder.Entity<SupportedToken>()
+                .HasIndex(st => new { st.TokenSymbol, st.Chain })
+                .IsUnique();
+
+            // RefundRequest indexes
+            modelBuilder.Entity<RefundRequest>()
+                .HasIndex(r => r.InvoiceId);
+
+            modelBuilder.Entity<RefundRequest>()
+                .HasIndex(r => r.State);
+
+            // PaymentEvent indexes
+            modelBuilder.Entity<PaymentEvent>()
+                .HasIndex(pe => pe.InvoiceId);
+
+            modelBuilder.Entity<PaymentEvent>()
+                .HasIndex(pe => pe.PaymentId)
+                .HasFilter("payment_id IS NOT NULL");
+
+            modelBuilder.Entity<PaymentEvent>()
+                .HasIndex(pe => pe.CreatedAt);
+
+            // AuditLog indexes
+            modelBuilder.Entity<AuditLog>()
+                .HasIndex(al => new { al.EntityType, al.EntityId });
+
+            modelBuilder.Entity<AuditLog>()
+                .HasIndex(al => al.UserId)
+                .HasFilter("user_id IS NOT NULL");
+
+            modelBuilder.Entity<AuditLog>()
+                .HasIndex(al => al.CreatedAt);
+
+            // WebhookReceived unique constraint and indexes
+            modelBuilder.Entity<WebhookReceived>()
+                .HasIndex(w => new { w.Provider, w.ProviderEventId })
+                .IsUnique();
+
+            modelBuilder.Entity<WebhookReceived>()
+                .HasIndex(w => w.Processed);
+
+            // BlockchainCursor unique constraint
+            modelBuilder.Entity<BlockchainCursor>()
+                .HasIndex(bc => new { bc.Chain, bc.CursorType })
                 .IsUnique();
 
             // Seed initial data
