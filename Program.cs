@@ -12,6 +12,7 @@ using Wihngo.Services.Interfaces;
 using Wihngo.BackgroundJobs;
 using Wihngo.Configuration;
 using Wihngo.Models.Entities;
+using Wihngo.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -55,6 +56,11 @@ builder.Logging.AddFilter("Wihngo.Controllers.InvoicesController", LogLevel.Info
 builder.Logging.AddFilter("Wihngo.Controllers.PaymentsController", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Controllers.WebhooksController", LogLevel.Information);
 
+// ? Enable auth and security logs
+builder.Logging.AddFilter("Wihngo.Controllers.AuthController", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.TokenService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Middleware.RateLimitingMiddleware", LogLevel.Information);
+
 // Configure console logging format
 builder.Logging.AddSimpleConsole(options =>
 {
@@ -85,6 +91,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
            .UseSnakeCaseNamingConvention());
 
 // Configuration Options
+builder.Services.Configure<SecurityConfiguration>(builder.Configuration.GetSection("Security"));
 builder.Services.Configure<InvoiceConfiguration>(builder.Configuration.GetSection("Invoice"));
 builder.Services.Configure<SolanaConfiguration>(builder.Configuration.GetSection("Solana"));
 builder.Services.Configure<Wihngo.Configuration.BaseConfiguration>(builder.Configuration.GetSection("Base"));
@@ -94,8 +101,10 @@ builder.Services.Configure<SmtpConfiguration>(builder.Configuration.GetSection("
 // HttpClient
 builder.Services.AddHttpClient();
 
-// Token Service
-builder.Services.AddScoped<TokenService>();
+// Auth & Security Services
+builder.Services.AddScoped<ITokenService, TokenService>();
+builder.Services.AddScoped<IPasswordValidationService, PasswordValidationService>();
+builder.Services.AddScoped<IAuthEmailService, AuthEmailService>();
 
 // Crypto Payment Services
 builder.Services.AddScoped<ICryptoPaymentService, CryptoPaymentService>();
@@ -221,9 +230,9 @@ var app = builder.Build();
 // ========================================
 // ?? DIAGNOSTIC: Test Hangfire Initialization
 // ========================================
-Console.WriteLine("???????????????????????????????????????");
+Console.WriteLine("?????????????????????????????");
 Console.WriteLine("?? HANGFIRE DIAGNOSTIC");
-Console.WriteLine("???????????????????????????????????????");
+Console.WriteLine("?????????????????????????????");
 try
 {
     using var scope = app.Services.CreateScope();
@@ -250,7 +259,7 @@ catch (Exception ex)
     Console.WriteLine($"   Make sure PostgreSQL is running");
     Console.WriteLine($"   Database: wihngo");
 }
-Console.WriteLine("???????????????????????????????????????");
+Console.WriteLine("?????????????????????????????");
 Console.WriteLine("");
 
 // Ensure database is created (best-effort)
@@ -377,6 +386,9 @@ app.UseCors("AllowAll");
 
 app.UseHttpsRedirection();
 
+// Apply rate limiting middleware before authentication
+app.UseRateLimiting();
+
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -403,7 +415,19 @@ app.MapGet("/test", () => new
     endpoints = new
     {
         hangfireDashboard = "/hangfire",
-        cryptoRates = "/api/payments/crypto/rates"
+        cryptoRates = "/api/payments/crypto/rates",
+        auth = new
+        {
+            register = "/api/auth/register",
+            login = "/api/auth/login",
+            refreshToken = "/api/auth/refresh-token",
+            validate = "/api/auth/validate",
+            changePassword = "/api/auth/change-password",
+            forgotPassword = "/api/auth/forgot-password",
+            resetPassword = "/api/auth/reset-password",
+            confirmEmail = "/api/auth/confirm-email",
+            logout = "/api/auth/logout"
+        }
     }
 }).WithName("HealthCheck").WithTags("Diagnostic");
 
@@ -487,9 +511,9 @@ for (int attempt = 0; attempt < 3; attempt++)
 // ?? STARTUP INFORMATION
 // ========================================
 Console.WriteLine("");
-Console.WriteLine("???????????????????????????????????????");
+Console.WriteLine("?????????????????????????????");
 Console.WriteLine("?? APPLICATION STARTED");
-Console.WriteLine("???????????????????????????????????????");
+Console.WriteLine("?????????????????????????????");
 Console.WriteLine($"? Time: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
 Console.WriteLine("");
 Console.WriteLine("?? Available Endpoints:");
@@ -504,10 +528,15 @@ Console.WriteLine("");
 Console.WriteLine("   ?? Crypto Payment API:");
 Console.WriteLine("      http://localhost:5000/api/payments/crypto/rates");
 Console.WriteLine("");
+Console.WriteLine("   ?? Authentication API:");
+Console.WriteLine("      http://localhost:5000/api/auth/register");
+Console.WriteLine("      http://localhost:5000/api/auth/login");
+Console.WriteLine("      http://localhost:5000/api/auth/refresh-token");
+Console.WriteLine("");
 Console.WriteLine("?? NOTE: Use the port shown in 'Now listening on:'");
 Console.WriteLine("         message above this section!");
-Console.WriteLine("???????????????????????????????????????");
-Console.WriteLine("");
+Console.WriteLine("?????????????????????????????");
+Console.WriteLine(".");
 
 app.Run();
 

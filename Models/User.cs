@@ -29,6 +29,34 @@
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+        // Security fields
+        public bool EmailConfirmed { get; set; } = false;
+        
+        [MaxLength(500)]
+        public string? EmailConfirmationToken { get; set; }
+        
+        public DateTime? EmailConfirmationTokenExpiry { get; set; }
+        
+        public bool IsAccountLocked { get; set; } = false;
+        
+        public int FailedLoginAttempts { get; set; } = 0;
+        
+        public DateTime? LockoutEnd { get; set; }
+        
+        public DateTime? LastLoginAt { get; set; }
+        
+        [MaxLength(500)]
+        public string? RefreshTokenHash { get; set; }
+        
+        public DateTime? RefreshTokenExpiry { get; set; }
+        
+        [MaxLength(500)]
+        public string? PasswordResetToken { get; set; }
+        
+        public DateTime? PasswordResetTokenExpiry { get; set; }
+        
+        public DateTime? LastPasswordChangeAt { get; set; }
+
         // Navigation properties
         public List<Bird> Birds { get; set; } = new();
 
