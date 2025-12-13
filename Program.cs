@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -13,11 +13,12 @@ using Wihngo.BackgroundJobs;
 using Wihngo.Configuration;
 using Wihngo.Models.Entities;
 using Wihngo.Middleware;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // ========================================
-// ?? CRYPTO-ONLY LOGGING CONFIGURATION
+// 🔧 CRYPTO-ONLY LOGGING CONFIGURATION
 // ========================================
 // Clear default providers and configure crypto-payment-only logging
 builder.Logging.ClearProviders();
@@ -32,7 +33,7 @@ builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.None);
 builder.Logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Information);
 
-// ? Enable ONLY crypto payment logs
+// ✅ Enable ONLY crypto payment logs
 builder.Logging.AddFilter("Wihngo.Services.CryptoPaymentService", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Services.BlockchainVerificationService", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Controllers.CryptoPaymentsController", LogLevel.Information);
@@ -87,15 +88,137 @@ builder.Services.AddOpenApi();
 // Register AutoMapper with explicit profile
 builder.Services.AddAutoMapper(cfg => cfg.AddProfile<AutoMapperProfile>());
 
+// ========================================
+// 🗄️ DATABASE CONNECTION WITH RETRY LOGIC
+// ========================================
 // Register DbContext using PostgreSQL (Npgsql)
 // Read connection string from environment variable (secure) or fallback to appsettings.json
-var connectionString = builder.Configuration["DEFAULT_CONNECTION"] 
+var connectionString = builder.Configuration["ConnectionStrings__DefaultConnection"] 
                        ?? builder.Configuration.GetConnectionString("DefaultConnection")
-                       ?? throw new InvalidOperationException("Database connection string is not configured. Set DEFAULT_CONNECTION environment variable.");
+                       ?? throw new InvalidOperationException("Database connection string is not configured. Set ConnectionStrings__DefaultConnection environment variable.");
 
+Console.WriteLine("");
+Console.WriteLine("═══════════════════════════════════════════════");
+Console.WriteLine("🔌 DATABASE CONNECTION DIAGNOSTICS");
+Console.WriteLine("═══════════════════════════════════════════════");
+
+// Parse and display connection details (safely)
+var dbDetails = ParseConnectionString(connectionString);
+Console.WriteLine($"📍 Host: {dbDetails.Host}");
+Console.WriteLine($"🔢 Port: {dbDetails.Port}");
+Console.WriteLine($"💾 Database: {dbDetails.Database}");
+Console.WriteLine($"👤 Username: {dbDetails.Username}");
+Console.WriteLine($"🔐 Password: {(string.IsNullOrEmpty(dbDetails.Password) ? "NOT SET" : "***configured***")}");
+Console.WriteLine($"🔒 SSL Mode: {dbDetails.SslMode}");
+Console.WriteLine("═══════════════════════════════════════════════");
+Console.WriteLine("");
+
+// Helper method to parse connection string
+static (string Host, string Port, string Database, string Username, string Password, string SslMode) ParseConnectionString(string connectionString)
+{
+    var parts = connectionString.Split(';');
+    var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    
+    foreach (var part in parts)
+    {
+        var kvp = part.Split('=', 2);
+        if (kvp.Length == 2)
+        {
+            dict[kvp[0].Trim()] = kvp[1].Trim();
+        }
+    }
+    
+    return (
+        dict.GetValueOrDefault("Host", "unknown"),
+        dict.GetValueOrDefault("Port", "5432"),
+        dict.GetValueOrDefault("Database", "unknown"),
+        dict.GetValueOrDefault("Username", "unknown"),
+        dict.GetValueOrDefault("Password", ""),
+        dict.GetValueOrDefault("SSL Mode", "none")
+    );
+}
+
+// Test database connection with retry logic
+bool isDatabaseAvailable = false;
+int maxRetries = 3;
+int retryDelayMs = 2000;
+
+Console.WriteLine("🔄 Testing database connection...");
+for (int attempt = 1; attempt <= maxRetries; attempt++)
+{
+    try
+    {
+        using var testConnection = new Npgsql.NpgsqlConnection(connectionString);
+        await testConnection.OpenAsync();
+        
+        Console.WriteLine($"✅ Database connection successful on attempt {attempt}!");
+        isDatabaseAvailable = true;
+        
+        // Get PostgreSQL version
+        using var cmd = testConnection.CreateCommand();
+        cmd.CommandText = "SELECT version()";
+        var version = await cmd.ExecuteScalarAsync();
+        Console.WriteLine($"📊 PostgreSQL Version: {version?.ToString()?.Split('\n')[0]}");
+        
+        await testConnection.CloseAsync();
+        break;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"❌ Attempt {attempt}/{maxRetries} failed: {ex.GetType().Name}");
+        Console.WriteLine($"   Message: {ex.Message}");
+        
+        if (ex.InnerException != null)
+        {
+            Console.WriteLine($"   Inner: {ex.InnerException.Message}");
+        }
+        
+        if (attempt < maxRetries)
+        {
+            Console.WriteLine($"   ⏳ Retrying in {retryDelayMs}ms...");
+            await Task.Delay(retryDelayMs);
+        }
+        else
+        {
+            Console.WriteLine("");
+            Console.WriteLine("⚠️  DATABASE CONNECTION FAILED AFTER ALL RETRIES");
+            Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            Console.WriteLine("Possible causes:");
+            Console.WriteLine("  1. Database server is not running");
+            Console.WriteLine("  2. Network/firewall blocking connection");
+            Console.WriteLine("  3. Invalid credentials");
+            Console.WriteLine("  4. SSL certificate issues");
+            Console.WriteLine("");
+            Console.WriteLine("The application will start but database-dependent");
+            Console.WriteLine("features will not work until connection is restored.");
+            Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            Console.WriteLine("");
+        }
+    }
+}
+
+// Register DbContext with resilient configuration
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString)
-           .UseSnakeCaseNamingConvention());
+{
+    options.UseNpgsql(connectionString, npgsqlOptions =>
+    {
+        // Enable connection resilience
+        npgsqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 3,
+            maxRetryDelay: TimeSpan.FromSeconds(5),
+            errorCodesToAdd: null);
+        
+        // Set command timeout
+        npgsqlOptions.CommandTimeout(30);
+    })
+    .UseSnakeCaseNamingConvention();
+    
+    // Log SQL in development (optional)
+    if (builder.Environment.IsDevelopment())
+    {
+        options.EnableSensitiveDataLogging();
+    }
+});
 
 // Log database configuration (without exposing connection details)
 var dbLogger = builder.Services.BuildServiceProvider().GetRequiredService<ILogger<Program>>();
@@ -259,19 +382,36 @@ builder.Services.AddScoped<IPremiumSubscriptionService, PremiumSubscriptionServi
 builder.Services.AddScoped<ICharityService, CharityService>();
 builder.Services.AddScoped<CharityAllocationJob>();
 
-// Hangfire
-builder.Services.AddHangfire(config => config
-    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
-    .UseSimpleAssemblyNameTypeSerializer()
-    .UseRecommendedSerializerSettings()
-    .UsePostgreSqlStorage(c => c.UseNpgsqlConnection(connectionString), new PostgreSqlStorageOptions
+// 📋 HANGFIRE - CONDITIONAL SETUP
+if (isDatabaseAvailable)
+{
+    Console.WriteLine("🔧 Configuring Hangfire with PostgreSQL storage...");
+    try
     {
-        DistributedLockTimeout = TimeSpan.FromMinutes(1),
-        PrepareSchemaIfNecessary = true,
-        EnableTransactionScopeEnlistment = true
-    }));
+        builder.Services.AddHangfire(config => config
+            .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+            .UseSimpleAssemblyNameTypeSerializer()
+            .UseRecommendedSerializerSettings()
+            .UsePostgreSqlStorage(c => c.UseNpgsqlConnection(connectionString), new PostgreSqlStorageOptions
+            {
+                DistributedLockTimeout = TimeSpan.FromMinutes(1),
+                PrepareSchemaIfNecessary = true,
+                EnableTransactionScopeEnlistment = true
+            }));
 
-builder.Services.AddHangfireServer();
+        builder.Services.AddHangfireServer();
+        Console.WriteLine("✅ Hangfire configured successfully");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"⚠️  Hangfire configuration failed: {ex.Message}");
+        Console.WriteLine("   Background jobs will not be available.");
+    }
+}
+else
+{
+    Console.WriteLine("⚠️  Skipping Hangfire setup - database not available");
+}
 
 // JWT configuration
 var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key is not configured");
@@ -340,70 +480,65 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 // ========================================
-// ?? DIAGNOSTIC: Test Hangfire Initialization
+// 🔍 DATABASE INITIALIZATION (BEST EFFORT)
 // ========================================
-Console.WriteLine("?????????????????????????????");
-Console.WriteLine("?? HANGFIRE DIAGNOSTIC");
-Console.WriteLine("?????????????????????????????");
-try
+if (isDatabaseAvailable)
 {
-    using var scope = app.Services.CreateScope();
-    var storage = scope.ServiceProvider.GetService<JobStorage>();
-    
-    if (storage != null)
+    using (var scope = app.Services.CreateScope())
     {
-        Console.WriteLine("? Hangfire storage initialized successfully");
-        Console.WriteLine($"   Type: {storage.GetType().Name}");
-        
-        // Test connection
-        var connection = storage.GetConnection();
-        Console.WriteLine("? Hangfire database connection successful");
-    }
-    else
-    {
-        Console.WriteLine("? Hangfire storage is NULL - check configuration!");
-    }
-}
-catch (Exception ex)
-{
-    Console.WriteLine("? HANGFIRE INITIALIZATION FAILED!");
-    Console.WriteLine($"   Error: {ex.Message}");
-    Console.WriteLine($"   Make sure PostgreSQL is running");
-    Console.WriteLine($"   Database: wihngo");
-}
-Console.WriteLine("?????????????????????????????");
-Console.WriteLine("");
-
-// Ensure database is created (best-effort)
-using (var scope = app.Services.CreateScope())
-{
-    try
-    {
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-        
-        logger.LogInformation("Checking database connection...");
-        
-        // For a fresh database, create all tables
-        var created = db.Database.EnsureCreated();
-        
-        if (created)
+        try
         {
-            logger.LogInformation("? Database created successfully!");
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
             
-            // Seed initial data
-            await SeedDatabaseAsync(db, logger);
+            logger.LogInformation("Checking database connection...");
+            
+            // Check if database can be accessed
+            var canConnect = await db.Database.CanConnectAsync();
+            
+            if (canConnect)
+            {
+                logger.LogInformation("✅ Database connection verified");
+                
+                // For a fresh database, create all tables
+                var created = db.Database.EnsureCreated();
+                
+                if (created)
+                {
+                    logger.LogInformation("✅ Database created successfully!");
+                    
+                    // In development, seed comprehensive dummy data
+                    if (app.Environment.IsDevelopment())
+                    {
+                        logger.LogInformation("🌱 Seeding development data...");
+                        await Wihngo.Database.DatabaseSeeder.SeedDevelopmentDataAsync(app.Services);
+                    }
+                    else
+                    {
+                        // In production, just seed essential data
+                        await SeedDatabaseAsync(db, logger);
+                    }
+                }
+                else
+                {
+                    logger.LogInformation("✅ Database already exists");
+                }
+            }
+            else
+            {
+                logger.LogWarning("⚠️  Cannot connect to database");
+            }
         }
-        else
+        catch (Exception ex)
         {
-            logger.LogInformation("? Database already exists");
+            Console.WriteLine($"⚠️  Database initialization warning: {ex.Message}");
+            Console.WriteLine("   Application will start without database features.");
         }
     }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"?? Database initialization warning: {ex.Message}");
-        // Continue anyway - migrations might handle it
-    }
+}
+else
+{
+    Console.WriteLine("⚠️  Skipping database initialization - connection not available");
 }
 
 // Add this method before app.Run()
@@ -421,7 +556,7 @@ async Task SeedDatabaseAsync(AppDbContext db, ILogger logger)
             END $$;
         ");
         
-        logger.LogInformation("? Invoice sequence created");
+        logger.LogInformation("✅ Invoice sequence created");
         
         // Seed supported tokens if not exist
         if (!await db.SupportedTokens.AnyAsync())
@@ -477,187 +612,54 @@ async Task SeedDatabaseAsync(AppDbContext db, ILogger logger)
             await db.SupportedTokens.AddRangeAsync(tokens);
             await db.SaveChangesAsync();
             
-            logger.LogInformation("? Seeded {Count} supported tokens", tokens.Length);
+            logger.LogInformation("✅ Seeded {Count} supported tokens", tokens.Length);
         }
         
-        logger.LogInformation("? Database seeding complete");
+        logger.LogInformation("✅ Database seeding complete");
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "? Error seeding database");
+        logger.LogError(ex, "❌ Error seeding database");
     }
 }
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
-
-app.UseCors("AllowAll");
-
+// Configure the HTTP request pipeline
 app.UseHttpsRedirection();
 
-// Apply rate limiting middleware before authentication
-app.UseRateLimiting();
+app.UseCors("AllowAll");
 
 app.UseAuthentication();
 app.UseAuthorization();
 
-// ========================================
-// ?? HANGFIRE DASHBOARD CONFIGURATION
-// ========================================
-Console.WriteLine("?? Registering Hangfire Dashboard at /hangfire");
-app.UseHangfireDashboard("/hangfire", new DashboardOptions
+// Configure Swagger/OpenAPI
+if (app.Environment.IsDevelopment())
 {
-    Authorization = new[] { new HangfireAuthorizationFilter() }
-});
-Console.WriteLine("? Hangfire Dashboard registered");
-Console.WriteLine("");
+    app.MapOpenApi();
+    app.MapScalarApiReference();
+}
 
-
-// ========================================
-// ?? TEST ENDPOINTS
-// ========================================
-app.MapGet("/test", () => new
-{
-    status = "OK",
-    timestamp = DateTime.UtcNow,
-    message = "Backend is running",
-    endpoints = new
-    {
-        hangfireDashboard = "/hangfire",
-        cryptoRates = "/api/payments/crypto/rates",
-        auth = new
-        {
-            register = "/api/auth/register",
-            login = "/api/auth/login",
-            refreshToken = "/api/auth/refresh-token",
-            validate = "/api/auth/validate",
-            changePassword = "/api/auth/change-password",
-            forgotPassword = "/api/auth/forgot-password",
-            resetPassword = "/api/auth/reset-password",
-            confirmEmail = "/api/auth/confirm-email",
-            logout = "/api/auth/logout"
-        }
-    }
-}).WithName("HealthCheck").WithTags("Diagnostic");
-
-app.MapGet("/hangfire-test", () => "Hangfire routing is working!").WithTags("Diagnostic");
-
+// Map controllers
 app.MapControllers();
 
-// Schedule background jobs with retry logic to handle lock contention
-for (int attempt = 0; attempt < 3; attempt++)
+// Configure Hangfire Dashboard (if database is available)
+if (isDatabaseAvailable)
 {
-    try
+    app.MapHangfireDashboard("/hangfire", new DashboardOptions
     {
-        RecurringJob.AddOrUpdate<ExchangeRateUpdateJob>(
-            "update-exchange-rates",
-            job => job.UpdateExchangeRatesAsync(),
-            "*/5 * * * *" // Every 5 minutes
-        );
-
-        RecurringJob.AddOrUpdate<PaymentMonitorJob>(
-            "monitor-payments",
-            job => job.MonitorPendingPaymentsAsync(),
-            "*/30 * * * * *" // Every 30 seconds for faster payment updates
-        );
-
-        RecurringJob.AddOrUpdate<PaymentMonitorJob>(
-            "expire-payments",
-            job => job.ExpireOldPaymentsAsync(),
-            "0 * * * *" // Every hour
-        );
-
-        // Notification background jobs
-        RecurringJob.AddOrUpdate<NotificationCleanupJob>(
-            "cleanup-notifications",
-            job => job.CleanupOldNotificationsAsync(),
-            "0 2 * * *" // Daily at 2 AM UTC
-        );
-
-        RecurringJob.AddOrUpdate<DailyDigestJob>(
-            "send-daily-digests",
-            job => job.SendDailyDigestsAsync(),
-            "0 * * * *" // Every hour (checks user preferences)
-        );
-
-        RecurringJob.AddOrUpdate<PremiumExpiryNotificationJob>(
-            "check-premium-expiry",
-            job => job.CheckExpiringPremiumAsync(),
-            "0 10 * * *" // Daily at 10 AM UTC
-        );
-
-        RecurringJob.AddOrUpdate<CharityAllocationJob>(
-            "process-charity-allocations",
-            job => job.ProcessMonthlyAllocationsAsync(),
-            Cron.Monthly // Monthly on the 1st
-        );
-
-        // Invoice & Payment System Jobs
-        RecurringJob.AddOrUpdate<ReconciliationJob>(
-            "reconcile-payments",
-            job => job.ReconcilePaymentsAsync(),
-            "0 3 * * *" // Daily at 3 AM UTC
-        );
-        
-        break; // Success - exit retry loop
-    }
-    catch (PostgreSqlDistributedLockException ex)
-    {
-        if (attempt == 2)
-        {
-            // Last attempt failed - log and rethrow
-            app.Logger.LogError(ex, "Failed to register recurring jobs after {Attempts} attempts", attempt + 1);
-            throw;
-        }
-        
-        // Wait before retrying
-        app.Logger.LogWarning("Lock timeout on attempt {Attempt}, retrying in 2 seconds...", attempt + 1);
-        Thread.Sleep(2000);
-    }
+        Authorization = new[] { new HangfireAuthorizationFilter() }
+    });
 }
 
-// ========================================
-// ?? STARTUP INFORMATION
-// ========================================
 Console.WriteLine("");
-Console.WriteLine("?????????????????????????????");
-Console.WriteLine("?? APPLICATION STARTED");
-Console.WriteLine("?????????????????????????????");
-Console.WriteLine($"? Time: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+Console.WriteLine("═══════════════════════════════════════════════");
+Console.WriteLine("🚀 APPLICATION STARTING");
+Console.WriteLine("═══════════════════════════════════════════════");
+Console.WriteLine($"Environment: {app.Environment.EnvironmentName}");
+Console.WriteLine($"API Documentation: {(app.Environment.IsDevelopment() ? "https://localhost:5001/scalar/v1" : "Disabled")}");
+Console.WriteLine($"OpenAPI Spec: {(app.Environment.IsDevelopment() ? "https://localhost:5001/openapi/v1.json" : "Disabled")}");
+Console.WriteLine($"Hangfire Dashboard: {(isDatabaseAvailable ? "https://localhost:5001/hangfire" : "Disabled")}");
+Console.WriteLine("═══════════════════════════════════════════════");
 Console.WriteLine("");
-Console.WriteLine("?? Available Endpoints:");
-Console.WriteLine("   ?? Hangfire Dashboard:");
-Console.WriteLine("      http://localhost:5000/hangfire");
-Console.WriteLine("      https://localhost:7001/hangfire");
-Console.WriteLine("");
-Console.WriteLine("   ?? Test Endpoints:");
-Console.WriteLine("      http://localhost:5000/test");
-Console.WriteLine("      http://localhost:5000/hangfire-test");
-Console.WriteLine("");
-Console.WriteLine("   ?? Crypto Payment API:");
-Console.WriteLine("      http://localhost:5000/api/payments/crypto/rates");
-Console.WriteLine("");
-Console.WriteLine("   ?? Authentication API:");
-Console.WriteLine("      http://localhost:5000/api/auth/register");
-Console.WriteLine("      http://localhost:5000/api/auth/login");
-Console.WriteLine("      http://localhost:5000/api/auth/refresh-token");
-Console.WriteLine("");
-Console.WriteLine("?? NOTE: Use the port shown in 'Now listening on:'");
-Console.WriteLine("         message above this section!");
-Console.WriteLine("?????????????????????????????");
-Console.WriteLine(".");
 
+// This is critical - keeps the application running
 app.Run();
-
-// Hangfire Authorization Filter
-public class HangfireAuthorizationFilter : Hangfire.Dashboard.IDashboardAuthorizationFilter
-{
-    public bool Authorize(Hangfire.Dashboard.DashboardContext context)
-    {
-        // In production, implement proper authentication
-        return true;
-    }
-}
