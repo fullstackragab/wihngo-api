@@ -19,12 +19,21 @@ namespace Wihngo.Controllers
         private readonly AppDbContext _db;
         private readonly IMapper _mapper;
         private readonly INotificationService _notificationService;
+        private readonly IS3Service _s3Service;
+        private readonly ILogger<BirdsController> _logger;
 
-        public BirdsController(AppDbContext db, IMapper mapper, INotificationService notificationService)
+        public BirdsController(
+            AppDbContext db, 
+            IMapper mapper, 
+            INotificationService notificationService,
+            IS3Service s3Service,
+            ILogger<BirdsController> logger)
         {
             _db = db;
             _mapper = mapper;
             _notificationService = notificationService;
+            _s3Service = s3Service;
+            _logger = logger;
         }
 
         private Guid? GetUserIdClaim()
@@ -62,28 +71,61 @@ namespace Wihngo.Controllers
             // Project only necessary fields and counts to avoid loading all support transaction details
             var birds = await _db.Birds
                 .AsNoTracking()
-                .Select(b => new BirdSummaryDto
+                .Select(b => new
                 {
-                    BirdId = b.BirdId,
-                    Name = b.Name,
-                    Species = b.Species,
-                    ImageUrl = b.ImageUrl,
-                    VideoUrl = b.VideoUrl ?? null,
-                    Tagline = b.Tagline ?? null,
-                    LovedBy = b.LovedCount,
-                    SupportedBy = b.SupportTransactions.Count(),
-                    OwnerId = b.OwnerId,
-                    IsLoved = false // Will be set after query
+                    b.BirdId,
+                    b.Name,
+                    b.Species,
+                    b.ImageUrl,
+                    b.VideoUrl,
+                    b.Tagline,
+                    b.LovedCount,
+                    SupportedCount = b.SupportTransactions.Count(),
+                    b.OwnerId
                 })
                 .ToListAsync();
 
-            // Set IsLoved status for each bird
+            // Generate download URLs and map to DTOs
+            var birdDtos = new List<BirdSummaryDto>();
             foreach (var bird in birds)
             {
-                bird.IsLoved = lovedBirdIds.Contains(bird.BirdId);
+                string? imageUrl = null;
+                string? videoUrl = null;
+
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(bird.ImageUrl))
+                    {
+                        imageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.ImageUrl);
+                    }
+                    if (!string.IsNullOrWhiteSpace(bird.VideoUrl))
+                    {
+                        videoUrl = await _s3Service.GenerateDownloadUrlAsync(bird.VideoUrl);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to generate download URLs for bird {BirdId}", bird.BirdId);
+                }
+
+                birdDtos.Add(new BirdSummaryDto
+                {
+                    BirdId = bird.BirdId,
+                    Name = bird.Name,
+                    Species = bird.Species,
+                    ImageS3Key = bird.ImageUrl,
+                    ImageUrl = imageUrl,
+                    VideoS3Key = bird.VideoUrl,
+                    VideoUrl = videoUrl,
+                    Tagline = bird.Tagline,
+                    LovedBy = bird.LovedCount,
+                    SupportedBy = bird.SupportedCount,
+                    OwnerId = bird.OwnerId,
+                    IsLoved = lovedBirdIds.Contains(bird.BirdId)
+                });
             }
 
-            return Ok(birds);
+            return Ok(birdDtos);
         }
 
         [HttpGet("{id}")]
@@ -103,8 +145,27 @@ namespace Wihngo.Controllers
             // Fill counts explicitly
             dto.LovedBy = bird.LovedCount;
             dto.SupportedBy = bird.SupportTransactions?.Count ?? 0;
-            dto.ImageUrl = bird.ImageUrl;
-            dto.VideoUrl = bird.VideoUrl;
+            
+            // Store S3 keys
+            dto.ImageS3Key = bird.ImageUrl;
+            dto.VideoS3Key = bird.VideoUrl;
+
+            // Generate download URLs
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(bird.ImageUrl))
+                {
+                    dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.ImageUrl);
+                }
+                if (!string.IsNullOrWhiteSpace(bird.VideoUrl))
+                {
+                    dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(bird.VideoUrl);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to generate download URLs for bird {BirdId}", id);
+            }
 
             // Check if current user has loved this bird
             var userId = GetUserIdClaim();
@@ -166,44 +227,186 @@ namespace Wihngo.Controllers
             var userId = GetUserIdClaim();
             if (userId == null) return Unauthorized();
 
-            var bird = _mapper.Map<Bird>(dto);
-            bird.BirdId = Guid.NewGuid();
-            bird.OwnerId = userId.Value;
-            bird.CreatedAt = DateTime.UtcNow;
+            // Validate S3 keys
+            if (string.IsNullOrWhiteSpace(dto.ImageS3Key) || string.IsNullOrWhiteSpace(dto.VideoS3Key))
+            {
+                return BadRequest(new { message = "ImageS3Key and VideoS3Key are required" });
+            }
+
+            // Verify files exist in S3
+            var imageExists = await _s3Service.FileExistsAsync(dto.ImageS3Key);
+            var videoExists = await _s3Service.FileExistsAsync(dto.VideoS3Key);
+
+            if (!imageExists)
+            {
+                return BadRequest(new { message = "Bird profile image not found in S3. Please upload the file first." });
+            }
+
+            if (!videoExists)
+            {
+                return BadRequest(new { message = "Bird video not found in S3. Please upload the file first." });
+            }
+
+            var bird = new Bird
+            {
+                BirdId = Guid.NewGuid(),
+                OwnerId = userId.Value,
+                Name = dto.Name,
+                Species = dto.Species,
+                Tagline = dto.Tagline,
+                Description = dto.Description,
+                ImageUrl = dto.ImageS3Key,
+                VideoUrl = dto.VideoS3Key,
+                CreatedAt = DateTime.UtcNow
+            };
 
             _db.Birds.Add(bird);
             await _db.SaveChangesAsync();
 
-            var summary = _mapper.Map<BirdSummaryDto>(bird);
+            _logger.LogInformation("Bird created: {BirdId} by user {UserId}", bird.BirdId, userId.Value);
+
+            // Generate download URLs for response
+            string? imageUrl = null;
+            string? videoUrl = null;
+            try
+            {
+                imageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.ImageUrl);
+                videoUrl = await _s3Service.GenerateDownloadUrlAsync(bird.VideoUrl);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to generate download URLs for bird {BirdId}", bird.BirdId);
+            }
+
+            var summary = new BirdSummaryDto
+            {
+                BirdId = bird.BirdId,
+                Name = bird.Name,
+                Species = bird.Species,
+                ImageS3Key = bird.ImageUrl,
+                ImageUrl = imageUrl,
+                VideoS3Key = bird.VideoUrl,
+                VideoUrl = videoUrl,
+                Tagline = bird.Tagline,
+                LovedBy = 0,
+                SupportedBy = 0,
+                OwnerId = bird.OwnerId,
+                IsLoved = false
+            };
 
             return CreatedAtAction(nameof(Get), new { id = bird.BirdId }, summary);
         }
 
         [HttpPut("{id}")]
-        public async Task<IActionResult> Put(Guid id, [FromBody] Bird updated)
+        [Authorize]
+        public async Task<IActionResult> Put(Guid id, [FromBody] BirdCreateDto dto)
         {
+            if (!await EnsureOwner(id)) return Forbid();
+
             var bird = await _db.Birds.FindAsync(id);
             if (bird == null) return NotFound();
 
-            bird.Name = updated.Name;
-            bird.Species = updated.Species;
-            bird.Description = updated.Description;
-            bird.ImageUrl = updated.ImageUrl;
-            bird.VideoUrl = updated.VideoUrl;
-            bird.Tagline = updated.Tagline;
+            bird.Name = dto.Name;
+            bird.Species = dto.Species;
+            bird.Description = dto.Description;
+            bird.Tagline = dto.Tagline;
+
+            // Update image if provided and different
+            if (!string.IsNullOrWhiteSpace(dto.ImageS3Key) && dto.ImageS3Key != bird.ImageUrl)
+            {
+                var imageExists = await _s3Service.FileExistsAsync(dto.ImageS3Key);
+                if (!imageExists)
+                {
+                    return BadRequest(new { message = "Bird profile image not found in S3." });
+                }
+
+                // Delete old image
+                if (!string.IsNullOrWhiteSpace(bird.ImageUrl))
+                {
+                    try
+                    {
+                        await _s3Service.DeleteFileAsync(bird.ImageUrl);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to delete old bird image");
+                    }
+                }
+
+                bird.ImageUrl = dto.ImageS3Key;
+            }
+
+            // Update video if provided and different
+            if (!string.IsNullOrWhiteSpace(dto.VideoS3Key) && dto.VideoS3Key != bird.VideoUrl)
+            {
+                var videoExists = await _s3Service.FileExistsAsync(dto.VideoS3Key);
+                if (!videoExists)
+                {
+                    return BadRequest(new { message = "Bird video not found in S3." });
+                }
+
+                // Delete old video
+                if (!string.IsNullOrWhiteSpace(bird.VideoUrl))
+                {
+                    try
+                    {
+                        await _s3Service.DeleteFileAsync(bird.VideoUrl);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to delete old bird video");
+                    }
+                }
+
+                bird.VideoUrl = dto.VideoS3Key;
+            }
 
             await _db.SaveChangesAsync();
+            
+            _logger.LogInformation("Bird updated: {BirdId}", id);
+            
             return NoContent();
         }
 
         [HttpDelete("{id}")]
+        [Authorize]
         public async Task<IActionResult> Delete(Guid id)
         {
+            if (!await EnsureOwner(id)) return Forbid();
+
             var bird = await _db.Birds.FindAsync(id);
             if (bird == null) return NotFound();
 
+            // Delete media files from S3
+            if (!string.IsNullOrWhiteSpace(bird.ImageUrl))
+            {
+                try
+                {
+                    await _s3Service.DeleteFileAsync(bird.ImageUrl);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete bird image from S3");
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(bird.VideoUrl))
+            {
+                try
+                {
+                    await _s3Service.DeleteFileAsync(bird.VideoUrl);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete bird video from S3");
+                }
+            }
+
             _db.Birds.Remove(bird);
             await _db.SaveChangesAsync();
+            
+            _logger.LogInformation("Bird deleted: {BirdId}", id);
+            
             return NoContent();
         }
 

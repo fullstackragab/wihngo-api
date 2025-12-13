@@ -61,6 +61,10 @@ builder.Logging.AddFilter("Wihngo.Controllers.AuthController", LogLevel.Informat
 builder.Logging.AddFilter("Wihngo.Services.TokenService", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Middleware.RateLimitingMiddleware", LogLevel.Information);
 
+// ? Enable media/S3 logs
+builder.Logging.AddFilter("Wihngo.Services.S3Service", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Controllers.MediaController", LogLevel.Information);
+
 // Configure console logging format
 builder.Logging.AddSimpleConsole(options =>
 {
@@ -84,11 +88,33 @@ builder.Services.AddOpenApi();
 builder.Services.AddAutoMapper(cfg => cfg.AddProfile<AutoMapperProfile>());
 
 // Register DbContext using PostgreSQL (Npgsql)
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-                       ?? "Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;SSL Mode=Require;Trust Server Certificate=true";
+// Read connection string from environment variable (secure) or fallback to appsettings.json
+var connectionString = builder.Configuration["DEFAULT_CONNECTION"] 
+                       ?? builder.Configuration.GetConnectionString("DefaultConnection")
+                       ?? throw new InvalidOperationException("Database connection string is not configured. Set DEFAULT_CONNECTION environment variable.");
+
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString)
            .UseSnakeCaseNamingConvention());
+
+// Log database configuration (without exposing connection details)
+var dbLogger = builder.Services.BuildServiceProvider().GetRequiredService<ILogger<Program>>();
+dbLogger.LogInformation("Database Configuration:");
+dbLogger.LogInformation("  Connection: {Status}", string.IsNullOrEmpty(connectionString) ? "NOT SET" : "***configured***");
+var dbName = ExtractDatabaseName(connectionString);
+if (!string.IsNullOrEmpty(dbName))
+{
+    dbLogger.LogInformation("  Database: {Database}", dbName);
+}
+
+// Helper method to extract database name from connection string
+static string? ExtractDatabaseName(string? connectionString)
+{
+    if (string.IsNullOrEmpty(connectionString)) return null;
+    
+    var match = System.Text.RegularExpressions.Regex.Match(connectionString, @"Database=([^;]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    return match.Success ? match.Groups[1].Value : null;
+}
 
 // Configuration Options
 builder.Services.Configure<SecurityConfiguration>(builder.Configuration.GetSection("Security"));
@@ -96,7 +122,90 @@ builder.Services.Configure<InvoiceConfiguration>(builder.Configuration.GetSectio
 builder.Services.Configure<SolanaConfiguration>(builder.Configuration.GetSection("Solana"));
 builder.Services.Configure<Wihngo.Configuration.BaseConfiguration>(builder.Configuration.GetSection("Base"));
 builder.Services.Configure<PayPalConfiguration>(builder.Configuration.GetSection("PayPal"));
-builder.Services.Configure<SmtpConfiguration>(builder.Configuration.GetSection("Smtp"));
+
+// SendGrid/SMTP Email Configuration - Read from environment variables or appsettings.json
+builder.Services.Configure<SmtpConfiguration>(config =>
+{
+    // Try to read from environment variables first
+    var sendGridApiKey = builder.Configuration["SENDGRID_API_KEY"] 
+                         ?? builder.Configuration["Smtp:SendGridApiKey"];
+    var provider = builder.Configuration["EMAIL_PROVIDER"] 
+                   ?? builder.Configuration["Smtp:Provider"] 
+                   ?? "SMTP";
+    var host = builder.Configuration["SMTP_HOST"] 
+               ?? builder.Configuration["Smtp:Host"] 
+               ?? "smtp.sendgrid.net";
+    var port = int.TryParse(
+        builder.Configuration["SMTP_PORT"] ?? builder.Configuration["Smtp:Port"],
+        out var smtpPort) ? smtpPort : 587;
+    var useSsl = bool.TryParse(
+        builder.Configuration["SMTP_USE_SSL"] ?? builder.Configuration["Smtp:UseSsl"],
+        out var ssl) ? ssl : true;
+    var username = builder.Configuration["SMTP_USERNAME"] 
+                   ?? builder.Configuration["Smtp:Username"] 
+                   ?? "apikey"; // SendGrid uses 'apikey' as username
+    var password = builder.Configuration["SMTP_PASSWORD"] 
+                   ?? builder.Configuration["Smtp:Password"];
+    var fromEmail = builder.Configuration["EMAIL_FROM"] 
+                    ?? builder.Configuration["Smtp:FromEmail"] 
+                    ?? "noreply@wihngo.com";
+    var fromName = builder.Configuration["EMAIL_FROM_NAME"] 
+                   ?? builder.Configuration["Smtp:FromName"] 
+                   ?? "Wihngo";
+
+    config.Provider = provider;
+    config.Host = host;
+    config.Port = port;
+    config.UseSsl = useSsl;
+    config.Username = username;
+    config.Password = password ?? string.Empty;
+    config.FromEmail = fromEmail;
+    config.FromName = fromName;
+    config.SendGridApiKey = sendGridApiKey;
+    
+    // Log configuration (without sensitive data)
+    var logger = builder.Services.BuildServiceProvider().GetRequiredService<ILogger<Program>>();
+    logger.LogInformation("Email Configuration loaded:");
+    logger.LogInformation("  Provider: {Provider}", provider);
+    logger.LogInformation("  SendGrid API Key: {HasKey}", string.IsNullOrEmpty(sendGridApiKey) ? "NOT SET" : "***configured***");
+    logger.LogInformation("  SMTP Host: {Host}", host);
+    logger.LogInformation("  SMTP Port: {Port}", port);
+    logger.LogInformation("  From Email: {FromEmail}", fromEmail);
+});
+
+// AWS Configuration - Read from environment variables or appsettings.json
+builder.Services.Configure<AwsConfiguration>(config =>
+{
+    // Try to read from environment variables first
+    var accessKeyId = builder.Configuration["AWS_ACCESS_KEY_ID"] 
+                      ?? builder.Configuration["AWS:AccessKeyId"];
+    var secretAccessKey = builder.Configuration["AWS_SECRET_ACCESS_KEY"] 
+                          ?? builder.Configuration["AWS:SecretAccessKey"];
+    var bucketName = builder.Configuration["AWS_BUCKET_NAME"] 
+                     ?? builder.Configuration["AWS:BucketName"] 
+                     ?? "amzn-s3-wihngo-bucket";
+    var region = builder.Configuration["AWS_REGION"] 
+                 ?? builder.Configuration["AWS:Region"] 
+                 ?? "us-east-1";
+    var expirationMinutes = int.TryParse(
+        builder.Configuration["AWS_PRESIGNED_URL_EXPIRATION_MINUTES"] 
+        ?? builder.Configuration["AWS:PresignedUrlExpirationMinutes"], 
+        out var minutes) ? minutes : 10;
+
+    config.AccessKeyId = accessKeyId ?? string.Empty;
+    config.SecretAccessKey = secretAccessKey ?? string.Empty;
+    config.BucketName = bucketName;
+    config.Region = region;
+    config.PresignedUrlExpirationMinutes = expirationMinutes;
+    
+    // Log configuration (without sensitive data)
+    var logger = builder.Services.BuildServiceProvider().GetRequiredService<ILogger<Program>>();
+    logger.LogInformation("AWS Configuration loaded:");
+    logger.LogInformation("  Access Key: {HasKey}", string.IsNullOrEmpty(accessKeyId) ? "NOT SET" : "***" + accessKeyId[^4..]);
+    logger.LogInformation("  Secret Key: {HasSecret}", string.IsNullOrEmpty(secretAccessKey) ? "NOT SET" : "***configured***");
+    logger.LogInformation("  Bucket: {Bucket}", bucketName);
+    logger.LogInformation("  Region: {Region}", region);
+});
 
 // HttpClient
 builder.Services.AddHttpClient();
@@ -105,6 +214,9 @@ builder.Services.AddHttpClient();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IPasswordValidationService, PasswordValidationService>();
 builder.Services.AddScoped<IAuthEmailService, AuthEmailService>();
+
+// AWS S3 Media Services
+builder.Services.AddScoped<IS3Service, S3Service>();
 
 // Crypto Payment Services
 builder.Services.AddScoped<ICryptoPaymentService, CryptoPaymentService>();

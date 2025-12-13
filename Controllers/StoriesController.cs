@@ -18,12 +18,21 @@ namespace Wihngo.Controllers
         private readonly AppDbContext _db;
         private readonly IMapper _mapper;
         private readonly INotificationService _notificationService;
+        private readonly IS3Service _s3Service;
+        private readonly ILogger<StoriesController> _logger;
 
-        public StoriesController(AppDbContext db, IMapper mapper, INotificationService notificationService)
+        public StoriesController(
+            AppDbContext db, 
+            IMapper mapper, 
+            INotificationService notificationService,
+            IS3Service s3Service,
+            ILogger<StoriesController> logger)
         {
             _db = db;
             _mapper = mapper;
             _notificationService = notificationService;
+            _s3Service = s3Service;
+            _logger = logger;
         }
 
         private Guid? GetUserIdClaim()
@@ -49,7 +58,34 @@ namespace Wihngo.Controllers
                 .Take(pageSize)
                 .ToListAsync();
 
-            var dtoItems = _mapper.Map<IEnumerable<StorySummaryDto>>(items);
+            var dtoItems = new List<StorySummaryDto>();
+            foreach (var story in items)
+            {
+                var dto = new StorySummaryDto
+                {
+                    StoryId = story.StoryId,
+                    Title = story.Content.Length > 30 ? story.Content.Substring(0, 30) + "..." : story.Content,
+                    Bird = story.Bird?.Name ?? string.Empty,
+                    Date = story.CreatedAt.ToString("MMMM d, yyyy"),
+                    Preview = story.Content.Length > 140 ? story.Content.Substring(0, 140) + "..." : story.Content,
+                    ImageS3Key = story.ImageUrl
+                };
+
+                // Generate download URL if image exists
+                if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+                {
+                    try
+                    {
+                        dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.ImageUrl);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to generate download URL for story {StoryId}", story.StoryId);
+                    }
+                }
+
+                dtoItems.Add(dto);
+            }
 
             var result = new PagedResult<StorySummaryDto>
             {
@@ -71,18 +107,68 @@ namespace Wihngo.Controllers
                 .FirstOrDefaultAsync(s => s.StoryId == id);
 
             if (story == null) return NotFound();
-            return Ok(_mapper.Map<StoryReadDto>(story));
+            
+            var dto = _mapper.Map<StoryReadDto>(story);
+            
+            // Store S3 key and generate download URL
+            dto.ImageS3Key = story.ImageUrl;
+            if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+            {
+                try
+                {
+                    dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.ImageUrl);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to generate download URL for story {StoryId}", id);
+                }
+            }
+            
+            return Ok(dto);
         }
 
         [HttpPost]
-        public async Task<ActionResult<StoryReadDto>> Post([FromBody] Story story)
+        [Authorize]
+        public async Task<ActionResult<StoryReadDto>> Post([FromBody] StoryCreateDto dto)
         {
-            story.StoryId = Guid.NewGuid();
-            story.CreatedAt = DateTime.UtcNow;
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
+            // Verify bird exists
+            var bird = await _db.Birds.FindAsync(dto.BirdId);
+            if (bird == null) return NotFound(new { message = "Bird not found" });
+
+            // Verify image exists in S3 if provided
+            if (!string.IsNullOrWhiteSpace(dto.ImageS3Key))
+            {
+                var imageExists = await _s3Service.FileExistsAsync(dto.ImageS3Key);
+                if (!imageExists)
+                {
+                    return BadRequest(new { message = "Story image not found in S3. Please upload the file first." });
+                }
+            }
+
+            var story = new Story
+            {
+                StoryId = Guid.NewGuid(),
+                BirdId = dto.BirdId,
+                AuthorId = userId.Value,
+                Content = dto.Content,
+                ImageUrl = dto.ImageS3Key,
+                CreatedAt = DateTime.UtcNow
+            };
+
             _db.Stories.Add(story);
             await _db.SaveChangesAsync();
 
-            var created = await _db.Stories.Include(s => s.Bird).Include(s => s.Author).FirstOrDefaultAsync(s => s.StoryId == story.StoryId);
+            _logger.LogInformation("Story created: {StoryId} by user {UserId}", story.StoryId, userId.Value);
+
+            var created = await _db.Stories
+                .Include(s => s.Bird)
+                .Include(s => s.Author)
+                .FirstOrDefaultAsync(s => s.StoryId == story.StoryId);
 
             // Notify users who loved this bird about new story
             if (created?.Bird != null)
@@ -120,30 +206,131 @@ namespace Wihngo.Controllers
                 });
             }
 
-            return CreatedAtAction(nameof(Get), new { id = story.StoryId }, _mapper.Map<StoryReadDto>(created));
+            var resultDto = _mapper.Map<StoryReadDto>(created);
+            resultDto.ImageS3Key = created!.ImageUrl;
+            
+            // Generate download URL
+            if (!string.IsNullOrWhiteSpace(created.ImageUrl))
+            {
+                try
+                {
+                    resultDto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(created.ImageUrl);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to generate download URL for story {StoryId}", story.StoryId);
+                }
+            }
+
+            return CreatedAtAction(nameof(Get), new { id = story.StoryId }, resultDto);
         }
 
         [HttpPut("{id}")]
-        public async Task<IActionResult> Put(Guid id, [FromBody] Story updated)
+        [Authorize]
+        public async Task<IActionResult> Put(Guid id, [FromBody] StoryUpdateDto dto)
         {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
             var story = await _db.Stories.FindAsync(id);
             if (story == null) return NotFound();
 
-            story.Content = updated.Content;
-            story.ImageUrl = updated.ImageUrl;
+            // Only author can update story
+            if (story.AuthorId != userId.Value) return Forbid();
+
+            // Update content if provided
+            if (!string.IsNullOrWhiteSpace(dto.Content))
+            {
+                story.Content = dto.Content;
+            }
+
+            // Update image if provided
+            if (dto.ImageS3Key != null) // Check for null to distinguish between not provided and empty string
+            {
+                if (string.IsNullOrWhiteSpace(dto.ImageS3Key))
+                {
+                    // Remove image
+                    if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+                    {
+                        try
+                        {
+                            await _s3Service.DeleteFileAsync(story.ImageUrl);
+                            _logger.LogInformation("Deleted story image for story {StoryId}", id);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to delete story image");
+                        }
+                    }
+                    story.ImageUrl = null;
+                }
+                else if (dto.ImageS3Key != story.ImageUrl)
+                {
+                    // New image provided
+                    var imageExists = await _s3Service.FileExistsAsync(dto.ImageS3Key);
+                    if (!imageExists)
+                    {
+                        return BadRequest(new { message = "Story image not found in S3." });
+                    }
+
+                    // Delete old image
+                    if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+                    {
+                        try
+                        {
+                            await _s3Service.DeleteFileAsync(story.ImageUrl);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to delete old story image");
+                        }
+                    }
+
+                    story.ImageUrl = dto.ImageS3Key;
+                }
+            }
 
             await _db.SaveChangesAsync();
+            
+            _logger.LogInformation("Story updated: {StoryId}", id);
+            
             return NoContent();
         }
 
         [HttpDelete("{id}")]
+        [Authorize]
         public async Task<IActionResult> Delete(Guid id)
         {
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
             var story = await _db.Stories.FindAsync(id);
             if (story == null) return NotFound();
 
+            // Only author can delete story
+            if (story.AuthorId != userId.Value) return Forbid();
+
+            // Delete image from S3 if exists
+            if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+            {
+                try
+                {
+                    await _s3Service.DeleteFileAsync(story.ImageUrl);
+                    _logger.LogInformation("Deleted story image for story {StoryId}", id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete story image from S3");
+                }
+            }
+
             _db.Stories.Remove(story);
             await _db.SaveChangesAsync();
+            
+            _logger.LogInformation("Story deleted: {StoryId}", id);
+            
             return NoContent();
         }
 

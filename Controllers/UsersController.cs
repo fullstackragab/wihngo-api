@@ -8,6 +8,7 @@ namespace Wihngo.Controllers
     using Wihngo.Data;
     using Wihngo.Dtos;
     using Wihngo.Models;
+    using Wihngo.Services.Interfaces;
 
     [Route("api/[controller]")]
     [ApiController]
@@ -16,12 +17,18 @@ namespace Wihngo.Controllers
         private readonly AppDbContext _db;
         private readonly IMapper _mapper;
         private readonly ILogger<UsersController> _logger;
+        private readonly IS3Service _s3Service;
 
-        public UsersController(AppDbContext db, IMapper mapper, ILogger<UsersController> logger)
+        public UsersController(
+            AppDbContext db, 
+            IMapper mapper, 
+            ILogger<UsersController> logger,
+            IS3Service s3Service)
         {
             _db = db;
             _mapper = mapper;
             _logger = logger;
+            _s3Service = s3Service;
         }
 
         [HttpGet]
@@ -236,10 +243,10 @@ namespace Wihngo.Controllers
 
                 // Check if at least one field is provided
                 if (string.IsNullOrWhiteSpace(dto.Name) && 
-                    string.IsNullOrWhiteSpace(dto.ProfileImage) && 
+                    string.IsNullOrWhiteSpace(dto.ProfileImageS3Key) && 
                     string.IsNullOrWhiteSpace(dto.Bio))
                 {
-                    return BadRequest(new { message = "At least one field (name, profileImage, or bio) must be provided" });
+                    return BadRequest(new { message = "At least one field (name, profileImageS3Key, or bio) must be provided" });
                 }
 
                 // Find user
@@ -255,9 +262,38 @@ namespace Wihngo.Controllers
                     user.Name = dto.Name.Trim();
                 }
 
-                if (!string.IsNullOrWhiteSpace(dto.ProfileImage))
+                if (!string.IsNullOrWhiteSpace(dto.ProfileImageS3Key))
                 {
-                    user.ProfileImage = dto.ProfileImage.Trim();
+                    var s3Key = dto.ProfileImageS3Key.Trim();
+                    
+                    // Basic validation: ensure S3 key belongs to this user
+                    if (!s3Key.Contains(userId.ToString()))
+                    {
+                        return BadRequest(new { message = "Invalid profile image S3 key. Must belong to your user account." });
+                    }
+
+                    // Verify file exists in S3
+                    var exists = await _s3Service.FileExistsAsync(s3Key);
+                    if (!exists)
+                    {
+                        return BadRequest(new { message = "Profile image file not found in S3. Please upload the file first." });
+                    }
+
+                    // Delete old profile image if exists
+                    if (!string.IsNullOrWhiteSpace(user.ProfileImage))
+                    {
+                        try
+                        {
+                            await _s3Service.DeleteFileAsync(user.ProfileImage);
+                            _logger.LogInformation("Deleted old profile image for user {UserId}", userId);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to delete old profile image for user {UserId}", userId);
+                        }
+                    }
+
+                    user.ProfileImage = s3Key;
                 }
 
                 if (dto.Bio != null) // Allow setting bio to empty string
@@ -269,17 +305,32 @@ namespace Wihngo.Controllers
 
                 _logger.LogInformation("Profile updated for user: {UserId}", userId);
 
+                // Generate download URL for profile image if exists
+                string? profileImageUrl = null;
+                if (!string.IsNullOrWhiteSpace(user.ProfileImage))
+                {
+                    try
+                    {
+                        profileImageUrl = await _s3Service.GenerateDownloadUrlAsync(user.ProfileImage);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to generate download URL for profile image");
+                    }
+                }
+
                 // Return updated profile
                 var response = new UserProfileResponseDto
                 {
                     UserId = user.UserId,
                     Name = user.Name,
                     Email = user.Email,
-                    ProfileImage = user.ProfileImage,
+                    ProfileImageS3Key = user.ProfileImage,
+                    ProfileImageUrl = profileImageUrl,
                     Bio = user.Bio,
                     EmailConfirmed = user.EmailConfirmed,
                     CreatedAt = user.CreatedAt,
-                    UpdatedAt = DateTime.UtcNow // Current time as a placeholder
+                    UpdatedAt = DateTime.UtcNow
                 };
 
                 return Ok(response);
@@ -315,17 +366,32 @@ namespace Wihngo.Controllers
                     return NotFound(new { message = "User not found" });
                 }
 
+                // Generate download URL for profile image if exists
+                string? profileImageUrl = null;
+                if (!string.IsNullOrWhiteSpace(user.ProfileImage))
+                {
+                    try
+                    {
+                        profileImageUrl = await _s3Service.GenerateDownloadUrlAsync(user.ProfileImage);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to generate download URL for profile image");
+                    }
+                }
+
                 // Return profile
                 var response = new UserProfileResponseDto
                 {
                     UserId = user.UserId,
                     Name = user.Name,
                     Email = user.Email,
-                    ProfileImage = user.ProfileImage,
+                    ProfileImageS3Key = user.ProfileImage,
+                    ProfileImageUrl = profileImageUrl,
                     Bio = user.Bio,
                     EmailConfirmed = user.EmailConfirmed,
                     CreatedAt = user.CreatedAt,
-                    UpdatedAt = DateTime.UtcNow // Current time as a placeholder
+                    UpdatedAt = DateTime.UtcNow
                 };
 
                 return Ok(response);
