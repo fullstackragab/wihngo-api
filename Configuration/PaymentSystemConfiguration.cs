@@ -48,14 +48,3 @@ public class PayPalConfiguration
     public string ReturnUrl { get; set; } = string.Empty;
     public string CancelUrl { get; set; } = string.Empty;
 }
-
-public class SmtpConfiguration
-{
-    public string Host { get; set; } = "smtp.gmail.com";
-    public int Port { get; set; } = 587;
-    public bool UseSsl { get; set; } = true;
-    public string Username { get; set; } = string.Empty;
-    public string Password { get; set; } = string.Empty;
-    public string FromEmail { get; set; } = "noreply@wihngo.com";
-    public string FromName { get; set; } = "Wihngo";
-}

@@ -210,6 +210,132 @@ namespace Wihngo.Controllers
                 return StatusCode(500, new { message = "Failed to register push token", error = ex.Message });
             }
         }
+
+        /// <summary>
+        /// Update authenticated user's profile
+        /// PUT /api/users/profile
+        /// </summary>
+        [HttpPut("profile")]
+        [Authorize]
+        public async Task<ActionResult<UserProfileResponseDto>> UpdateProfile([FromBody] UserUpdateDto dto)
+        {
+            try
+            {
+                // Get authenticated user ID from JWT token
+                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                {
+                    return Unauthorized(new { message = "Invalid authentication token" });
+                }
+
+                // Validate input
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(new { message = "Validation failed", errors = ModelState });
+                }
+
+                // Check if at least one field is provided
+                if (string.IsNullOrWhiteSpace(dto.Name) && 
+                    string.IsNullOrWhiteSpace(dto.ProfileImage) && 
+                    string.IsNullOrWhiteSpace(dto.Bio))
+                {
+                    return BadRequest(new { message = "At least one field (name, profileImage, or bio) must be provided" });
+                }
+
+                // Find user
+                var user = await _db.Users.FindAsync(userId);
+                if (user == null)
+                {
+                    return NotFound(new { message = "User not found" });
+                }
+
+                // Update only provided fields
+                if (!string.IsNullOrWhiteSpace(dto.Name))
+                {
+                    user.Name = dto.Name.Trim();
+                }
+
+                if (!string.IsNullOrWhiteSpace(dto.ProfileImage))
+                {
+                    user.ProfileImage = dto.ProfileImage.Trim();
+                }
+
+                if (dto.Bio != null) // Allow setting bio to empty string
+                {
+                    user.Bio = dto.Bio.Trim();
+                }
+
+                await _db.SaveChangesAsync();
+
+                _logger.LogInformation("Profile updated for user: {UserId}", userId);
+
+                // Return updated profile
+                var response = new UserProfileResponseDto
+                {
+                    UserId = user.UserId,
+                    Name = user.Name,
+                    Email = user.Email,
+                    ProfileImage = user.ProfileImage,
+                    Bio = user.Bio,
+                    EmailConfirmed = user.EmailConfirmed,
+                    CreatedAt = user.CreatedAt,
+                    UpdatedAt = DateTime.UtcNow // Current time as a placeholder
+                };
+
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating profile");
+                return StatusCode(500, new { message = "Failed to update profile. Please try again." });
+            }
+        }
+
+        /// <summary>
+        /// Get authenticated user's profile
+        /// GET /api/users/profile
+        /// </summary>
+        [HttpGet("profile")]
+        [Authorize]
+        public async Task<ActionResult<UserProfileResponseDto>> GetProfile()
+        {
+            try
+            {
+                // Get authenticated user ID from JWT token
+                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                {
+                    return Unauthorized(new { message = "Invalid authentication token" });
+                }
+
+                // Find user
+                var user = await _db.Users.FindAsync(userId);
+                if (user == null)
+                {
+                    return NotFound(new { message = "User not found" });
+                }
+
+                // Return profile
+                var response = new UserProfileResponseDto
+                {
+                    UserId = user.UserId,
+                    Name = user.Name,
+                    Email = user.Email,
+                    ProfileImage = user.ProfileImage,
+                    Bio = user.Bio,
+                    EmailConfirmed = user.EmailConfirmed,
+                    CreatedAt = user.CreatedAt,
+                    UpdatedAt = DateTime.UtcNow // Current time as a placeholder
+                };
+
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting profile");
+                return StatusCode(500, new { message = "Failed to get profile. Please try again." });
+            }
+        }
     }
 
     public class RegisterPushTokenRequest
