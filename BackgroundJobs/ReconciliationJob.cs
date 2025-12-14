@@ -1,4 +1,9 @@
-using Microsoft.EntityFrameworkCore;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Dapper;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Wihngo.Configuration;
 using Wihngo.Data;
@@ -12,15 +17,18 @@ namespace Wihngo.BackgroundJobs;
 public class ReconciliationJob
 {
     private readonly AppDbContext _context;
+    private readonly IDbConnectionFactory _dbFactory;
     private readonly InvoiceConfiguration _config;
     private readonly ILogger<ReconciliationJob> _logger;
 
     public ReconciliationJob(
         AppDbContext context,
+        IDbConnectionFactory dbFactory,
         IOptions<InvoiceConfiguration> config,
         ILogger<ReconciliationJob> logger)
     {
         _context = context;
+        _dbFactory = dbFactory;
         _config = config.Value;
         _logger = logger;
     }
@@ -64,102 +72,113 @@ public class ReconciliationJob
                 }
             }
 
-            // 3. Check for duplicate payments by transaction hash
-            var duplicatePayments = await _context.Payments
-                .Where(p => p.TxHash != null)
-                .GroupBy(p => p.TxHash)
-                .Where(g => g.Count() > 1)
-                .Select(g => new { TxHash = g.Key, Count = g.Count(), Payments = g.ToList() })
-                .ToListAsync();
+            // 3. Check for duplicate payments by transaction hash using raw SQL
+            var duplicateSql = @"
+                SELECT tx_hash, COUNT(*) as count
+                FROM payments
+                WHERE tx_hash IS NOT NULL
+                GROUP BY tx_hash
+                HAVING COUNT(*) > 1";
 
-            if (duplicatePayments.Any())
+            var connection = await _dbFactory.CreateOpenConnectionAsync();
+            try
             {
-                anomalies.Add($"Found {duplicatePayments.Count} duplicate transaction hashes:");
-                foreach (var dup in duplicatePayments)
-                {
-                    anomalies.Add($"  - TxHash {dup.TxHash}: {dup.Count} payments");
-                }
-            }
-
-            // 4. Check for invoices that expired without payment
-            var expiredUnpaid = await _context.Invoices
-                .Where(i => i.ExpiresAt < DateTime.UtcNow &&
-                           (i.State == "CREATED" || i.State == "AWAITING_PAYMENT") &&
-                           i.State != "EXPIRED" &&
-                           i.CreatedAt > DateTime.UtcNow.AddDays(-30)) // Only last 30 days
-                .ToListAsync();
-
-            if (expiredUnpaid.Any())
-            {
-                _logger.LogInformation("Found {Count} expired unpaid invoices to mark as EXPIRED", expiredUnpaid.Count);
+                var duplicateHashes = await connection.QueryAsync<(string TxHash, int Count)>(duplicateSql);
                 
-                foreach (var invoice in expiredUnpaid)
+                if (duplicateHashes.Any())
                 {
-                    invoice.State = "EXPIRED";
-                    invoice.UpdatedAt = DateTime.UtcNow;
+                    anomalies.Add($"Found {duplicateHashes.Count()} duplicate transaction hashes:");
+                    
+                    foreach (var dup in duplicateHashes)
+                    {
+                        anomalies.Add($"  - TxHash {dup.TxHash}: {dup.Count} payments");
+                    }
                 }
-                
-                await _context.SaveChangesAsync();
-            }
 
-            // 5. Check for refunds stuck in PROCESSING state
-            var stuckRefunds = await _context.RefundRequests
-                .Where(r => r.State == "PROCESSING" &&
-                           r.CreatedAt < DateTime.UtcNow.AddDays(-7))
-                .ToListAsync();
+                // 4. Check for invoices that expired without payment
+                var expiredUnpaid = await _context.Invoices
+                    .Where(i => i.ExpiresAt < DateTime.UtcNow &&
+                               (i.State == "CREATED" || i.State == "AWAITING_PAYMENT") &&
+                               i.State != "EXPIRED" &&
+                               i.CreatedAt > DateTime.UtcNow.AddDays(-30)) // Only last 30 days
+                    .ToListAsync();
 
-            if (stuckRefunds.Any())
-            {
-                anomalies.Add($"Found {stuckRefunds.Count} refunds stuck in PROCESSING state for > 7 days:");
-                foreach (var refund in stuckRefunds)
+                if (expiredUnpaid.Any())
                 {
-                    anomalies.Add($"  - Refund {refund.Id}, created {refund.CreatedAt:yyyy-MM-dd HH:mm}");
+                    _logger.LogInformation("Found {Count} expired unpaid invoices to mark as EXPIRED", expiredUnpaid.Count);
+                    
+                    foreach (var invoice in expiredUnpaid)
+                    {
+                        invoice.State = "EXPIRED";
+                        invoice.UpdatedAt = DateTime.UtcNow;
+                    }
+                    
+                    await _context.SaveChangesAsync();
                 }
-            }
 
-            // 6. Check for amount mismatches between invoice and payment
-            var amountMismatches = await _context.Payments
-                .Include(p => p.Invoice)
-                .Where(p => p.FiatValueAtPayment.HasValue &&
-                           p.Invoice != null &&
-                           p.Invoice.AmountFiatAtSettlement.HasValue &&
-                           Math.Abs(p.FiatValueAtPayment.Value - p.Invoice.AmountFiatAtSettlement.Value) > 0.01m)
-                .ToListAsync();
+                // 5. Check for refunds stuck in PROCESSING state
+                var stuckRefunds = await _context.RefundRequests
+                    .Where(r => r.State == "PROCESSING" &&
+                               r.CreatedAt < DateTime.UtcNow.AddDays(-7))
+                    .ToListAsync();
 
-            if (amountMismatches.Any())
-            {
-                anomalies.Add($"Found {amountMismatches.Count} payments with amount mismatches:");
-                foreach (var payment in amountMismatches)
+                if (stuckRefunds.Any())
                 {
-                    anomalies.Add($"  - Payment {payment.Id}: Paid {payment.FiatValueAtPayment}, Expected {payment.Invoice?.AmountFiatAtSettlement}");
+                    anomalies.Add($"Found {stuckRefunds.Count} refunds stuck in PROCESSING state for > 7 days:");
+                    foreach (var refund in stuckRefunds)
+                    {
+                        anomalies.Add($"  - Refund {refund.Id}, created {refund.CreatedAt:yyyy-MM-dd HH:mm}");
+                    }
+                }
+
+                // 6. Check for amount mismatches between invoice and payment
+                var amountMismatches = await _context.Payments
+                    .Include(p => p.Invoice)
+                    .Where(p => p.FiatValueAtPayment.HasValue &&
+                               p.Invoice != null &&
+                               p.Invoice.AmountFiatAtSettlement.HasValue &&
+                               Math.Abs(p.FiatValueAtPayment.Value - p.Invoice.AmountFiatAtSettlement.Value) > 0.01m)
+                    .ToListAsync();
+
+                if (amountMismatches.Any())
+                {
+                    anomalies.Add($"Found {amountMismatches.Count} payments with amount mismatches:");
+                    foreach (var payment in amountMismatches)
+                    {
+                        anomalies.Add($"  - Payment {payment.Id}: Paid {payment.FiatValueAtPayment}, Expected {payment.Invoice?.AmountFiatAtSettlement}");
+                    }
+                }
+
+                // 7. Summary statistics with raw SQL
+                var todayInvoicesCountSql = "SELECT COUNT(*) FROM invoices WHERE created_at >= @Today";
+                var todayInvoices = await connection.ExecuteScalarAsync<int>(todayInvoicesCountSql, new { Today = reconDate });
+
+                var todayCompletedPaymentsSql = "SELECT COUNT(*) FROM payments WHERE confirmed_at >= @Today";
+                var todayCompletedPayments = await connection.ExecuteScalarAsync<int>(todayCompletedPaymentsSql, new { Today = reconDate });
+
+                var todayRevenueSql = @"
+                    SELECT COALESCE(SUM(amount_fiat_at_settlement), 0)
+                    FROM invoices
+                    WHERE issued_at >= @Today AND amount_fiat_at_settlement IS NOT NULL";
+                var todayRevenue = await connection.ExecuteScalarAsync<decimal>(todayRevenueSql, new { Today = reconDate });
+
+                _logger.LogInformation("Reconciliation summary: {InvoiceCount} invoices, {PaymentCount} payments, ${Revenue:F2} revenue today",
+                    todayInvoices, todayCompletedPayments, todayRevenue);
+
+                // Send report if anomalies found
+                if (anomalies.Any())
+                {
+                    _logger.LogWarning("Found {Count} types of anomalies during reconciliation", anomalies.Count);
+                    await SendReconciliationReportAsync(anomalies, reconDate);
+                }
+                else
+                {
+                    _logger.LogInformation("Reconciliation completed successfully with no anomalies");
                 }
             }
-
-            // 7. Summary statistics
-            var todayInvoices = await _context.Invoices
-                .Where(i => i.CreatedAt >= reconDate)
-                .CountAsync();
-
-            var todayCompletedPayments = await _context.Payments
-                .Where(p => p.ConfirmedAt >= reconDate)
-                .CountAsync();
-
-            var todayRevenue = await _context.Invoices
-                .Where(i => i.IssuedAt >= reconDate && i.AmountFiatAtSettlement.HasValue)
-                .SumAsync(i => i.AmountFiatAtSettlement ?? 0);
-
-            _logger.LogInformation("Reconciliation summary: {InvoiceCount} invoices, {PaymentCount} payments, ${Revenue:F2} revenue today",
-                todayInvoices, todayCompletedPayments, todayRevenue);
-
-            // Send report if anomalies found
-            if (anomalies.Any())
+            finally
             {
-                _logger.LogWarning("Found {Count} types of anomalies during reconciliation", anomalies.Count);
-                await SendReconciliationReportAsync(anomalies, reconDate);
-            }
-            else
-            {
-                _logger.LogInformation("Reconciliation completed successfully with no anomalies");
+                await connection.DisposeAsync();
             }
         }
         catch (Exception ex)

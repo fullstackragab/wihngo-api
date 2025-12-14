@@ -1,4 +1,3 @@
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Nethereum.Web3;
 using Nethereum.Contracts;
@@ -9,6 +8,7 @@ using Wihngo.Data;
 using Wihngo.Models.Entities;
 using Wihngo.Models.Enums;
 using System.Numerics;
+using System;
 
 namespace Wihngo.Services;
 

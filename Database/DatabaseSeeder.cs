@@ -1,9 +1,10 @@
-using Microsoft.EntityFrameworkCore;
+using System;
 using Microsoft.Extensions.DependencyInjection;
 using Wihngo.Data;
 using Wihngo.Models;
 using Wihngo.Models.Entities;
 using Wihngo.Models.Enums;
+using Wihngo.Extensions;
 
 namespace Wihngo.Database;
 

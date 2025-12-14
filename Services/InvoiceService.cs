@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+using System;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using Wihngo.Configuration;
@@ -23,6 +23,7 @@ public interface IInvoiceService
 public class InvoiceService : IInvoiceService
 {
     private readonly AppDbContext _context;
+    private readonly IDbConnectionFactory _dbFactory;
     private readonly InvoiceConfiguration _config;
     private readonly IInvoicePdfService _pdfService;
     private readonly IInvoiceEmailService _emailService;
@@ -32,6 +33,7 @@ public class InvoiceService : IInvoiceService
 
     public InvoiceService(
         AppDbContext context,
+        IDbConnectionFactory dbFactory,
         IOptions<InvoiceConfiguration> config,
         IInvoicePdfService pdfService,
         IInvoiceEmailService emailService,
@@ -40,6 +42,7 @@ public class InvoiceService : IInvoiceService
         ILogger<InvoiceService> logger)
     {
         _context = context;
+        _dbFactory = dbFactory;
         _config = config.Value;
         _pdfService = pdfService;
         _emailService = emailService;
@@ -304,9 +307,11 @@ public class InvoiceService : IInvoiceService
     {
         // Use database sequence for atomic invoice number generation
         var yearMonth = DateTime.UtcNow.ToString("yyyyMM");
-        var nextVal = await _context.Database
-            .SqlQuery<long>($"SELECT nextval('wihngo_invoice_seq')")
-            .FirstAsync();
+        
+        using var connection = await _dbFactory.CreateOpenConnectionAsync();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT nextval('wihngo_invoice_seq')";
+        var nextVal = Convert.ToInt64(await cmd.ExecuteScalarAsync());
 
         return $"{_config.InvoicePrefix}-{yearMonth}-{nextVal:D6}";
     }

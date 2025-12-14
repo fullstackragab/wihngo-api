@@ -1,9 +1,9 @@
 using Hangfire;
-using Microsoft.EntityFrameworkCore;
 using Wihngo.Data;
 using Wihngo.Models.Entities;
 
 namespace Wihngo.BackgroundJobs;
+using System;
 
 public class ExchangeRateUpdateJob
 {

@@ -3,8 +3,9 @@ namespace Wihngo.Services
     using System;
     using System.Collections.Generic;
     using System.Linq;
+    using System.Text.Json;
     using System.Threading.Tasks;
-    using Microsoft.EntityFrameworkCore;
+    using Dapper;
     using Wihngo.Data;
     using Wihngo.Dtos;
     using Wihngo.Models;
@@ -14,29 +15,30 @@ namespace Wihngo.Services
     public class NotificationService : INotificationService
     {
         private readonly AppDbContext _db;
+        private readonly IDbConnectionFactory _dbFactory;
         private readonly IPushNotificationService _pushService;
         private readonly IEmailNotificationService _emailService;
 
         public NotificationService(
             AppDbContext db,
+            IDbConnectionFactory dbFactory,
             IPushNotificationService pushService,
             IEmailNotificationService emailService)
         {
             _db = db;
+            _dbFactory = dbFactory;
             _pushService = pushService;
             _emailService = emailService;
         }
 
         public async Task<Notification> CreateNotificationAsync(CreateNotificationDto dto)
         {
-            // Check if user can receive this notification
             var canSend = await CanSendNotificationAsync(dto.UserId, dto.Type, dto.Channels);
             if (!canSend && dto.Priority != NotificationPriority.Critical)
             {
                 throw new InvalidOperationException("User has reached notification limit or disabled this notification type");
             }
 
-            // Check for grouping
             Guid? groupId = null;
             if (dto.BirdId.HasValue || dto.StoryId.HasValue)
             {
@@ -66,19 +68,27 @@ namespace Wihngo.Services
             // If this is part of a group, update existing group notification
             if (groupId.HasValue)
             {
-                var existingGroup = await _db.Notifications
-                    .Where(n => n.GroupId == groupId && n.UserId == dto.UserId && !n.IsRead)
-                    .OrderByDescending(n => n.CreatedAt)
-                    .FirstOrDefaultAsync();
+                var sql = @"
+                    SELECT * FROM notifications
+                    WHERE group_id = @GroupId 
+                      AND user_id = @UserId 
+                      AND is_read = false
+                    ORDER BY created_at DESC
+                    LIMIT 1";
+                
+                var existingGroup = await _dbFactory.QuerySingleOrDefaultAsync<Notification>(sql, new 
+                { 
+                    GroupId = groupId, 
+                    UserId = dto.UserId 
+                });
 
                 if (existingGroup != null)
                 {
                     existingGroup.GroupCount++;
-                    existingGroup.Message = dto.Message; // Update with latest message
+                    existingGroup.Message = dto.Message;
                     existingGroup.UpdatedAt = DateTime.UtcNow;
                     await _db.SaveChangesAsync();
 
-                    // Send updated notification
                     await SendNotificationChannelsAsync(existingGroup);
                     return existingGroup;
                 }
@@ -118,37 +128,41 @@ namespace Wihngo.Services
             int pageSize = 20, 
             bool unreadOnly = false)
         {
-            var query = _db.Notifications
-                .Where(n => n.UserId == userId);
+            // Build base SQL with optional unread filter
+            var countSql = "SELECT COUNT(*) FROM notifications WHERE user_id = @UserId";
+            var dataSql = @"
+                SELECT 
+                    notification_id as NotificationId,
+                    type as Type,
+                    title as Title,
+                    message as Message,
+                    priority as Priority,
+                    is_read as IsRead,
+                    read_at as ReadAt,
+                    deep_link as DeepLink,
+                    bird_id as BirdId,
+                    story_id as StoryId,
+                    actor_user_id as ActorUserId,
+                    group_count as GroupCount,
+                    created_at as CreatedAt
+                FROM notifications
+                WHERE user_id = @UserId";
 
             if (unreadOnly)
             {
-                query = query.Where(n => !n.IsRead);
+                countSql += " AND is_read = false";
+                dataSql += " AND is_read = false";
             }
 
-            var totalCount = await query.CountAsync();
+            dataSql += " ORDER BY created_at DESC OFFSET @Offset LIMIT @Limit";
 
-            var notifications = await query
-                .OrderByDescending(n => n.CreatedAt)
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .Select(n => new NotificationDto
-                {
-                    NotificationId = n.NotificationId,
-                    Type = n.Type,
-                    Title = n.Title,
-                    Message = n.Message,
-                    Priority = n.Priority,
-                    IsRead = n.IsRead,
-                    ReadAt = n.ReadAt,
-                    DeepLink = n.DeepLink,
-                    BirdId = n.BirdId,
-                    StoryId = n.StoryId,
-                    ActorUserId = n.ActorUserId,
-                    GroupCount = n.GroupCount,
-                    CreatedAt = n.CreatedAt
-                })
-                .ToListAsync();
+            var totalCount = await _dbFactory.ExecuteScalarAsync<int>(countSql, new { UserId = userId });
+            var notifications = await _dbFactory.QueryListAsync<NotificationDto>(dataSql, new 
+            { 
+                UserId = userId,
+                Offset = (page - 1) * pageSize,
+                Limit = pageSize
+            });
 
             // Load actor user names
             var actorUserIds = notifications
@@ -159,19 +173,24 @@ namespace Wihngo.Services
 
             if (actorUserIds.Any())
             {
-                var actors = await _db.Users
-                    .Where(u => actorUserIds.Contains(u.UserId))
-                    .Select(u => new { u.UserId, u.Name })
-                    .ToListAsync();
-
-                var actorDict = actors.ToDictionary(a => a.UserId, a => a.Name);
-
-                foreach (var notification in notifications)
+                var actorSql = "SELECT user_id, name FROM users WHERE user_id = ANY(@UserIds)";
+                var connection = await _dbFactory.CreateOpenConnectionAsync();
+                try
                 {
-                    if (notification.ActorUserId.HasValue && actorDict.ContainsKey(notification.ActorUserId.Value))
+                    var actors = await connection.QueryAsync<(Guid UserId, string Name)>(actorSql, new { UserIds = actorUserIds.ToArray() });
+                    var actorDict = actors.ToDictionary(a => a.UserId, a => a.Name);
+
+                    foreach (var notification in notifications)
                     {
-                        notification.ActorUserName = actorDict[notification.ActorUserId.Value];
+                        if (notification.ActorUserId.HasValue && actorDict.ContainsKey(notification.ActorUserId.Value))
+                        {
+                            notification.ActorUserName = actorDict[notification.ActorUserId.Value];
+                        }
                     }
+                }
+                finally
+                {
+                    await connection.DisposeAsync();
                 }
             }
 
@@ -186,9 +205,8 @@ namespace Wihngo.Services
 
         public async Task<int> GetUnreadCountAsync(Guid userId)
         {
-            return await _db.Notifications
-                .Where(n => n.UserId == userId && !n.IsRead)
-                .CountAsync();
+            var sql = "SELECT COUNT(*) FROM notifications WHERE user_id = @UserId AND is_read = false";
+            return await _dbFactory.ExecuteScalarAsync<int>(sql, new { UserId = userId });
         }
 
         public async Task<bool> MarkAsReadAsync(Guid notificationId, Guid userId)
@@ -207,9 +225,11 @@ namespace Wihngo.Services
 
         public async Task<int> MarkAllAsReadAsync(Guid userId)
         {
-            var unreadNotifications = await _db.Notifications
-                .Where(n => n.UserId == userId && !n.IsRead)
-                .ToListAsync();
+            var sql = @"
+                SELECT * FROM notifications
+                WHERE user_id = @UserId AND is_read = false";
+            
+            var unreadNotifications = await _dbFactory.QueryListAsync<Notification>(sql, new { UserId = userId });
 
             var count = unreadNotifications.Count;
             var now = DateTime.UtcNow;
@@ -242,18 +262,18 @@ namespace Wihngo.Services
             // Ensure user has all preferences initialized
             await EnsureUserPreferencesAsync(userId);
 
-            return await _db.NotificationPreferences
-                .Where(np => np.UserId == userId)
-                .Select(np => new NotificationPreferenceDto
-                {
-                    PreferenceId = np.PreferenceId,
-                    NotificationType = np.NotificationType,
-                    InAppEnabled = np.InAppEnabled,
-                    PushEnabled = np.PushEnabled,
-                    EmailEnabled = np.EmailEnabled,
-                    SmsEnabled = np.SmsEnabled
-                })
-                .ToListAsync();
+            var sql = @"
+                SELECT 
+                    preference_id as PreferenceId,
+                    notification_type as NotificationType,
+                    in_app_enabled as InAppEnabled,
+                    push_enabled as PushEnabled,
+                    email_enabled as EmailEnabled,
+                    sms_enabled as SmsEnabled
+                FROM notification_preferences
+                WHERE user_id = @UserId";
+
+            return await _dbFactory.QueryListAsync<NotificationPreferenceDto>(sql, new { UserId = userId });
         }
 
         public async Task<NotificationPreferenceDto> UpdatePreferenceAsync(
@@ -307,7 +327,6 @@ namespace Wihngo.Services
 
             if (settings == null)
             {
-                // Create default settings
                 settings = new NotificationSettings
                 {
                     SettingsId = Guid.NewGuid(),
@@ -399,11 +418,17 @@ namespace Wihngo.Services
                 
                 if (channel.HasFlag(NotificationChannel.Push))
                 {
-                    var pushCount = await _db.Notifications
-                        .Where(n => n.UserId == userId && 
-                                    n.PushSent && 
-                                    n.CreatedAt >= today)
-                        .CountAsync();
+                    var pushCountSql = @"
+                        SELECT COUNT(*) FROM notifications
+                        WHERE user_id = @UserId 
+                          AND push_sent = true 
+                          AND created_at >= @Today";
+                    
+                    var pushCount = await _dbFactory.ExecuteScalarAsync<int>(pushCountSql, new 
+                    { 
+                        UserId = userId, 
+                        Today = today 
+                    });
 
                     if (pushCount >= settings.MaxPushPerDay)
                         return false;
@@ -411,11 +436,17 @@ namespace Wihngo.Services
 
                 if (channel.HasFlag(NotificationChannel.Email))
                 {
-                    var emailCount = await _db.Notifications
-                        .Where(n => n.UserId == userId && 
-                                    n.EmailSent && 
-                                    n.CreatedAt >= today)
-                        .CountAsync();
+                    var emailCountSql = @"
+                        SELECT COUNT(*) FROM notifications
+                        WHERE user_id = @UserId 
+                          AND email_sent = true 
+                          AND created_at >= @Today";
+                    
+                    var emailCount = await _dbFactory.ExecuteScalarAsync<int>(emailCountSql, new 
+                    { 
+                        UserId = userId, 
+                        Today = today 
+                    });
 
                     if (emailCount >= settings.MaxEmailPerDay)
                         return false;
@@ -465,14 +496,22 @@ namespace Wihngo.Services
             // Find recent similar notification within grouping window
             var windowStart = DateTime.UtcNow.AddMinutes(-settings.GroupingWindowMinutes);
             
-            var existingGroup = await _db.Notifications
-                .Where(n => n.UserId == userId && 
-                            n.Type == type && 
-                            (n.BirdId == relatedEntityId || n.StoryId == relatedEntityId) &&
-                            !n.IsRead &&
-                            n.CreatedAt >= windowStart)
-                .Select(n => n.GroupId)
-                .FirstOrDefaultAsync();
+            var sql = @"
+                SELECT group_id FROM notifications
+                WHERE user_id = @UserId 
+                  AND type = @Type
+                  AND (bird_id = @EntityId OR story_id = @EntityId)
+                  AND is_read = false
+                  AND created_at >= @WindowStart
+                LIMIT 1";
+            
+            var existingGroup = await _dbFactory.ExecuteScalarAsync<Guid?>(sql, new 
+            { 
+                UserId = userId,
+                Type = type.ToString(),
+                EntityId = relatedEntityId,
+                WindowStart = windowStart
+            });
 
             return existingGroup ?? Guid.NewGuid();
         }
@@ -493,7 +532,6 @@ namespace Wihngo.Services
                 notification.EmailSentAt = DateTime.UtcNow;
             }
 
-            // SMS not implemented yet
             if (channel.HasFlag(NotificationChannel.Sms))
             {
                 notification.SmsSent = false;
@@ -520,20 +558,18 @@ namespace Wihngo.Services
 
         private async Task EnsureUserPreferencesAsync(Guid userId)
         {
-            var existingCount = await _db.NotificationPreferences
-                .Where(np => np.UserId == userId)
-                .CountAsync();
+            var countSql = "SELECT COUNT(*) FROM notification_preferences WHERE user_id = @UserId";
+            var existingCount = await _dbFactory.ExecuteScalarAsync<int>(countSql, new { UserId = userId });
 
             var allTypes = Enum.GetValues<NotificationType>();
 
             if (existingCount < allTypes.Length)
             {
-                var existingTypes = await _db.NotificationPreferences
-                    .Where(np => np.UserId == userId)
-                    .Select(np => np.NotificationType)
-                    .ToListAsync();
+                var typesSql = "SELECT notification_type FROM notification_preferences WHERE user_id = @UserId";
+                var existingTypes = await _dbFactory.QueryListAsync<string>(typesSql, new { UserId = userId });
+                var existingTypeEnums = existingTypes.Select(t => Enum.Parse<NotificationType>(t)).ToList();
 
-                var missingTypes = allTypes.Except(existingTypes);
+                var missingTypes = allTypes.Except(existingTypeEnums);
 
                 foreach (var type in missingTypes)
                 {

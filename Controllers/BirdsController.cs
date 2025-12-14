@@ -1,10 +1,14 @@
 namespace Wihngo.Controllers
 {
+    using System;
+    using System.Collections.Generic;
+    using System.Linq;
+    using System.Threading.Tasks;
     using AutoMapper;
     using Microsoft.AspNetCore.Authorization;
     using Microsoft.AspNetCore.Mvc;
-    using Microsoft.EntityFrameworkCore;
     using System.Security.Claims;
+    using Dapper;
     using Wihngo.Data;
     using Wihngo.Dtos;
     using Wihngo.Models;
@@ -17,19 +21,22 @@ namespace Wihngo.Controllers
     public class BirdsController : ControllerBase
     {
         private readonly AppDbContext _db;
+        private readonly IDbConnectionFactory _dbFactory;
         private readonly IMapper _mapper;
         private readonly INotificationService _notificationService;
         private readonly IS3Service _s3Service;
         private readonly ILogger<BirdsController> _logger;
 
         public BirdsController(
-            AppDbContext db, 
+            AppDbContext db,
+            IDbConnectionFactory dbFactory,
             IMapper mapper, 
             INotificationService notificationService,
             IS3Service s3Service,
             ILogger<BirdsController> logger)
         {
             _db = db;
+            _dbFactory = dbFactory;
             _mapper = mapper;
             _notificationService = notificationService;
             _s3Service = s3Service;
@@ -61,29 +68,26 @@ namespace Wihngo.Controllers
             HashSet<Guid> lovedBirdIds = new HashSet<Guid>();
             if (userId.HasValue)
             {
-                var lovedIds = await _db.Loves
-                    .Where(l => l.UserId == userId.Value)
-                    .Select(l => l.BirdId)
-                    .ToListAsync();
+                var sql = "SELECT bird_id FROM loves WHERE user_id = @UserId";
+                var lovedIds = await _dbFactory.QueryListAsync<Guid>(sql, new { UserId = userId.Value });
                 lovedBirdIds = new HashSet<Guid>(lovedIds);
             }
 
-            // Project only necessary fields and counts to avoid loading all support transaction details
-            var birds = await _db.Birds
-                .AsNoTracking()
-                .Select(b => new
-                {
-                    b.BirdId,
-                    b.Name,
-                    b.Species,
-                    b.ImageUrl,
-                    b.VideoUrl,
-                    b.Tagline,
-                    b.LovedCount,
-                    b.SupportedCount, // Use the pre-calculated count from Bird entity
-                    b.OwnerId
-                })
-                .ToListAsync();
+            // Get all birds with necessary fields
+            var birdsSql = @"
+                SELECT 
+                    bird_id as BirdId,
+                    name as Name,
+                    species as Species,
+                    image_url as ImageUrl,
+                    video_url as VideoUrl,
+                    tagline as Tagline,
+                    loved_count as LovedCount,
+                    supported_count as SupportedCount,
+                    owner_id as OwnerId
+                FROM birds";
+
+            var birds = await _dbFactory.QueryListAsync<dynamic>(birdsSql);
 
             // Generate download URLs and map to DTOs
             var birdDtos = new List<BirdSummaryDto>();
@@ -105,7 +109,7 @@ namespace Wihngo.Controllers
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to generate download URLs for bird {BirdId}", bird.BirdId);
+                    _logger.LogWarning(ex, "Failed to generate download URLs for bird {BirdId}", (Guid)bird.BirdId);
                 }
 
                 birdDtos.Add(new BirdSummaryDto
@@ -121,7 +125,7 @@ namespace Wihngo.Controllers
                     LovedBy = bird.LovedCount,
                     SupportedBy = bird.SupportedCount,
                     OwnerId = bird.OwnerId,
-                    IsLoved = lovedBirdIds.Contains(bird.BirdId)
+                    IsLoved = lovedBirdIds.Contains((Guid)bird.BirdId)
                 });
             }
 
@@ -171,7 +175,8 @@ namespace Wihngo.Controllers
             var userId = GetUserIdClaim();
             if (userId.HasValue)
             {
-                dto.IsLoved = await _db.Loves.AnyAsync(l => l.UserId == userId.Value && l.BirdId == id);
+                var loveSql = "SELECT EXISTS(SELECT 1 FROM loves WHERE user_id = @UserId AND bird_id = @BirdId)";
+                dto.IsLoved = await _dbFactory.ExecuteScalarAsync<bool>(loveSql, new { UserId = userId.Value, BirdId = id });
             }
             else
             {
@@ -185,8 +190,7 @@ namespace Wihngo.Controllers
             }
 
             // Populate personality/fun facts/conservation if separate tables exist
-            // (left as placeholders if not present)
-            dto.Personality = dto.Personality ?? new System.Collections.Generic.List<string>
+            dto.Personality = dto.Personality ?? new List<string>
             {
                 "Fearless and territorial",
                 "Incredibly vocal for their size",
@@ -194,7 +198,7 @@ namespace Wihngo.Controllers
                 "Devoted parents"
             };
 
-            dto.FunFacts = dto.FunFacts ?? new System.Collections.Generic.List<string>
+            dto.FunFacts = dto.FunFacts ?? new List<string>
             {
                 "Males perform spectacular dive displays, reaching speeds of 60 mph",
                 "They can remember every flower they've visited",
@@ -423,7 +427,6 @@ namespace Wihngo.Controllers
             var user = await _db.Users.FindAsync(userId);
             if (user == null) return Unauthorized("User not found");
 
-            // Check existing love
             var exists = await _db.Loves.FindAsync(userId, id);
             if (exists != null) return BadRequest("Already loved");
 
@@ -524,12 +527,15 @@ namespace Wihngo.Controllers
         [HttpGet("{id}/lovers")]
         public async Task<ActionResult<IEnumerable<UserSummaryDto>>> Lovers(Guid id)
         {
-            var lovers = await _db.Loves
-                .Where(l => l.BirdId == id)
-                .Include(l => l.User)
-                .Select(l => new UserSummaryDto { UserId = l.UserId, Name = l.User != null ? l.User.Name : string.Empty })
-                .ToListAsync();
+            var sql = @"
+                SELECT 
+                    l.user_id as UserId,
+                    COALESCE(u.name, '') as Name
+                FROM loves l
+                LEFT JOIN users u ON l.user_id = u.user_id
+                WHERE l.bird_id = @BirdId";
 
+            var lovers = await _dbFactory.QueryListAsync<UserSummaryDto>(sql, new { BirdId = id });
             return Ok(lovers);
         }
 
@@ -556,8 +562,20 @@ namespace Wihngo.Controllers
                 CreatedAt = DateTime.UtcNow
             };
 
-            _db.Add(usage);
-            await _db.SaveChangesAsync();
+            // Use raw SQL INSERT instead of _db.Add
+            var sql = @"
+                INSERT INTO support_usages (usage_id, bird_id, reported_by, amount, description, created_at)
+                VALUES (@UsageId, @BirdId, @ReportedBy, @Amount, @Description, @CreatedAt)";
+
+            await _dbFactory.ExecuteAsync(sql, new
+            {
+                UsageId = usage.UsageId,
+                BirdId = usage.BirdId,
+                ReportedBy = usage.ReportedBy,
+                Amount = usage.Amount,
+                Description = usage.Description,
+                CreatedAt = usage.CreatedAt
+            });
 
             dto.UsageId = usage.UsageId;
             dto.BirdId = usage.BirdId;
@@ -573,7 +591,6 @@ namespace Wihngo.Controllers
         {
             if (!await EnsureOwner(id)) return Forbid();
 
-            // For simplicity we create a local subscription record with status active
             var existing = await _db.BirdPremiumSubscriptions.FirstOrDefaultAsync(s => s.BirdId == id && s.Status == "active");
             if (existing != null) return BadRequest("Already subscribed");
 
@@ -603,7 +620,7 @@ namespace Wihngo.Controllers
                 bird.IsPremium = true;
                 bird.PremiumPlan = subscription.Plan;
                 bird.PremiumExpiresAt = subscription.CurrentPeriodEnd;
-                bird.MaxMediaCount = 20; // premium allows more media
+                bird.MaxMediaCount = 20;
             }
 
             await _db.SaveChangesAsync();
@@ -629,7 +646,7 @@ namespace Wihngo.Controllers
                 Plan = "lifetime",
                 Provider = "local",
                 ProviderSubscriptionId = Guid.NewGuid().ToString(),
-                PriceCents = 7000, // $70 one-time
+                PriceCents = 7000,
                 DurationDays = int.MaxValue,
                 StartedAt = DateTime.UtcNow,
                 CurrentPeriodEnd = DateTime.MaxValue,
@@ -645,7 +662,7 @@ namespace Wihngo.Controllers
                 bird.IsPremium = true;
                 bird.PremiumPlan = subscription.Plan;
                 bird.PremiumExpiresAt = null;
-                bird.MaxMediaCount = 50; // lifetime premium allows most media
+                bird.MaxMediaCount = 50;
             }
 
             await _db.SaveChangesAsync();
@@ -713,12 +730,9 @@ namespace Wihngo.Controllers
             _db.SupportTransactions.Add(tx);
             bird.DonationCents += cents;
             
-            // Get count by loading transactions into memory first to avoid PostgreSQL aggregate issue
-            var supportCount = await _db.SupportTransactions
-                .Where(t => t.BirdId == id)
-                .Select(t => t.TransactionId)
-                .ToListAsync();
-            bird.SupportedCount = supportCount.Count;
+            // Use raw SQL to get count
+            var countSql = "SELECT COUNT(*) FROM support_transactions WHERE bird_id = @BirdId";
+            bird.SupportedCount = await _dbFactory.ExecuteScalarAsync<int>(countSql, new { BirdId = id });
 
             await _db.SaveChangesAsync();
 

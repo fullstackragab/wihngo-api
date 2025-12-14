@@ -1,34 +1,42 @@
 ﻿namespace Wihngo.Controllers
 {
+    using System;
+    using System.Collections.Generic;
+    using System.Linq;
+    using System.Threading.Tasks;
     using AutoMapper;
     using Microsoft.AspNetCore.Authorization;
     using Microsoft.AspNetCore.Mvc;
-    using Microsoft.EntityFrameworkCore;
     using System.Security.Claims;
+    using Dapper;
     using Wihngo.Data;
     using Wihngo.Dtos;
     using Wihngo.Models;
     using Wihngo.Models.Enums;
     using Wihngo.Services.Interfaces;
+    using Wihngo.Extensions;
 
     [Route("api/[controller]")]
     [ApiController]
     public class StoriesController : ControllerBase
     {
         private readonly AppDbContext _db;
+        private readonly IDbConnectionFactory _dbFactory;
         private readonly IMapper _mapper;
         private readonly INotificationService _notificationService;
         private readonly IS3Service _s3Service;
         private readonly ILogger<StoriesController> _logger;
 
         public StoriesController(
-            AppDbContext db, 
+            AppDbContext db,
+            IDbConnectionFactory dbFactory,
             IMapper mapper, 
             INotificationService notificationService,
             IS3Service s3Service,
             ILogger<StoriesController> logger)
         {
             _db = db;
+            _dbFactory = dbFactory;
             _mapper = mapper;
             _notificationService = notificationService;
             _s3Service = s3Service;
@@ -48,85 +56,115 @@
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 10;
 
-            var total = await _db.Stories.CountAsync();
-
-            // Split query to avoid PostgreSQL ordered-set aggregate issues
-            // First get the story IDs with ordering and pagination
-            var storyIds = await _db.Stories
-                .OrderByDescending(s => s.CreatedAt)
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .Select(s => s.StoryId)
-                .ToListAsync();
-
-            // Then fetch the full stories with includes using Join instead of Contains
-            var items = await (from story in _db.Stories
-                               join id in storyIds on story.StoryId equals id
-                               select story)
-                .Include(s => s.StoryBirds)
-                    .ThenInclude(sb => sb.Bird)
-                .Include(s => s.Author)
-                .ToListAsync();
-
-            // Re-apply ordering in memory (since SQL WHERE IN doesn't preserve order)
-            items = items.OrderByDescending(s => s.CreatedAt).ToList();
-
-            var dtoItems = new List<StorySummaryDto>();
-            foreach (var story in items)
+            var connection = await _dbFactory.CreateOpenConnectionAsync();
+            try
             {
-                var dto = new StorySummaryDto
+                // Get total count
+                var total = await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM stories");
+
+                // Get stories with pagination
+                var sql = @"
+                    SELECT s.*, 
+                           u.user_id as Author_UserId, u.name as Author_Name, u.email as Author_Email,
+                           sb.story_bird_id, sb.bird_id, sb.created_at as StoryBird_CreatedAt,
+                           b.bird_id as Bird_BirdId, b.name as Bird_Name, b.species as Bird_Species
+                    FROM stories s
+                    LEFT JOIN users u ON s.author_id = u.user_id
+                    LEFT JOIN story_birds sb ON s.story_id = sb.story_id
+                    LEFT JOIN birds b ON sb.bird_id = b.bird_id
+                    ORDER BY s.created_at DESC
+                    OFFSET @Offset LIMIT @Limit";
+
+                var storyDict = new Dictionary<Guid, Story>();
+                
+                await connection.QueryAsync<Story, User, StoryBird, Bird, Story>(
+                    sql,
+                    (story, author, storyBird, bird) =>
+                    {
+                        if (!storyDict.TryGetValue(story.StoryId, out var storyEntry))
+                        {
+                            storyEntry = story;
+                            storyEntry.Author = author;
+                            storyEntry.StoryBirds = new List<StoryBird>();
+                            storyDict.Add(story.StoryId, storyEntry);
+                        }
+
+                        if (storyBird != null && bird != null)
+                        {
+                            storyBird.Bird = bird;
+                            if (!storyEntry.StoryBirds.Any(sb => sb.StoryBirdId == storyBird.StoryBirdId))
+                            {
+                                storyEntry.StoryBirds.Add(storyBird);
+                            }
+                        }
+
+                        return storyEntry;
+                    },
+                    new { Offset = (page - 1) * pageSize, Limit = pageSize },
+                    splitOn: "Author_UserId,story_bird_id,Bird_BirdId");
+
+                var items = storyDict.Values.ToList();
+                var dtoItems = new List<StorySummaryDto>();
+
+                foreach (var story in items)
                 {
-                    StoryId = story.StoryId,
-                    Birds = story.StoryBirds
-                        .OrderBy(sb => sb.CreatedAt)
-                        .Where(sb => sb.Bird != null)
-                        .Select(sb => sb.Bird!.Name)
-                        .ToList(),
-                    Mode = story.Mode,
-                    Date = story.CreatedAt.ToString("MMMM d, yyyy"),
-                    Preview = story.Content.Length > 140 ? story.Content.Substring(0, 140) + "..." : story.Content,
-                    ImageS3Key = story.ImageUrl,
-                    VideoS3Key = story.VideoUrl
+                    var dto = new StorySummaryDto
+                    {
+                        StoryId = story.StoryId,
+                        Birds = story.StoryBirds
+                            .OrderBy(sb => sb.CreatedAt)
+                            .Where(sb => sb.Bird != null)
+                            .Select(sb => sb.Bird!.Name)
+                            .ToList(),
+                        Mode = story.Mode,
+                        Date = story.CreatedAt.ToString("MMMM d, yyyy"),
+                        Preview = story.Content.Length > 140 ? story.Content.Substring(0, 140) + "..." : story.Content,
+                        ImageS3Key = story.ImageUrl,
+                        VideoS3Key = story.VideoUrl
+                    };
+
+                    // Generate download URLs
+                    if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+                    {
+                        try
+                        {
+                            dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.ImageUrl);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to generate download URL for story image {StoryId}", story.StoryId);
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(story.VideoUrl))
+                    {
+                        try
+                        {
+                            dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(story.VideoUrl);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to generate video download URL for story {StoryId}", story.StoryId);
+                        }
+                    }
+
+                    dtoItems.Add(dto);
+                }
+
+                var result = new PagedResult<StorySummaryDto>
+                {
+                    Page = page,
+                    PageSize = pageSize,
+                    TotalCount = total,
+                    Items = dtoItems
                 };
 
-                // Generate download URL for image if it exists
-                if (!string.IsNullOrWhiteSpace(story.ImageUrl))
-                {
-                    try
-                    {
-                        dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.ImageUrl);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to generate download URL for story image {StoryId}", story.StoryId);
-                    }
-                }
-
-                // Generate download URL for video if it exists
-                if (!string.IsNullOrWhiteSpace(story.VideoUrl))
-                {
-                    try
-                    {
-                        dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(story.VideoUrl);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to generate video download URL for story {StoryId}", story.StoryId);
-                    }
-                }
-
-                dtoItems.Add(dto);
+                return Ok(result);
             }
-
-            var result = new PagedResult<StorySummaryDto>
+            finally
             {
-                Page = page,
-                PageSize = pageSize,
-                TotalCount = total,
-                Items = dtoItems
-            };
-
-            return Ok(result);
+                await connection.DisposeAsync();
+            }
         }
 
         /// <summary>
@@ -141,86 +179,118 @@
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 10;
 
-            var total = await _db.Stories.Where(s => s.AuthorId == userId).CountAsync();
-
-            // Split query to avoid PostgreSQL ordered-set aggregate issues
-            // First get the story IDs with ordering and pagination
-            var storyIds = await _db.Stories
-                .Where(s => s.AuthorId == userId)
-                .OrderByDescending(s => s.CreatedAt)
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .Select(s => s.StoryId)
-                .ToListAsync();
-
-            // Then fetch the full stories with includes using Join instead of Contains
-            var items = await (from story in _db.Stories
-                               join id in storyIds on story.StoryId equals id
-                               select story)
-                .Include(s => s.StoryBirds)
-                    .ThenInclude(sb => sb.Bird)
-                .Include(s => s.Author)
-                .ToListAsync();
-
-            // Re-apply ordering in memory (since SQL WHERE IN doesn't preserve order)
-            items = items.OrderByDescending(s => s.CreatedAt).ToList();
-
-            var dtoItems = new List<StorySummaryDto>();
-            foreach (var story in items)
+            var connection = await _dbFactory.CreateOpenConnectionAsync();
+            try
             {
-                var dto = new StorySummaryDto
+                // Get total count for this user
+                var total = await connection.ExecuteScalarAsync<int>(
+                    "SELECT COUNT(*) FROM stories WHERE author_id = @UserId",
+                    new { UserId = userId });
+
+                // Get stories with pagination
+                var sql = @"
+                    SELECT s.*, 
+                           u.user_id as Author_UserId, u.name as Author_Name, u.email as Author_Email,
+                           sb.story_bird_id, sb.bird_id, sb.created_at as StoryBird_CreatedAt,
+                           b.bird_id as Bird_BirdId, b.name as Bird_Name, b.species as Bird_Species
+                    FROM stories s
+                    LEFT JOIN users u ON s.author_id = u.user_id
+                    LEFT JOIN story_birds sb ON s.story_id = sb.story_id
+                    LEFT JOIN birds b ON sb.bird_id = b.bird_id
+                    WHERE s.author_id = @UserId
+                    ORDER BY s.created_at DESC
+                    OFFSET @Offset LIMIT @Limit";
+
+                var storyDict = new Dictionary<Guid, Story>();
+                
+                await connection.QueryAsync<Story, User, StoryBird, Bird, Story>(
+                    sql,
+                    (story, author, storyBird, bird) =>
+                    {
+                        if (!storyDict.TryGetValue(story.StoryId, out var storyEntry))
+                        {
+                            storyEntry = story;
+                            storyEntry.Author = author;
+                            storyEntry.StoryBirds = new List<StoryBird>();
+                            storyDict.Add(story.StoryId, storyEntry);
+                        }
+
+                        if (storyBird != null && bird != null)
+                        {
+                            storyBird.Bird = bird;
+                            if (!storyEntry.StoryBirds.Any(sb => sb.StoryBirdId == storyBird.StoryBirdId))
+                            {
+                                storyEntry.StoryBirds.Add(storyBird);
+                            }
+                        }
+
+                        return storyEntry;
+                    },
+                    new { UserId = userId, Offset = (page - 1) * pageSize, Limit = pageSize },
+                    splitOn: "Author_UserId,story_bird_id,Bird_BirdId");
+
+                var items = storyDict.Values.ToList();
+                var dtoItems = new List<StorySummaryDto>();
+
+                foreach (var story in items)
                 {
-                    StoryId = story.StoryId,
-                    Birds = story.StoryBirds
-                        .OrderBy(sb => sb.CreatedAt)
-                        .Where(sb => sb.Bird != null)
-                        .Select(sb => sb.Bird!.Name)
-                        .ToList(),
-                    Mode = story.Mode,
-                    Date = story.CreatedAt.ToString("MMMM d, yyyy"),
-                    Preview = story.Content.Length > 140 ? story.Content.Substring(0, 140) + "..." : story.Content,
-                    ImageS3Key = story.ImageUrl,
-                    VideoS3Key = story.VideoUrl
+                    var dto = new StorySummaryDto
+                    {
+                        StoryId = story.StoryId,
+                        Birds = story.StoryBirds
+                            .OrderBy(sb => sb.CreatedAt)
+                            .Where(sb => sb.Bird != null)
+                            .Select(sb => sb.Bird!.Name)
+                            .ToList(),
+                        Mode = story.Mode,
+                        Date = story.CreatedAt.ToString("MMMM d, yyyy"),
+                        Preview = story.Content.Length > 140 ? story.Content.Substring(0, 140) + "..." : story.Content,
+                        ImageS3Key = story.ImageUrl,
+                        VideoS3Key = story.VideoUrl
+                    };
+
+                    // Generate download URLs
+                    if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+                    {
+                        try
+                        {
+                            dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.ImageUrl);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to generate download URL for story {StoryId}", story.StoryId);
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(story.VideoUrl))
+                    {
+                        try
+                        {
+                            dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(story.VideoUrl);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to generate video download URL for story {StoryId}", story.StoryId);
+                        }
+                    }
+
+                    dtoItems.Add(dto);
+                }
+
+                var result = new PagedResult<StorySummaryDto>
+                {
+                    Page = page,
+                    PageSize = pageSize,
+                    TotalCount = total,
+                    Items = dtoItems
                 };
 
-                // Generate download URL if image exists
-                if (!string.IsNullOrWhiteSpace(story.ImageUrl))
-                {
-                    try
-                    {
-                        dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.ImageUrl);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to generate download URL for story {StoryId}", story.StoryId);
-                    }
-                }
-
-                // Generate download URL if video exists
-                if (!string.IsNullOrWhiteSpace(story.VideoUrl))
-                {
-                    try
-                    {
-                        dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(story.VideoUrl);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to generate video download URL for story {StoryId}", story.StoryId);
-                    }
-                }
-
-                dtoItems.Add(dto);
+                return Ok(result);
             }
-
-            var result = new PagedResult<StorySummaryDto>
+            finally
             {
-                Page = page,
-                PageSize = pageSize,
-                TotalCount = total,
-                Items = dtoItems
-            };
-
-            return Ok(result);
+                await connection.DisposeAsync();
+            }
         }
 
         /// <summary>
@@ -241,93 +311,134 @@
         [HttpGet("{id}")]
         public async Task<ActionResult<StoryReadDto>> Get(Guid id)
         {
-            var story = await _db.Stories
-                .Include(s => s.StoryBirds)
-                    .ThenInclude(sb => sb.Bird)
-                .Include(s => s.Author)
-                .FirstOrDefaultAsync(s => s.StoryId == id);
-
-            if (story == null) return NotFound();
-            
-            var dto = new StoryReadDto
+            var connection = await _dbFactory.CreateOpenConnectionAsync();
+            try
             {
-                StoryId = story.StoryId,
-                Content = story.Content,
-                Mode = story.Mode,
-                ImageS3Key = story.ImageUrl,
-                VideoS3Key = story.VideoUrl,
-                CreatedAt = story.CreatedAt,
-                Author = story.Author != null ? new UserSummaryDto
-                {
-                    UserId = story.Author.UserId,
-                    Name = story.Author.Name
-                } : new UserSummaryDto(),
-                Birds = story.StoryBirds
-                    .OrderBy(sb => sb.CreatedAt)
-                    .Where(sb => sb.Bird != null)
-                    .Select(sb => new BirdSummaryDto
+                var sql = @"
+                    SELECT s.*, 
+                           u.user_id as Author_UserId, u.name as Author_Name, u.email as Author_Email,
+                           sb.story_bird_id, sb.bird_id, sb.created_at as StoryBird_CreatedAt,
+                           b.bird_id as Bird_BirdId, b.name as Bird_Name, b.species as Bird_Species, 
+                           b.image_url as Bird_ImageUrl, b.video_url as Bird_VideoUrl, b.tagline as Bird_Tagline,
+                           b.loved_count as Bird_LovedCount, b.supported_count as Bird_SupportedCount, b.owner_id as Bird_OwnerId
+                    FROM stories s
+                    LEFT JOIN users u ON s.author_id = u.user_id
+                    LEFT JOIN story_birds sb ON s.story_id = sb.story_id
+                    LEFT JOIN birds b ON sb.bird_id = b.bird_id
+                    WHERE s.story_id = @StoryId";
+
+                Story? story = null;
+                
+                await connection.QueryAsync<Story, User, StoryBird, Bird, Story>(
+                    sql,
+                    (s, author, storyBird, bird) =>
                     {
-                        BirdId = sb.Bird!.BirdId,
-                        Name = sb.Bird.Name,
-                        Species = sb.Bird.Species,
-                        ImageS3Key = sb.Bird.ImageUrl,
-                        VideoS3Key = sb.Bird.VideoUrl,
-                        Tagline = sb.Bird.Tagline,
-                        LovedBy = sb.Bird.LovedCount,
-                        SupportedBy = sb.Bird.SupportedCount,
-                        OwnerId = sb.Bird.OwnerId
-                    })
-                    .ToList()
-            };
-            
-            // Generate download URL for story image
-            if (!string.IsNullOrWhiteSpace(story.ImageUrl))
-            {
-                try
-                {
-                    dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.ImageUrl);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to generate download URL for story {StoryId}", id);
-                }
-            }
+                        if (story == null)
+                        {
+                            story = s;
+                            story.Author = author;
+                            story.StoryBirds = new List<StoryBird>();
+                        }
 
-            // Generate download URL for story video
-            if (!string.IsNullOrWhiteSpace(story.VideoUrl))
-            {
-                try
-                {
-                    dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(story.VideoUrl);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to generate video download URL for story {StoryId}", id);
-                }
-            }
+                        if (storyBird != null && bird != null)
+                        {
+                            storyBird.Bird = bird;
+                            if (!story.StoryBirds.Any(sb => sb.StoryBirdId == storyBird.StoryBirdId))
+                            {
+                                story.StoryBirds.Add(storyBird);
+                            }
+                        }
 
-            // Generate download URLs for bird images and videos
-            foreach (var bird in dto.Birds)
-            {
-                if (!string.IsNullOrWhiteSpace(bird.ImageS3Key))
+                        return story;
+                    },
+                    new { StoryId = id },
+                    splitOn: "Author_UserId,story_bird_id,Bird_BirdId");
+
+                if (story == null) return NotFound();
+
+                var dto = new StoryReadDto
+                {
+                    StoryId = story.StoryId,
+                    Content = story.Content,
+                    Mode = story.Mode,
+                    ImageS3Key = story.ImageUrl,
+                    VideoS3Key = story.VideoUrl,
+                    CreatedAt = story.CreatedAt,
+                    Author = story.Author != null ? new UserSummaryDto
+                    {
+                        UserId = story.Author.UserId,
+                        Name = story.Author.Name
+                    } : new UserSummaryDto(),
+                    Birds = story.StoryBirds
+                        .OrderBy(sb => sb.CreatedAt)
+                        .Where(sb => sb.Bird != null)
+                        .Select(sb => new BirdSummaryDto
+                        {
+                            BirdId = sb.Bird!.BirdId,
+                            Name = sb.Bird.Name,
+                            Species = sb.Bird.Species,
+                            ImageS3Key = sb.Bird.ImageUrl,
+                            VideoS3Key = sb.Bird.VideoUrl,
+                            Tagline = sb.Bird.Tagline,
+                            LovedBy = sb.Bird.LovedCount,
+                            SupportedBy = sb.Bird.SupportedCount,
+                            OwnerId = sb.Bird.OwnerId
+                        })
+                        .ToList()
+                };
+
+                // Generate download URLs
+                if (!string.IsNullOrWhiteSpace(story.ImageUrl))
                 {
                     try
                     {
-                        bird.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.ImageS3Key);
+                        dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.ImageUrl);
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to generate download URL for story {StoryId}", id);
+                    }
                 }
-                if (!string.IsNullOrWhiteSpace(bird.VideoS3Key))
+
+                if (!string.IsNullOrWhiteSpace(story.VideoUrl))
                 {
                     try
                     {
-                        bird.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(bird.VideoS3Key);
+                        dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(story.VideoUrl);
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to generate video download URL for story {StoryId}", id);
+                    }
                 }
+
+                // Generate download URLs for bird images and videos
+                foreach (var bird in dto.Birds)
+                {
+                    if (!string.IsNullOrWhiteSpace(bird.ImageS3Key))
+                    {
+                        try
+                        {
+                            bird.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.ImageS3Key);
+                        }
+                        catch { }
+                    }
+                    if (!string.IsNullOrWhiteSpace(bird.VideoS3Key))
+                    {
+                        try
+                        {
+                            bird.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(bird.VideoS3Key);
+                        }
+                        catch { }
+                    }
+                }
+
+                return Ok(dto);
             }
-            
-            return Ok(dto);
+            finally
+            {
+                await connection.DisposeAsync();
+            }
         }
 
         [HttpPost]
@@ -414,7 +525,7 @@
             // Load created story with relationships
             var created = await _db.Stories
                 .Include(s => s.StoryBirds)
-                    .ThenInclude(sb => sb.Bird)
+                    .ThenInclude<Story, StoryBird, Bird>(sb => sb.Bird)
                 .Include(s => s.Author)
                 .FirstOrDefaultAsync(s => s.StoryId == story.StoryId);
 
@@ -432,26 +543,39 @@
                             .ToList();
                         var birdNamesStr = string.Join(", ", birdNames);
 
-                        var lovers = await _db.Loves
-                            .Where(l => birdIds.Contains(l.BirdId) && l.UserId != story.AuthorId)
-                            .Select(l => l.UserId)
-                            .Distinct()
-                            .ToListAsync();
-
-                        foreach (var loverId in lovers)
+                        try
                         {
-                            await _notificationService.CreateNotificationAsync(new CreateNotificationDto
-                            {
-                                UserId = loverId,
-                                Type = NotificationType.NewStory,
-                                Title = "Book New story: " + birdNamesStr,
-                                Message = $"{birdNamesStr} has a new story to share!",
-                                Priority = NotificationPriority.Low,
-                                Channels = NotificationChannel.InApp | NotificationChannel.Push,
-                                DeepLink = $"/story/{story.StoryId}",
-                                StoryId = story.StoryId,
-                                ActorUserId = story.AuthorId
+                            // Use raw SQL to get lover user IDs
+                            var loversSql = @"
+                                SELECT DISTINCT user_id 
+                                FROM loves 
+                                WHERE bird_id = ANY(@BirdIds) AND user_id != @AuthorId";
+                        
+                            var lovers = await _dbFactory.QueryListAsync<Guid>(loversSql, new 
+                            { 
+                                BirdIds = birdIds.ToArray(), 
+                                AuthorId = story.AuthorId 
                             });
+
+                            foreach (var loverId in lovers)
+                            {
+                                await _notificationService.CreateNotificationAsync(new CreateNotificationDto
+                                {
+                                    UserId = loverId,
+                                    Type = NotificationType.NewStory,
+                                    Title = "Book New story: " + birdNamesStr,
+                                    Message = $"{birdNamesStr} has a new story to share!",
+                                    Priority = NotificationPriority.Low,
+                                    Channels = NotificationChannel.InApp | NotificationChannel.Push,
+                                    DeepLink = $"/story/{story.StoryId}",
+                                    StoryId = story.StoryId,
+                                    ActorUserId = story.AuthorId
+                                });
+                            }
+                        }
+                        catch
+                        {
+                            // Ignore notification errors
                         }
                     }
                     catch
@@ -835,7 +959,7 @@
         {
             var story = await _db.Stories
                 .Include(s => s.StoryBirds)
-                    .ThenInclude(sb => sb.Bird)
+                    .ThenInclude<Story, StoryBird, Bird>(sb => sb.Bird)
                 .FirstOrDefaultAsync(s => s.StoryId == id);
                 
             if (story == null) return NotFound();
@@ -904,10 +1028,16 @@
                     int maxOrder = 0;
                     foreach (var birdId in birdIds)
                     {
-                        var highlightOrders = await _db.Stories
-                            .Where(s => s.StoryBirds.Any(sb => sb.BirdId == birdId) && s.IsHighlighted && s.HighlightOrder != null)
-                            .Select(s => s.HighlightOrder!.Value)
-                            .ToListAsync();
+                        // Use raw SQL to get highlight orders
+                        var ordersSql = @"
+                            SELECT s.highlight_order
+                            FROM stories s
+                            JOIN story_birds sb ON s.story_id = sb.story_id
+                            WHERE sb.bird_id = @BirdId 
+                              AND s.is_highlighted = true 
+                              AND s.highlight_order IS NOT NULL";
+                        
+                        var highlightOrders = await _dbFactory.QueryListAsync<int>(ordersSql, new { BirdId = birdId });
                             
                         if (highlightOrders.Any())
                         {
