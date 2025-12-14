@@ -69,6 +69,12 @@
 
         public List<SupportUsage> ReportedSupportUsage { get; set; } = new();
 
+        public List<StoryLike> StoryLikes { get; set; } = new();
+
+        public List<Comment> Comments { get; set; } = new();
+
+        public List<CommentLike> CommentLikes { get; set; } = new();
+
         public string GetDisplayName() => Name;
     }
 }
