@@ -9,10 +9,9 @@ namespace Wihngo.Dtos
     public class StoryUpdateDto
     {
         /// <summary>
-        /// List of bird IDs to tag in this story (minimum 1 required if provided)
+        /// Bird ID to tag in this story (optional - if not provided, bird won't be changed)
         /// </summary>
-        [MinLength(1, ErrorMessage = "At least one bird must be selected")]
-        public List<Guid>? BirdIds { get; set; }
+        public Guid? BirdId { get; set; }
 
         [MaxLength(5000)]
         public string? Content { get; set; }

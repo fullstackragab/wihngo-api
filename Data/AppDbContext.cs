@@ -41,7 +41,6 @@ namespace Wihngo.Data
         public StubDbSet<User> Users => new StubDbSet<User>(_dbFactory, "users");
         public StubDbSet<Bird> Birds => new StubDbSet<Bird>(_dbFactory, "birds");
         public StubDbSet<Story> Stories => new StubDbSet<Story>(_dbFactory, "stories");
-        public StubDbSet<StoryBird> StoryBirds => new StubDbSet<StoryBird>(_dbFactory, "story_birds");
         public StubDbSet<SupportTransaction> SupportTransactions => new StubDbSet<SupportTransaction>(_dbFactory, "support_transactions");
         public StubDbSet<Love> Loves => new StubDbSet<Love>(_dbFactory, "loves");
         public StubDbSet<SupportUsage> SupportUsages => new StubDbSet<SupportUsage>(_dbFactory, "support_usages");

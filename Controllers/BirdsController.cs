@@ -73,19 +73,19 @@ namespace Wihngo.Controllers
                 lovedBirdIds = new HashSet<Guid>(lovedIds);
             }
 
-            // Get all birds with necessary fields
+            // Get all birds - PostgreSQL returns lowercase column names
             var birdsSql = @"
                 SELECT 
-                    bird_id as BirdId,
-                    name as Name,
-                    species as Species,
-                    image_url as ImageUrl,
-                    video_url as VideoUrl,
-                    tagline as Tagline,
-                    loved_count as LovedCount,
-                    supported_count as SupportedCount,
-                    owner_id as OwnerId
-                FROM birds";
+                    bird_id,
+                    name,
+                    species,
+                    image_url,
+                    tagline,
+                    COALESCE(loved_count, 0) loved_count,
+                    COALESCE(supported_count, 0) supported_count,
+                    owner_id
+                FROM birds
+                WHERE owner_id IS NOT NULL AND bird_id IS NOT NULL";
 
             var birds = await _dbFactory.QueryListAsync<dynamic>(birdsSql);
 
@@ -93,39 +93,43 @@ namespace Wihngo.Controllers
             var birdDtos = new List<BirdSummaryDto>();
             foreach (var bird in birds)
             {
+                // Skip records with null IDs (defensive check)
+                if (bird.bird_id == null || bird.owner_id == null)
+                {
+                    _logger.LogWarning("Skipping bird record with NULL ID fields - data integrity issue");
+                    continue;
+                }
+
                 string? imageUrl = null;
-                string? videoUrl = null;
+
+                // Access dynamic properties in lowercase (PostgreSQL default)
+                Guid birdId = (Guid)bird.bird_id;
+                Guid ownerId = (Guid)bird.owner_id;
 
                 try
                 {
-                    if (!string.IsNullOrWhiteSpace(bird.ImageUrl))
+                    if (!string.IsNullOrWhiteSpace(bird.image_url))
                     {
-                        imageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.ImageUrl);
-                    }
-                    if (!string.IsNullOrWhiteSpace(bird.VideoUrl))
-                    {
-                        videoUrl = await _s3Service.GenerateDownloadUrlAsync(bird.VideoUrl);
+                        imageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.image_url);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to generate download URLs for bird {BirdId}", (Guid)bird.BirdId);
+                    _logger.LogWarning(ex, "Failed to generate download URL for bird {BirdId}", birdId);
                 }
 
                 birdDtos.Add(new BirdSummaryDto
                 {
-                    BirdId = bird.BirdId,
-                    Name = bird.Name,
-                    Species = bird.Species,
-                    ImageS3Key = bird.ImageUrl,
+                    BirdId = birdId,
+                    Name = bird.name ?? string.Empty,
+                    Species = bird.species,
+                    ImageS3Key = bird.image_url,
                     ImageUrl = imageUrl,
-                    VideoS3Key = bird.VideoUrl,
-                    VideoUrl = videoUrl,
-                    Tagline = bird.Tagline,
-                    LovedBy = bird.LovedCount,
-                    SupportedBy = bird.SupportedCount,
-                    OwnerId = bird.OwnerId,
-                    IsLoved = lovedBirdIds.Contains((Guid)bird.BirdId)
+                    Tagline = bird.tagline,
+                    LovedBy = bird.loved_count ?? 0,
+                    SupportedBy = bird.supported_count ?? 0,
+                    OwnerId = ownerId,
+                    IsLoved = lovedBirdIds.Contains(birdId)
                 });
             }
 
@@ -135,40 +139,67 @@ namespace Wihngo.Controllers
         [HttpGet("{id}")]
         public async Task<ActionResult<BirdProfileDto>> Get(Guid id)
         {
-            var bird = await _db.Birds
-                .AsNoTracking()
-                .Include(b => b.Owner)
-                .Include(b => b.Stories)
-                .Include(b => b.SupportTransactions)
-                .FirstOrDefaultAsync(b => b.BirdId == id);
+            // Get bird with owner using raw SQL  
+            var birdSql = @"
+                SELECT 
+                    b.bird_id,
+                    b.name,
+                    b.species,
+                    b.description,
+                    b.image_url,
+                    b.tagline,
+                    COALESCE(b.loved_count, 0) loved_count,
+                    COALESCE(b.supported_count, 0) supported_count,
+                    b.owner_id,
+                    b.created_at,
+                    u.user_id owner_user_id,
+                    u.name owner_name
+                FROM birds b
+                LEFT JOIN users u ON b.owner_id = u.user_id
+                WHERE b.bird_id = @BirdId";
 
-            if (bird == null) return NotFound();
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+            var birdData = await connection.QueryFirstOrDefaultAsync<dynamic>(birdSql, new { BirdId = id });
 
-            var dto = _mapper.Map<BirdProfileDto>(bird);
+            if (birdData == null) return NotFound();
 
-            // Fill counts explicitly
-            dto.LovedBy = bird.LovedCount;
-            dto.SupportedBy = bird.SupportTransactions?.Count ?? 0;
-            
-            // Store S3 keys
-            dto.ImageS3Key = bird.ImageUrl;
-            dto.VideoS3Key = bird.VideoUrl;
+            // Get stories for this bird
+            var storiesSql = @"
+                SELECT 
+                    story_id,
+                    bird_id,
+                    content,
+                    image_url,
+                    created_at
+                FROM stories
+                WHERE bird_id = @BirdId
+                ORDER BY created_at DESC";
 
-            // Generate download URLs
+            var stories = await connection.QueryAsync<Story>(storiesSql, new { BirdId = id });
+
+            // Map to DTO (using property names from BirdProfileDto)
+            var dto = new BirdProfileDto
+            {
+                CommonName = birdData.name ?? string.Empty,
+                ScientificName = birdData.species ?? string.Empty,
+                Tagline = birdData.tagline ?? string.Empty,
+                Description = birdData.description ?? string.Empty,
+                LovedBy = birdData.loved_count ?? 0,
+                SupportedBy = birdData.supported_count ?? 0,
+                ImageS3Key = birdData.image_url
+            };
+
+            // Generate download URL for image
             try
             {
-                if (!string.IsNullOrWhiteSpace(bird.ImageUrl))
+                if (!string.IsNullOrWhiteSpace(birdData.image_url))
                 {
-                    dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.ImageUrl);
-                }
-                if (!string.IsNullOrWhiteSpace(bird.VideoUrl))
-                {
-                    dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(bird.VideoUrl);
+                    dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(birdData.image_url);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to generate download URLs for bird {BirdId}", id);
+                _logger.LogWarning(ex, "Failed to generate download URL for bird {BirdId}", id);
             }
 
             // Check if current user has loved this bird
@@ -176,7 +207,7 @@ namespace Wihngo.Controllers
             if (userId.HasValue)
             {
                 var loveSql = "SELECT EXISTS(SELECT 1 FROM loves WHERE user_id = @UserId AND bird_id = @BirdId)";
-                dto.IsLoved = await _dbFactory.ExecuteScalarAsync<bool>(loveSql, new { UserId = userId.Value, BirdId = id });
+                dto.IsLoved = await connection.ExecuteScalarAsync<bool>(loveSql, new { UserId = userId.Value, BirdId = id });
             }
             else
             {
@@ -184,9 +215,13 @@ namespace Wihngo.Controllers
             }
 
             // Map owner summary
-            if (bird.Owner != null)
+            if (birdData.owner_user_id != null)
             {
-                dto.Owner = new UserSummaryDto { UserId = bird.Owner.UserId, Name = bird.Owner.Name };
+                dto.Owner = new UserSummaryDto 
+                { 
+                    UserId = (Guid)birdData.owner_user_id, 
+                    Name = birdData.owner_name ?? string.Empty
+                };
             }
 
             // Populate personality/fun facts/conservation if separate tables exist
@@ -231,24 +266,18 @@ namespace Wihngo.Controllers
             var userId = GetUserIdClaim();
             if (userId == null) return Unauthorized();
 
-            // Validate S3 keys
-            if (string.IsNullOrWhiteSpace(dto.ImageS3Key) || string.IsNullOrWhiteSpace(dto.VideoS3Key))
+            // Validate S3 key
+            if (string.IsNullOrWhiteSpace(dto.ImageS3Key))
             {
-                return BadRequest(new { message = "ImageS3Key and VideoS3Key are required" });
+                return BadRequest(new { message = "ImageS3Key is required" });
             }
 
-            // Verify files exist in S3
+            // Verify file exists in S3
             var imageExists = await _s3Service.FileExistsAsync(dto.ImageS3Key);
-            var videoExists = await _s3Service.FileExistsAsync(dto.VideoS3Key);
 
             if (!imageExists)
             {
                 return BadRequest(new { message = "Bird profile image not found in S3. Please upload the file first." });
-            }
-
-            if (!videoExists)
-            {
-                return BadRequest(new { message = "Bird video not found in S3. Please upload the file first." });
             }
 
             var bird = new Bird
@@ -260,7 +289,6 @@ namespace Wihngo.Controllers
                 Tagline = dto.Tagline,
                 Description = dto.Description,
                 ImageUrl = dto.ImageS3Key,
-                VideoUrl = dto.VideoS3Key,
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -269,17 +297,15 @@ namespace Wihngo.Controllers
 
             _logger.LogInformation("Bird created: {BirdId} by user {UserId}", bird.BirdId, userId.Value);
 
-            // Generate download URLs for response
+            // Generate download URL for response
             string? imageUrl = null;
-            string? videoUrl = null;
             try
             {
                 imageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.ImageUrl);
-                videoUrl = await _s3Service.GenerateDownloadUrlAsync(bird.VideoUrl);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to generate download URLs for bird {BirdId}", bird.BirdId);
+                _logger.LogWarning(ex, "Failed to generate download URL for bird {BirdId}", bird.BirdId);
             }
 
             var summary = new BirdSummaryDto
@@ -289,8 +315,6 @@ namespace Wihngo.Controllers
                 Species = bird.Species,
                 ImageS3Key = bird.ImageUrl,
                 ImageUrl = imageUrl,
-                VideoS3Key = bird.VideoUrl,
-                VideoUrl = videoUrl,
                 Tagline = bird.Tagline,
                 LovedBy = 0,
                 SupportedBy = 0,
@@ -340,31 +364,6 @@ namespace Wihngo.Controllers
                 bird.ImageUrl = dto.ImageS3Key;
             }
 
-            // Update video if provided and different
-            if (!string.IsNullOrWhiteSpace(dto.VideoS3Key) && dto.VideoS3Key != bird.VideoUrl)
-            {
-                var videoExists = await _s3Service.FileExistsAsync(dto.VideoS3Key);
-                if (!videoExists)
-                {
-                    return BadRequest(new { message = "Bird video not found in S3." });
-                }
-
-                // Delete old video
-                if (!string.IsNullOrWhiteSpace(bird.VideoUrl))
-                {
-                    try
-                    {
-                        await _s3Service.DeleteFileAsync(bird.VideoUrl);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to delete old bird video");
-                    }
-                }
-
-                bird.VideoUrl = dto.VideoS3Key;
-            }
-
             await _db.SaveChangesAsync();
             
             _logger.LogInformation("Bird updated: {BirdId}", id);
@@ -381,7 +380,7 @@ namespace Wihngo.Controllers
             var bird = await _db.Birds.FindAsync(id);
             if (bird == null) return NotFound();
 
-            // Delete media files from S3
+            // Delete media file from S3
             if (!string.IsNullOrWhiteSpace(bird.ImageUrl))
             {
                 try
@@ -391,18 +390,6 @@ namespace Wihngo.Controllers
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed to delete bird image from S3");
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(bird.VideoUrl))
-            {
-                try
-                {
-                    await _s3Service.DeleteFileAsync(bird.VideoUrl);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to delete bird video from S3");
                 }
             }
 
@@ -529,8 +516,8 @@ namespace Wihngo.Controllers
         {
             var sql = @"
                 SELECT 
-                    l.user_id as UserId,
-                    COALESCE(u.name, '') as Name
+                    l.user_id,
+                    COALESCE(u.name, '')  name
                 FROM loves l
                 LEFT JOIN users u ON l.user_id = u.user_id
                 WHERE l.bird_id = @BirdId";
@@ -591,8 +578,12 @@ namespace Wihngo.Controllers
         {
             if (!await EnsureOwner(id)) return Forbid();
 
-            var existing = await _db.BirdPremiumSubscriptions.FirstOrDefaultAsync(s => s.BirdId == id && s.Status == "active");
-            if (existing != null) return BadRequest("Already subscribed");
+            // Check for existing active subscription using raw SQL
+            var checkSql = "SELECT COUNT(*) FROM bird_premium_subscriptions WHERE bird_id = @BirdId AND status = 'active'";
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+            var existingCount = await connection.ExecuteScalarAsync<int>(checkSql, new { BirdId = id });
+            
+            if (existingCount > 0) return BadRequest("Already subscribed");
 
             var userId = GetUserIdClaim().Value;
 
@@ -633,8 +624,12 @@ namespace Wihngo.Controllers
         {
             if (!await EnsureOwner(id)) return Forbid();
 
-            var existing = await _db.BirdPremiumSubscriptions.FirstOrDefaultAsync(s => s.BirdId == id && s.Status == "active");
-            if (existing != null) return BadRequest("Already subscribed");
+            // Check for existing active subscription using raw SQL
+            var checkSql = "SELECT COUNT(*) FROM bird_premium_subscriptions WHERE bird_id = @BirdId AND status = 'active'";
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+            var existingCount = await connection.ExecuteScalarAsync<int>(checkSql, new { BirdId = id });
+            
+            if (existingCount > 0) return BadRequest("Already subscribed");
 
             var userId = GetUserIdClaim().Value;
 
@@ -678,9 +673,12 @@ namespace Wihngo.Controllers
             var bird = await _db.Birds.FindAsync(id);
             if (bird == null) return NotFound();
 
-            // Ensure active subscription
-            var active = await _db.BirdPremiumSubscriptions.FirstOrDefaultAsync(s => s.BirdId == id && s.Status == "active");
-            if (active == null) return Forbid("No active subscription");
+            // Check for active subscription using raw SQL
+            var checkSql = "SELECT COUNT(*) FROM bird_premium_subscriptions WHERE bird_id = @BirdId AND status = 'active'";
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+            var activeCount = await connection.ExecuteScalarAsync<int>(checkSql, new { BirdId = id });
+            
+            if (activeCount == 0) return Forbid("No active subscription");
 
             var json = JsonSerializer.Serialize(dto);
             bird.PremiumStyleJson = json;

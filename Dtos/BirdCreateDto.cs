@@ -25,13 +25,5 @@ namespace Wihngo.Dtos
         [Required]
         [MaxLength(1000)]
         public string ImageS3Key { get; set; } = string.Empty;
-
-        /// <summary>
-        /// S3 key for bird video (e.g., birds/videos/{birdId}/{uuid}.mp4)
-        /// Use /api/media/upload-url with mediaType='bird-video' to get pre-signed upload URL
-        /// </summary>
-        [Required]
-        [MaxLength(1000)]
-        public string VideoS3Key { get; set; } = string.Empty;
     }
 }
