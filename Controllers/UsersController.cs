@@ -84,14 +84,26 @@ namespace Wihngo.Controllers
                     Emoji = "??",
                     Loved = true
                 }).ToList(),
-                RecentStories = user.Stories.OrderByDescending(s => s.CreatedAt).Take(5).Select(s => new StorySummaryDto
-                {
-                    StoryId = s.StoryId,
-                    Title = s.Content.Length > 30 ? s.Content.Substring(0, 30) + "..." : s.Content,
-                    Bird = s.Bird?.Name ?? string.Empty,
-                    Date = s.CreatedAt.ToString("MMMM d, yyyy"),
-                    Preview = s.Content.Length > 140 ? s.Content.Substring(0, 140) + "..." : s.Content
-                }).ToList()
+                RecentStories = await _db.Stories
+                    .Where(s => s.AuthorId == id)
+                    .Include(s => s.StoryBirds)
+                        .ThenInclude(sb => sb.Bird)
+                    .OrderByDescending(s => s.CreatedAt)
+                    .Take(5)
+                    .Select(s => new StorySummaryDto
+                    {
+                        StoryId = s.StoryId,
+                        Birds = s.StoryBirds
+                            .Where(sb => sb.Bird != null)
+                            .Select(sb => sb.Bird!.Name)
+                            .ToList(),
+                        Mode = s.Mode,
+                        Date = s.CreatedAt.ToString("MMMM d, yyyy"),
+                        Preview = s.Content.Length > 140 ? s.Content.Substring(0, 140) + "..." : s.Content,
+                        ImageS3Key = s.ImageUrl,
+                        VideoS3Key = s.VideoUrl
+                    })
+                    .ToListAsync()
             };
 
             return Ok(profile);
@@ -352,17 +364,24 @@ namespace Wihngo.Controllers
         {
             try
             {
+                _logger.LogInformation("GetProfile endpoint called");
+                
                 // Get authenticated user ID from JWT token
                 var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                _logger.LogInformation("User ID claim: {UserIdClaim}", userIdClaim ?? "NULL");
+                
                 if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
                 {
+                    _logger.LogWarning("Invalid or missing user ID claim");
                     return Unauthorized(new { message = "Invalid authentication token" });
                 }
 
                 // Find user
+                _logger.LogInformation("Finding user with ID: {UserId}", userId);
                 var user = await _db.Users.FindAsync(userId);
                 if (user == null)
                 {
+                    _logger.LogWarning("User not found: {UserId}", userId);
                     return NotFound(new { message = "User not found" });
                 }
 
@@ -394,12 +413,60 @@ namespace Wihngo.Controllers
                     UpdatedAt = DateTime.UtcNow
                 };
 
+                _logger.LogInformation("Profile retrieved successfully for user: {UserId}", userId);
                 return Ok(response);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting profile");
                 return StatusCode(500, new { message = "Failed to get profile. Please try again." });
+            }
+        }
+
+        /// <summary>
+        /// Get birds owned by a specific user
+        /// GET /api/users/{id}/owned-birds
+        /// </summary>
+        [HttpGet("{id}/owned-birds")]
+        [Authorize]
+        public async Task<ActionResult<IEnumerable<BirdSummaryDto>>> GetOwnedBirds(Guid id)
+        {
+            try
+            {
+                // Get authenticated user ID from JWT token
+                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var authenticatedUserId))
+                {
+                    return Unauthorized(new { message = "Invalid authentication token" });
+                }
+
+                // Verify the user is requesting their own birds
+                if (id != authenticatedUserId)
+                {
+                    return Forbid();
+                }
+
+                // Find user
+                var user = await _db.Users.FindAsync(id);
+                if (user == null)
+                {
+                    return NotFound(new { message = "User not found" });
+                }
+
+                // Get birds owned by the user
+                var birds = await _db.Birds
+                    .Where(b => b.OwnerId == id)
+                    .AsNoTracking()
+                    .ToListAsync();
+
+                _logger.LogInformation("Retrieved {Count} owned birds for user {UserId}", birds.Count, id);
+
+                return Ok(_mapper.Map<IEnumerable<BirdSummaryDto>>(birds));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving owned birds for user {UserId}", id);
+                return StatusCode(500, new { message = "Failed to retrieve owned birds. Please try again." });
             }
         }
     }

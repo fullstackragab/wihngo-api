@@ -1,12 +1,18 @@
 namespace Wihngo.Dtos
 {
     using System;
+    using Wihngo.Models.Enums;
 
     public class StorySummaryDto
     {
         public Guid StoryId { get; set; }
-        public string Title { get; set; } = string.Empty;
-        public string Bird { get; set; } = string.Empty;
+        public List<string> Birds { get; set; } = new List<string>();
+        
+        /// <summary>
+        /// Optional mood/category. Null means no mood selected.
+        /// </summary>
+        public StoryMode? Mode { get; set; }
+        
         public string Date { get; set; } = string.Empty;
         public string Preview { get; set; } = string.Empty;
         
@@ -19,5 +25,15 @@ namespace Wihngo.Dtos
         /// Pre-signed download URL for story image (expires in 10 minutes)
         /// </summary>
         public string? ImageUrl { get; set; }
+
+        /// <summary>
+        /// S3 key for story video
+        /// </summary>
+        public string? VideoS3Key { get; set; }
+        
+        /// <summary>
+        /// Pre-signed download URL for story video (expires in 10 minutes)
+        /// </summary>
+        public string? VideoUrl { get; set; }
     }
 }

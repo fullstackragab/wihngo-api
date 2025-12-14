@@ -83,6 +83,21 @@ namespace Wihngo.Controllers
         }
 
         /// <summary>
+        /// Mark a specific notification as read (POST with body)
+        /// </summary>
+        [HttpPost("mark-read")]
+        public async Task<IActionResult> MarkAsReadPost([FromBody] MarkAsReadDto dto)
+        {
+            var userId = GetUserIdClaim();
+            if (!userId.HasValue) return Unauthorized();
+
+            var success = await _notificationService.MarkAsReadAsync(dto.NotificationId, userId.Value);
+            if (!success) return NotFound();
+
+            return Ok(new { success = true });
+        }
+
+        /// <summary>
         /// Mark all notifications as read
         /// </summary>
         [HttpPost("mark-all-read")]
@@ -92,7 +107,7 @@ namespace Wihngo.Controllers
             if (!userId.HasValue) return Unauthorized();
 
             var count = await _notificationService.MarkAllAsReadAsync(userId.Value);
-            return Ok(new { markedCount = count });
+            return Ok(new { success = true, markedCount = count });
         }
 
         /// <summary>
@@ -274,6 +289,69 @@ namespace Wihngo.Controllers
         }
 
         /// <summary>
+        /// Unregister a device by push token
+        /// </summary>
+        [HttpPost("unregister-device")]
+        public async Task<IActionResult> UnregisterDevice([FromBody] UnregisterDeviceDto dto)
+        {
+            var userId = GetUserIdClaim();
+            if (!userId.HasValue) return Unauthorized();
+
+            var device = await _db.UserDevices
+                .FirstOrDefaultAsync(d => d.PushToken == dto.DeviceToken && d.UserId == userId.Value);
+
+            if (device == null) return NotFound();
+
+            device.IsActive = false;
+            await _db.SaveChangesAsync();
+
+            return Ok(new { success = true, message = "Device unregistered successfully" });
+        }
+
+        /// <summary>
+        /// Register device for donation notifications (v1 API compatibility)
+        /// </summary>
+        [HttpPost("/api/v1/notifications/register-donation-device")]
+        public async Task<IActionResult> RegisterDonationDevice([FromBody] RegisterDonationDeviceDto dto)
+        {
+            var userId = GetUserIdClaim();
+            if (!userId.HasValue) return Unauthorized();
+
+            // Check if device already exists
+            var existingDevice = await _db.UserDevices
+                .FirstOrDefaultAsync(d => d.PushToken == dto.ExpoPushToken);
+
+            if (existingDevice != null)
+            {
+                // Update existing device
+                existingDevice.UserId = userId.Value;
+                existingDevice.DeviceType = dto.Platform;
+                existingDevice.IsActive = true;
+                existingDevice.LastUsedAt = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+
+                return Ok(new { success = true, message = "Registered for donation notifications" });
+            }
+
+            // Create new device
+            var device = new UserDevice
+            {
+                DeviceId = Guid.NewGuid(),
+                UserId = userId.Value,
+                PushToken = dto.ExpoPushToken,
+                DeviceType = dto.Platform,
+                IsActive = true,
+                LastUsedAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _db.UserDevices.Add(device);
+            await _db.SaveChangesAsync();
+
+            return Ok(new { success = true, message = "Registered for donation notifications" });
+        }
+
+        /// <summary>
         /// Test notification (for debugging)
         /// </summary>
         [HttpPost("test")]
@@ -293,7 +371,7 @@ namespace Wihngo.Controllers
             };
 
             var notification = await _notificationService.CreateNotificationAsync(dto);
-            return Ok(new { notificationId = notification.NotificationId });
+            return Ok(new { success = true, message = "Test notification sent", notificationId = notification.NotificationId });
         }
     }
 }

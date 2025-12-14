@@ -80,7 +80,7 @@ namespace Wihngo.Controllers
                     b.VideoUrl,
                     b.Tagline,
                     b.LovedCount,
-                    SupportedCount = b.SupportTransactions.Count(),
+                    b.SupportedCount, // Use the pre-calculated count from Bird entity
                     b.OwnerId
                 })
                 .ToListAsync();
@@ -712,7 +712,13 @@ namespace Wihngo.Controllers
 
             _db.SupportTransactions.Add(tx);
             bird.DonationCents += cents;
-            bird.SupportedCount = await _db.SupportTransactions.CountAsync(t => t.BirdId == id);
+            
+            // Get count by loading transactions into memory first to avoid PostgreSQL aggregate issue
+            var supportCount = await _db.SupportTransactions
+                .Where(t => t.BirdId == id)
+                .Select(t => t.TransactionId)
+                .ToListAsync();
+            bird.SupportedCount = supportCount.Count;
 
             await _db.SaveChangesAsync();
 

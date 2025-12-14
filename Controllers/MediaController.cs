@@ -28,8 +28,8 @@ namespace Wihngo.Controllers
         /// - profile-image: User profile image
         /// - story-image: Story image (requires relatedId as storyId)
         /// - story-video: Story video
-        /// - bird-profile-image: Bird profile image (requires relatedId as birdId)
-        /// - bird-video: Bird video (requires relatedId as birdId)
+        /// - bird-profile-image: Bird profile image (optional relatedId as birdId)
+        /// - bird-video: Bird video (optional relatedId as birdId)
         /// 
         /// Valid file extensions: .jpg, .jpeg, .png, .gif, .webp, .mp4, .mov, .avi, .webm
         /// </remarks>
@@ -69,10 +69,8 @@ namespace Wihngo.Controllers
                 }
 
                 // Validate relatedId for media types that require it
-                if ((request.MediaType.ToLower() == "story-image" || 
-                     request.MediaType.ToLower() == "bird-profile-image" || 
-                     request.MediaType.ToLower() == "bird-video") && 
-                    !request.RelatedId.HasValue)
+                // Note: bird-profile-image and bird-video no longer require RelatedId (can upload before bird creation)
+                if (request.MediaType.ToLower() == "story-image" && !request.RelatedId.HasValue)
                 {
                     return BadRequest(new { message = $"RelatedId is required for media type: {request.MediaType}" });
                 }

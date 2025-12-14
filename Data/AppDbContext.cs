@@ -14,6 +14,7 @@ namespace Wihngo.Data
         public DbSet<User> Users { get; set; } = null!;
         public DbSet<Bird> Birds { get; set; } = null!;
         public DbSet<Story> Stories { get; set; } = null!;
+        public DbSet<StoryBird> StoryBirds { get; set; } = null!;
         public DbSet<SupportTransaction> SupportTransactions { get; set; } = null!;
         public DbSet<Love> Loves { get; set; } = null!;
         public DbSet<SupportUsage> SupportUsages { get; set; } = null!; // plural set name to match entity
@@ -55,6 +56,7 @@ namespace Wihngo.Data
             modelBuilder.Entity<User>().ToTable("users");
             modelBuilder.Entity<Bird>().ToTable("birds");
             modelBuilder.Entity<Story>().ToTable("stories");
+            modelBuilder.Entity<StoryBird>().ToTable("story_birds");
             modelBuilder.Entity<BirdPremiumSubscription>().ToTable("bird_premium_subscriptions");
             modelBuilder.Entity<PremiumStyle>().ToTable("premium_styles");
             modelBuilder.Entity<CharityAllocation>().ToTable("charity_allocations");
@@ -124,10 +126,17 @@ namespace Wihngo.Data
                 .HasForeignKey(l => l.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            modelBuilder.Entity<Bird>()
-                .HasMany(b => b.Stories)
-                .WithOne(s => s.Bird)
-                .HasForeignKey(s => s.BirdId)
+            // Configure StoryBird many-to-many relationship
+            modelBuilder.Entity<Story>()
+                .HasMany(s => s.StoryBirds)
+                .WithOne(sb => sb.Story)
+                .HasForeignKey(sb => sb.StoryId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<StoryBird>()
+                .HasOne(sb => sb.Bird)
+                .WithMany()
+                .HasForeignKey(sb => sb.BirdId)
                 .OnDelete(DeleteBehavior.Cascade);
 
             modelBuilder.Entity<Bird>()

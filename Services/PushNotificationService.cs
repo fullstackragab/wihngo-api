@@ -45,6 +45,11 @@ namespace Wihngo.Services
                     return;
                 }
 
+                // Get unread count for badge
+                var unreadCount = await _db.Notifications
+                    .Where(n => n.UserId == notification.UserId && !n.IsRead)
+                    .CountAsync();
+
                 // Prepare notification data
                 var data = new Dictionary<string, object>
                 {
@@ -63,7 +68,7 @@ namespace Wihngo.Services
 
                 // Send to all devices
                 var tasks = devices.Select(device => 
-                    SendToDeviceAsync(device.PushToken, notification.Title, notification.Message, data));
+                    SendToDeviceAsync(device.PushToken, notification.Title, notification.Message, data, unreadCount));
 
                 await Task.WhenAll(tasks);
             }
@@ -73,7 +78,7 @@ namespace Wihngo.Services
             }
         }
 
-        public async Task SendToDeviceAsync(string pushToken, string title, string message, object? data = null)
+        public async Task SendToDeviceAsync(string pushToken, string title, string message, object? data = null, int? badge = null)
         {
             if (!IsValidPushToken(pushToken))
             {
@@ -91,7 +96,8 @@ namespace Wihngo.Services
                     data = data ?? new { },
                     sound = "default",
                     priority = "high",
-                    channelId = "default"
+                    channelId = "default",
+                    badge = badge
                 };
 
                 var jsonPayload = JsonSerializer.Serialize(payload);

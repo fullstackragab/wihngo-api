@@ -9,6 +9,17 @@ namespace Wihngo.Dtos
         public string? DeviceName { get; set; }
     }
 
+    public class UnregisterDeviceDto
+    {
+        public string DeviceToken { get; set; } = string.Empty;
+    }
+
+    public class RegisterDonationDeviceDto
+    {
+        public string ExpoPushToken { get; set; } = string.Empty;
+        public string Platform { get; set; } = string.Empty; // "ios" or "android"
+    }
+
     public class UserDeviceDto
     {
         public Guid DeviceId { get; set; }

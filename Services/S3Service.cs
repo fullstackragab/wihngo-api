@@ -194,8 +194,9 @@ namespace Wihngo.Services
                 "profile-image" => $"users/profile-images/{userId}/{uniqueId}{extension}",
                 "story-image" => $"users/stories/{userId}/{relatedId}/{uniqueId}{extension}",
                 "story-video" => $"users/videos/{userId}/{uniqueId}{extension}",
-                "bird-profile-image" => $"birds/profile-images/{relatedId}/{uniqueId}{extension}",
-                "bird-video" => $"birds/videos/{relatedId}/{uniqueId}{extension}",
+                // For bird media without relatedId (before bird creation), use userId as folder
+                "bird-profile-image" => $"birds/profile-images/{relatedId ?? userId}/{uniqueId}{extension}",
+                "bird-video" => $"birds/videos/{relatedId ?? userId}/{uniqueId}{extension}",
                 _ => throw new ArgumentException($"Invalid media type: {mediaType}", nameof(mediaType))
             };
         }
