@@ -2,7 +2,6 @@ namespace Wihngo.Controllers
 {
     using Microsoft.AspNetCore.Authorization;
     using Microsoft.AspNetCore.Mvc;
-    using Microsoft.EntityFrameworkCore;
     using System;
     using System.Linq;
     using System.Security.Claims;
@@ -19,11 +18,16 @@ namespace Wihngo.Controllers
     {
         private readonly INotificationService _notificationService;
         private readonly AppDbContext _db;
+        private readonly IDbConnectionFactory _dbFactory;
 
-        public NotificationsController(INotificationService notificationService, AppDbContext db)
+        public NotificationsController(
+            INotificationService notificationService, 
+            AppDbContext db,
+            IDbConnectionFactory dbFactory)
         {
             _notificationService = notificationService;
             _db = db;
+            _dbFactory = dbFactory;
         }
 
         private Guid? GetUserIdClaim()
@@ -251,19 +255,20 @@ namespace Wihngo.Controllers
             var userId = GetUserIdClaim();
             if (!userId.HasValue) return Unauthorized();
 
-            var devices = await _db.UserDevices
-                .Where(d => d.UserId == userId.Value)
-                .Select(d => new UserDeviceDto
-                {
-                    DeviceId = d.DeviceId,
-                    PushToken = d.PushToken,
-                    DeviceType = d.DeviceType,
-                    DeviceName = d.DeviceName,
-                    IsActive = d.IsActive,
-                    LastUsedAt = d.LastUsedAt,
-                    CreatedAt = d.CreatedAt
-                })
-                .ToListAsync();
+            // Use raw SQL to get devices
+            var sql = @"
+                SELECT 
+                    device_id as DeviceId,
+                    push_token as PushToken,
+                    device_type as DeviceType,
+                    device_name as DeviceName,
+                    is_active as IsActive,
+                    last_used_at as LastUsedAt,
+                    created_at as CreatedAt
+                FROM user_devices
+                WHERE user_id = @UserId";
+            
+            var devices = await _dbFactory.QueryListAsync<UserDeviceDto>(sql, new { UserId = userId.Value });
 
             return Ok(new { devices });
         }

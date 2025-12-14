@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+using System;
 using Npgsql;
 using Wihngo.Data;
 using Wihngo.Dtos;
@@ -11,6 +11,7 @@ namespace Wihngo.Services;
 public class CryptoPaymentService : ICryptoPaymentService
 {
     private readonly AppDbContext _context;
+    private readonly IDbConnectionFactory _dbFactory;
     private readonly IBlockchainService _blockchainService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<CryptoPaymentService> _logger;
@@ -18,12 +19,14 @@ public class CryptoPaymentService : ICryptoPaymentService
 
     public CryptoPaymentService(
         AppDbContext context,
+        IDbConnectionFactory dbFactory,
         IBlockchainService blockchainService,
         IConfiguration configuration,
         ILogger<CryptoPaymentService> logger,
         IHdWalletService? hdWalletService = null)
     {
         _context = context;
+        _dbFactory = dbFactory;
         _blockchainService = blockchainService;
         _configuration = configuration;
         _logger = logger;
@@ -33,32 +36,25 @@ public class CryptoPaymentService : ICryptoPaymentService
     // New helper: allocate a unique index from Postgres sequence (optionally per-network)
     private async Task<long> AllocateHdIndexAsync(string network)
     {
-        var conn = _context.Database.GetDbConnection();
-        await conn.OpenAsync();
-        try
+        using var conn = await _dbFactory.CreateOpenConnectionAsync();
+        
+        // Map network to a safe sequence name
+        var net = (network ?? string.Empty).ToLower().Trim();
+        string sequenceName = net switch
         {
-            // Map network to a safe sequence name
-            var net = (network ?? string.Empty).ToLower().Trim();
-            string sequenceName = net switch
-            {
-                "solana" => "hd_address_index_seq_solana",
-                "ethereum" => "hd_address_index_seq_ethereum",
-                "polygon" => "hd_address_index_seq_polygon",
-                "base" => "hd_address_index_seq_base",
-                "stellar" => "hd_address_index_seq_stellar",
-                _ => "hd_address_index_seq"
-            };
+            "solana" => "hd_address_index_seq_solana",
+            "ethereum" => "hd_address_index_seq_ethereum",
+            "polygon" => "hd_address_index_seq_polygon",
+            "base" => "hd_address_index_seq_base",
+            "stellar" => "hd_address_index_seq_stellar",
+            _ => "hd_address_index_seq"
+        };
 
-            using var cmd = conn.CreateCommand();
-            // sequenceName is selected from a whitelist above to avoid injection
-            cmd.CommandText = $"SELECT nextval('{sequenceName}')";
-            var result = await cmd.ExecuteScalarAsync();
-            return Convert.ToInt64(result);
-        }
-        finally
-        {
-            await conn.CloseAsync();
-        }
+        using var cmd = conn.CreateCommand();
+        // sequenceName is selected from a whitelist above to avoid injection
+        cmd.CommandText = $"SELECT nextval('{sequenceName}')";
+        var result = await cmd.ExecuteScalarAsync();
+        return Convert.ToInt64(result);
     }
 
     public async Task<PaymentResponseDto> CreatePaymentRequestAsync(Guid userId, CreatePaymentRequestDto dto)

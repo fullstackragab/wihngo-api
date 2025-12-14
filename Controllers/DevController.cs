@@ -1,6 +1,6 @@
+using Dapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Wihngo.Data;
 
 namespace Wihngo.Controllers
@@ -91,6 +91,9 @@ namespace Wihngo.Controllers
         /// <summary>
         /// Get detailed stats for a specific user by email
         /// </summary>
+        /*
+        // TEMPORARILY DISABLED: This endpoint uses complex EF Core Include/ThenInclude chains
+        // that need to be migrated to raw SQL queries. See MIGRATION_STATUS_FINAL.md
         [HttpGet("users/{email}")]
         [AllowAnonymous]
         public async Task<IActionResult> GetUserDetailsByEmail(string email)
@@ -190,6 +193,7 @@ namespace Wihngo.Controllers
 
             return Ok(result);
         }
+        */
 
         /// <summary>
         /// Get quick test credentials summary
@@ -204,41 +208,56 @@ namespace Wihngo.Controllers
                 return NotFound();
             }
 
-            var users = await _db.Users
-                .Select(u => new
-                {
-                    name = u.Name,
-                    email = u.Email,
-                    password = "Password123!",
-                    birdsCount = u.Birds.Count,
-                    storiesCount = u.Stories.Count,
-                    hasData = u.Birds.Count > 0 || u.Stories.Count > 0 || u.Loves.Count > 0
-                })
-                .OrderByDescending(u => u.birdsCount)
-                .ThenByDescending(u => u.storiesCount)
-                .ToListAsync();
+            // Use raw SQL with aggregations
+            var sql = @"
+                SELECT 
+                    u.name,
+                    u.email,
+                    'Password123!' as password,
+                    COUNT(DISTINCT b.bird_id) as birds_count,
+                    COUNT(DISTINCT s.story_id) as stories_count,
+                    CASE WHEN COUNT(DISTINCT b.bird_id) > 0 OR 
+                              COUNT(DISTINCT s.story_id) > 0 OR 
+                              COUNT(DISTINCT l.bird_id) > 0 
+                         THEN true ELSE false END as has_data
+                FROM users u
+                LEFT JOIN birds b ON u.user_id = b.owner_id
+                LEFT JOIN stories s ON u.user_id = s.author_id
+                LEFT JOIN loves l ON u.user_id = l.user_id
+                GROUP BY u.user_id, u.name, u.email
+                ORDER BY birds_count DESC, stories_count DESC";
 
-            var recommended = users.FirstOrDefault(u => u.hasData);
-
-            return Ok(new
+            var connection = await _db.GetDbFactory().CreateOpenConnectionAsync();
+            try
             {
-                message = "?? Test User Credentials (Development Only)",
-                note = "All users have the same password: Password123!",
-                recommendedUser = recommended != null ? new
+                var users = await connection.QueryAsync<dynamic>(sql);
+                var usersList = users.ToList();
+                var recommended = usersList.FirstOrDefault(u => u.has_data);
+
+                return Ok(new
                 {
-                    recommended.name,
-                    recommended.email,
-                    recommended.password,
-                    reason = $"Has {recommended.birdsCount} birds and {recommended.storiesCount} stories"
-                } : null,
-                allUsers = users,
-                loginEndpoint = "POST /api/auth/login",
-                exampleRequest = new
-                {
-                    email = recommended?.email ?? "alice@example.com",
-                    password = "Password123!"
-                }
-            });
+                    message = "?? Test User Credentials (Development Only)",
+                    note = "All users have the same password: Password123!",
+                    recommendedUser = recommended != null ? new
+                    {
+                        name = (string)recommended.name,
+                        email = (string)recommended.email,
+                        password = (string)recommended.password,
+                        reason = $"Has {recommended.birds_count} birds and {recommended.stories_count} stories"
+                    } : null,
+                    allUsers = usersList,
+                    loginEndpoint = "POST /api/auth/login",
+                    exampleRequest = new
+                    {
+                        email = recommended?.email ?? "alice@example.com",
+                        password = "Password123!"
+                    }
+                });
+            }
+            finally
+            {
+                await connection.DisposeAsync();
+            }
         }
     }
 }

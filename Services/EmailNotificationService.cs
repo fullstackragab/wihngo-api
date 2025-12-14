@@ -1,9 +1,11 @@
 namespace Wihngo.Services
 {
     using System;
+    using System.Collections.Generic;
     using System.Linq;
     using System.Threading.Tasks;
-    using Microsoft.EntityFrameworkCore;
+    using Dapper;
+    using MailKit.Net.Smtp;
     using Microsoft.Extensions.Configuration;
     using Microsoft.Extensions.Logging;
     using Wihngo.Data;
@@ -17,15 +19,18 @@ namespace Wihngo.Services
     public class EmailNotificationService : IEmailNotificationService
     {
         private readonly AppDbContext _db;
+        private readonly IDbConnectionFactory _dbFactory;
         private readonly IConfiguration _configuration;
         private readonly ILogger<EmailNotificationService> _logger;
 
         public EmailNotificationService(
             AppDbContext db,
+            IDbConnectionFactory dbFactory,
             IConfiguration configuration,
             ILogger<EmailNotificationService> logger)
         {
             _db = db;
+            _dbFactory = dbFactory;
             _configuration = configuration;
             _logger = logger;
         }
@@ -79,12 +84,20 @@ namespace Wihngo.Services
                 var user = await _db.Users.FindAsync(userId);
                 if (user == null) return;
 
-                // Get unread notifications from last 24 hours
+                // Get unread notifications from last 24 hours using raw SQL
                 var yesterday = DateTime.UtcNow.AddDays(-1);
-                var notifications = await _db.Notifications
-                    .Where(n => n.UserId == userId && !n.IsRead && n.CreatedAt >= yesterday)
-                    .OrderByDescending(n => n.CreatedAt)
-                    .ToListAsync();
+                var sql = @"
+                    SELECT * FROM notifications
+                    WHERE user_id = @UserId 
+                      AND is_read = false 
+                      AND created_at >= @Since
+                    ORDER BY created_at DESC";
+                
+                var notifications = await _dbFactory.QueryListAsync<Notification>(sql, new 
+                { 
+                    UserId = userId, 
+                    Since = yesterday 
+                });
 
                 if (!notifications.Any())
                 {

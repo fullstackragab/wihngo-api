@@ -1,6 +1,5 @@
 ﻿using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Wihngo.Data;
 using System.Text.Json.Serialization;
@@ -84,7 +83,7 @@ builder.Logging.AddSimpleConsole(options =>
 
 builder.Services.AddControllers().AddJsonOptions(opts =>
 {
-    // Prevent circular reference errors when returning EF entities with navigation properties
+    // Prevent circular reference errors when returning entities with navigation properties
     opts.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
 });
 
@@ -96,7 +95,7 @@ builder.Services.AddAutoMapper(cfg => cfg.AddProfile<AutoMapperProfile>());
 // ========================================
 // 🗄️ DATABASE CONNECTION WITH RETRY LOGIC
 // ========================================
-// Register DbContext using PostgreSQL (Npgsql)
+// Register database connection factory using Npgsql directly (no EF)
 // Read connection string from environment variable (secure) or fallback to appsettings.json
 var connectionString = builder.Configuration["ConnectionStrings__DefaultConnection"] 
                        ?? builder.Configuration.GetConnectionString("DefaultConnection")
@@ -202,32 +201,13 @@ for (int attempt = 1; attempt <= maxRetries; attempt++)
     }
 }
 
-// Register DbContext with resilient configuration
-builder.Services.AddDbContext<AppDbContext>(options =>
-{
-    options.UseNpgsql(connectionString, npgsqlOptions =>
-    {
-        // Enable connection resilience
-        npgsqlOptions.EnableRetryOnFailure(
-            maxRetryCount: 3,
-            maxRetryDelay: TimeSpan.FromSeconds(5),
-            errorCodesToAdd: null);
-        
-        // Set command timeout
-        npgsqlOptions.CommandTimeout(30);
-        
-        // Use split query behavior for all queries with multiple includes
-        // This prevents PostgreSQL "WITHIN GROUP is required for ordered-set aggregate" errors
-        npgsqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-    })
-    .UseSnakeCaseNamingConvention();
-    
-    // Log SQL in development (optional)
-    if (builder.Environment.IsDevelopment())
-    {
-        options.EnableSensitiveDataLogging();
-    }
-});
+// Register database connection factory (replaces EF DbContext)
+builder.Services.AddSingleton<IDbConnectionFactory>(sp => 
+    new NpgsqlConnectionFactory(connectionString));
+
+// TEMPORARY: Register stub AppDbContext for backward compatibility during migration
+// This allows existing code to compile while we migrate to raw SQL
+builder.Services.AddScoped<AppDbContext>();
 
 // Log database configuration (without exposing connection details)
 var dbLogger = builder.Services.BuildServiceProvider().GetRequiredService<ILogger<Program>>();
@@ -497,45 +477,24 @@ if (isDatabaseAvailable)
     {
         try
         {
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var dbFactory = scope.ServiceProvider.GetRequiredService<IDbConnectionFactory>();
             var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
             
             logger.LogInformation("Checking database connection...");
             
-            // Check if database can be accessed
-            var canConnect = await db.Database.CanConnectAsync();
+            using var connection = await dbFactory.CreateOpenConnectionAsync();
+            logger.LogInformation("✅ Database connection verified");
             
-            if (canConnect)
+            // In development, seed comprehensive dummy data
+            if (app.Environment.IsDevelopment())
             {
-                logger.LogInformation("✅ Database connection verified");
-                
-                // For a fresh database, create all tables
-                var created = db.Database.EnsureCreated();
-                
-                if (created)
-                {
-                    logger.LogInformation("✅ Database created successfully!");
-                    
-                    // In development, seed comprehensive dummy data
-                    if (app.Environment.IsDevelopment())
-                    {
-                        logger.LogInformation("🌱 Seeding development data...");
-                        await Wihngo.Database.DatabaseSeeder.SeedDevelopmentDataAsync(app.Services);
-                    }
-                    else
-                    {
-                        // In production, just seed essential data
-                        await SeedDatabaseAsync(db, logger);
-                    }
-                }
-                else
-                {
-                    logger.LogInformation("✅ Database already exists");
-                }
+                logger.LogInformation("🌱 Seeding development data...");
+                await Wihngo.Database.DatabaseSeeder.SeedDevelopmentDataAsync(app.Services);
             }
             else
             {
-                logger.LogWarning("⚠️  Cannot connect to database");
+                // In production, just seed essential data
+                await SeedDatabaseAsync(dbFactory, logger);
             }
         }
         catch (Exception ex)
@@ -551,75 +510,58 @@ else
 }
 
 // Add this method before app.Run()
-async Task SeedDatabaseAsync(AppDbContext db, ILogger logger)
+async Task SeedDatabaseAsync(IDbConnectionFactory dbFactory, ILogger logger)
 {
     try
     {
+        using var connection = await dbFactory.CreateOpenConnectionAsync();
+        
         // Create invoice sequence if it doesn't exist
-        await db.Database.ExecuteSqlRawAsync(@"
+        using var cmd1 = connection.CreateCommand();
+        cmd1.CommandText = @"
             DO $$ 
             BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_sequences WHERE schemaname = 'public' AND sequencename = 'wihngo_invoice_seq') THEN
                     CREATE SEQUENCE wihngo_invoice_seq START 1;
                 END IF;
             END $$;
-        ");
+        ";
+        await cmd1.ExecuteNonQueryAsync();
         
         logger.LogInformation("✅ Invoice sequence created");
         
         // Seed supported tokens if not exist
-        if (!await db.SupportedTokens.AnyAsync())
+        using var checkCmd = connection.CreateCommand();
+        checkCmd.CommandText = "SELECT COUNT(*) FROM supported_tokens";
+        var count = (long?)await checkCmd.ExecuteScalarAsync() ?? 0;
+        
+        if (count == 0)
         {
             var tokens = new[]
             {
-                new SupportedToken
-                {
-                    Id = Guid.NewGuid(),
-                    TokenSymbol = "USDC",
-                    Chain = "solana",
-                    MintAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-                    Decimals = 6,
-                    IsActive = true,
-                    TolerancePercent = 0.5m,
-                    CreatedAt = DateTime.UtcNow
-                },
-                new SupportedToken
-                {
-                    Id = Guid.NewGuid(),
-                    TokenSymbol = "EURC",
-                    Chain = "solana",
-                    MintAddress = "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr",
-                    Decimals = 6,
-                    IsActive = true,
-                    TolerancePercent = 0.5m,
-                    CreatedAt = DateTime.UtcNow
-                },
-                new SupportedToken
-                {
-                    Id = Guid.NewGuid(),
-                    TokenSymbol = "USDC",
-                    Chain = "base",
-                    MintAddress = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-                    Decimals = 6,
-                    IsActive = true,
-                    TolerancePercent = 0.5m,
-                    CreatedAt = DateTime.UtcNow
-                },
-                new SupportedToken
-                {
-                    Id = Guid.NewGuid(),
-                    TokenSymbol = "EURC",
-                    Chain = "base",
-                    MintAddress = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42",
-                    Decimals = 6,
-                    IsActive = true,
-                    TolerancePercent = 0.5m,
-                    CreatedAt = DateTime.UtcNow
-                }
+                new { Id = Guid.NewGuid(), TokenSymbol = "USDC", Chain = "solana", MintAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", Decimals = 6, IsActive = true, TolerancePercent = 0.5m },
+                new { Id = Guid.NewGuid(), TokenSymbol = "EURC", Chain = "solana", MintAddress = "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr", Decimals = 6, IsActive = true, TolerancePercent = 0.5m },
+                new { Id = Guid.NewGuid(), TokenSymbol = "USDC", Chain = "base", MintAddress = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", Decimals = 6, IsActive = true, TolerancePercent = 0.5m },
+                new { Id = Guid.NewGuid(), TokenSymbol = "EURC", Chain = "base", MintAddress = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42", Decimals = 6, IsActive = true, TolerancePercent = 0.5m }
             };
             
-            await db.SupportedTokens.AddRangeAsync(tokens);
-            await db.SaveChangesAsync();
+            foreach (var token in tokens)
+            {
+                using var insertCmd = connection.CreateCommand();
+                insertCmd.CommandText = @"
+                    INSERT INTO supported_tokens (id, token_symbol, chain, mint_address, decimals, is_active, tolerance_percent, created_at)
+                    VALUES (@id, @symbol, @chain, @mint, @decimals, @active, @tolerance, @created)
+                ";
+                insertCmd.Parameters.AddWithValue("id", token.Id);
+                insertCmd.Parameters.AddWithValue("symbol", token.TokenSymbol);
+                insertCmd.Parameters.AddWithValue("chain", token.Chain);
+                insertCmd.Parameters.AddWithValue("mint", token.MintAddress);
+                insertCmd.Parameters.AddWithValue("decimals", token.Decimals);
+                insertCmd.Parameters.AddWithValue("active", token.IsActive);
+                insertCmd.Parameters.AddWithValue("tolerance", token.TolerancePercent);
+                insertCmd.Parameters.AddWithValue("created", DateTime.UtcNow);
+                await insertCmd.ExecuteNonQueryAsync();
+            }
             
             logger.LogInformation("✅ Seeded {Count} supported tokens", tokens.Length);
         }

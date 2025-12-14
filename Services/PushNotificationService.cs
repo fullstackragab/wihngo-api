@@ -4,10 +4,13 @@ namespace Wihngo.Services
     using System.Collections.Generic;
     using System.Linq;
     using System.Net.Http;
+    using System.Net.Http.Headers;
     using System.Text;
     using System.Text.Json;
     using System.Threading.Tasks;
-    using Microsoft.EntityFrameworkCore;
+    using Dapper;
+    using FirebaseAdmin.Messaging;
+    using Microsoft.Extensions.Configuration;
     using Microsoft.Extensions.Logging;
     using Wihngo.Data;
     using Wihngo.Models;
@@ -15,182 +18,228 @@ namespace Wihngo.Services
 
     public class PushNotificationService : IPushNotificationService
     {
-        private readonly AppDbContext _db;
-        private readonly HttpClient _httpClient;
+        private readonly AppDbContext _context;
+        private readonly IDbConnectionFactory _dbFactory;
+        private readonly IConfiguration _config;
         private readonly ILogger<PushNotificationService> _logger;
-        private const string ExpoApiUrl = "https://exp.host/--/api/v2/push/send";
+        private readonly HttpClient _httpClient;
+        private readonly string? _oneSignalAppId;
+        private readonly string? _oneSignalApiKey;
 
         public PushNotificationService(
-            AppDbContext db,
-            HttpClient httpClient,
-            ILogger<PushNotificationService> logger)
+            AppDbContext context,
+            IDbConnectionFactory dbFactory,
+            IConfiguration config,
+            ILogger<PushNotificationService> logger,
+            IHttpClientFactory httpClientFactory)
         {
-            _db = db;
-            _httpClient = httpClient;
+            _context = context;
+            _dbFactory = dbFactory;
+            _config = config;
             _logger = logger;
+            _httpClient = httpClientFactory.CreateClient();
+            _oneSignalAppId = _config["OneSignal:AppId"];
+            _oneSignalApiKey = _config["OneSignal:ApiKey"];
         }
 
-        public async Task SendPushNotificationAsync(Notification notification)
+        public async Task SendPushNotificationAsync(Wihngo.Models.Notification notification)
         {
             try
             {
-                // Get all active devices for the user
-                var devices = await _db.UserDevices
-                    .Where(d => d.UserId == notification.UserId && d.IsActive)
-                    .ToListAsync();
+                // Get user's device tokens using raw SQL
+                var sql = @"
+                    SELECT * FROM user_devices
+                    WHERE user_id = @UserId 
+                      AND is_active = true 
+                      AND push_token IS NOT NULL 
+                      AND push_token != ''";
+                
+                var devices = await _dbFactory.QueryListAsync<UserDevice>(sql, new { UserId = notification.UserId });
 
                 if (!devices.Any())
                 {
-                    _logger.LogInformation($"No active devices found for user {notification.UserId}");
+                    _logger.LogInformation("No active devices found for user {UserId}", notification.UserId);
                     return;
                 }
 
-                // Get unread count for badge
-                var unreadCount = await _db.Notifications
-                    .Where(n => n.UserId == notification.UserId && !n.IsRead)
-                    .CountAsync();
-
-                // Prepare notification data
-                var data = new Dictionary<string, object>
+                foreach (var device in devices)
                 {
-                    { "notificationId", notification.NotificationId },
-                    { "type", notification.Type.ToString() }
-                };
-
-                if (!string.IsNullOrEmpty(notification.DeepLink))
-                    data["deepLink"] = notification.DeepLink;
-
-                if (notification.BirdId.HasValue)
-                    data["birdId"] = notification.BirdId.Value;
-
-                if (notification.StoryId.HasValue)
-                    data["storyId"] = notification.StoryId.Value;
-
-                // Send to all devices
-                var tasks = devices.Select(device => 
-                    SendToDeviceAsync(device.PushToken, notification.Title, notification.Message, data, unreadCount));
-
-                await Task.WhenAll(tasks);
+                    try
+                    {
+                        if (device.DeviceType == "ios" || device.DeviceType == "android")
+                        {
+                            // Use Firebase Cloud Messaging for iOS/Android
+                            await SendFcmNotificationAsync(device.PushToken!, notification);
+                        }
+                        else if (device.DeviceType == "web")
+                        {
+                            // Use OneSignal for web push notifications
+                            await SendOneSignalNotificationAsync(device.PushToken!, notification);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to send push notification to device {DeviceId}", device.DeviceId);
+                    }
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error sending push notification for notification {notification.NotificationId}");
+                _logger.LogError(ex, "Error sending push notification for notification {NotificationId}", notification.NotificationId);
             }
         }
 
         public async Task SendToDeviceAsync(string pushToken, string title, string message, object? data = null, int? badge = null)
         {
-            if (!IsValidPushToken(pushToken))
-            {
-                _logger.LogWarning($"Invalid push token format: {pushToken}");
-                return;
-            }
-
             try
             {
-                var payload = new
+                var fcmMessage = new Message
                 {
-                    to = pushToken,
-                    title = title,
-                    body = message,
-                    data = data ?? new { },
-                    sound = "default",
-                    priority = "high",
-                    channelId = "default",
-                    badge = badge
+                    Token = pushToken,
+                    Notification = new FirebaseAdmin.Messaging.Notification
+                    {
+                        Title = title,
+                        Body = message
+                    }
                 };
 
-                var jsonPayload = JsonSerializer.Serialize(payload);
-                var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-
-                var response = await _httpClient.PostAsync(ExpoApiUrl, content);
-                var responseBody = await response.Content.ReadAsStringAsync();
-
-                if (!response.IsSuccessStatusCode)
+                if (data != null)
                 {
-                    _logger.LogError($"Expo push notification failed: {response.StatusCode}, {responseBody}");
-                    
-                    // Check if token is invalid and deactivate device
-                    if (responseBody.Contains("DeviceNotRegistered") || responseBody.Contains("InvalidCredentials"))
+                    fcmMessage.Data = new Dictionary<string, string>
                     {
-                        await DeactivateDeviceByTokenAsync(pushToken);
-                    }
+                        { "data", JsonSerializer.Serialize(data) }
+                    };
                 }
-                else
+
+                if (badge.HasValue)
                 {
-                    _logger.LogInformation($"Push notification sent successfully to {pushToken}");
+                    fcmMessage.Apns = new ApnsConfig
+                    {
+                        Aps = new Aps { Badge = badge.Value }
+                    };
                 }
+
+                var response = await FirebaseMessaging.DefaultInstance.SendAsync(fcmMessage);
+                _logger.LogInformation("Successfully sent notification to device. Response: {Response}", response);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error sending push notification to device {pushToken}");
+                _logger.LogError(ex, "Failed to send notification to device {PushToken}", pushToken);
+                throw;
             }
         }
 
         public bool IsValidPushToken(string pushToken)
         {
+            // Basic validation for Expo push tokens
             if (string.IsNullOrWhiteSpace(pushToken))
                 return false;
 
-            // Expo push tokens start with ExponentPushToken[ or ExpoPushToken[
-            return pushToken.StartsWith("ExponentPushToken[") || 
-                   pushToken.StartsWith("ExpoPushToken[");
-        }
+            // Expo push tokens start with ExponentPushToken[
+            if (pushToken.StartsWith("ExponentPushToken["))
+                return true;
 
-        private async Task DeactivateDeviceByTokenAsync(string pushToken)
-        {
-            try
-            {
-                var device = await _db.UserDevices
-                    .FirstOrDefaultAsync(d => d.PushToken == pushToken);
+            // Firebase tokens are typically 152+ characters
+            if (pushToken.Length >= 152)
+                return true;
 
-                if (device != null)
-                {
-                    device.IsActive = false;
-                    await _db.SaveChangesAsync();
-                    _logger.LogInformation($"Deactivated invalid device token: {pushToken}");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Error deactivating device token: {pushToken}");
-            }
+            return false;
         }
 
         public async Task SendInvoiceIssuedNotificationAsync(Guid userId, string invoiceNumber)
         {
             try
             {
-                var devices = await _db.UserDevices
-                    .Where(d => d.UserId == userId && d.IsActive)
-                    .ToListAsync();
-
-                if (!devices.Any())
+                var notification = new Wihngo.Models.Notification
                 {
-                    _logger.LogInformation("No active devices found for user {UserId}", userId);
-                    return;
-                }
-
-                var title = "Payment Receipt Ready";
-                var message = $"Your Wihngo payment receipt {invoiceNumber} is ready";
-                var data = new Dictionary<string, object>
-                {
-                    { "type", "invoice_issued" },
-                    { "invoiceNumber", invoiceNumber },
-                    { "deepLink", $"wihngo://invoices/{invoiceNumber}" }
+                    NotificationId = Guid.NewGuid(),
+                    UserId = userId,
+                    Type = Wihngo.Models.Enums.NotificationType.PaymentReceived,
+                    Title = "Invoice Issued",
+                    Message = $"Your invoice {invoiceNumber} has been issued and is ready for payment.",
+                    Priority = Wihngo.Models.Enums.NotificationPriority.High,
+                    Channels = Wihngo.Models.Enums.NotificationChannel.InApp | Wihngo.Models.Enums.NotificationChannel.Push,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
                 };
 
-                var tasks = devices.Select(device =>
-                    SendToDeviceAsync(device.PushToken, title, message, data));
-
-                await Task.WhenAll(tasks);
-
-                _logger.LogInformation("Sent invoice issued notification to {DeviceCount} devices for user {UserId}",
-                    devices.Count, userId);
+                await SendPushNotificationAsync(notification);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error sending invoice issued notification for user {UserId}", userId);
+                _logger.LogError(ex, "Failed to send invoice notification for invoice {InvoiceNumber} to user {UserId}", invoiceNumber, userId);
+                throw;
+            }
+        }
+
+        private async Task SendFcmNotificationAsync(string token, Wihngo.Models.Notification notification)
+        {
+            try
+            {
+                var message = new Message
+                {
+                    Token = token,
+                    Notification = new FirebaseAdmin.Messaging.Notification
+                    {
+                        Title = notification.Title,
+                        Body = notification.Message
+                    },
+                    Data = new Dictionary<string, string>
+                    {
+                        { "notificationId", notification.NotificationId.ToString() },
+                        { "type", notification.Type.ToString() },
+                        { "createdAt", notification.CreatedAt.ToString("O") }
+                    }
+                };
+
+                var response = await FirebaseMessaging.DefaultInstance.SendAsync(message);
+                _logger.LogInformation("Successfully sent FCM notification. Response: {Response}", response);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send FCM notification to token {Token}", token);
+                throw;
+            }
+        }
+
+        private async Task SendOneSignalNotificationAsync(string playerId, Wihngo.Models.Notification notification)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(_oneSignalAppId) || string.IsNullOrEmpty(_oneSignalApiKey))
+                {
+                    _logger.LogWarning("OneSignal credentials not configured");
+                    return;
+                }
+
+                var payload = new
+                {
+                    app_id = _oneSignalAppId,
+                    include_player_ids = new[] { playerId },
+                    headings = new { en = notification.Title },
+                    contents = new { en = notification.Message },
+                    data = new
+                    {
+                        notificationId = notification.NotificationId.ToString(),
+                        type = notification.Type.ToString(),
+                        createdAt = notification.CreatedAt.ToString("O")
+                    }
+                };
+
+                var jsonPayload = JsonSerializer.Serialize(payload);
+                var content = new StringContent(jsonPayload, Encoding.UTF8, new MediaTypeHeaderValue("application/json"));
+
+                _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", _oneSignalApiKey);
+
+                var response = await _httpClient.PostAsync("https://onesignal.com/api/v1/notifications", content);
+                response.EnsureSuccessStatusCode();
+
+                _logger.LogInformation("Successfully sent OneSignal notification to player {PlayerId}", playerId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send OneSignal notification to player {PlayerId}", playerId);
+                throw;
             }
         }
     }

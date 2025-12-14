@@ -1,7 +1,9 @@
 namespace Wihngo.BackgroundJobs
 {
+    using System;
+    using System.Threading.Tasks;
+    using Coravel.Invocable;
     using Hangfire;
-    using Microsoft.EntityFrameworkCore;
     using Wihngo.Data;
     using Wihngo.Models;
 

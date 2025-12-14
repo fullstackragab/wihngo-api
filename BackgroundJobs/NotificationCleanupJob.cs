@@ -3,19 +3,26 @@ namespace Wihngo.BackgroundJobs
     using System;
     using System.Linq;
     using System.Threading.Tasks;
-    using Microsoft.EntityFrameworkCore;
+    using Coravel.Invocable;
+    using Dapper;
     using Microsoft.Extensions.Logging;
     using Wihngo.Data;
+    using Wihngo.Models;
     using Wihngo.Services.Interfaces;
 
     public class NotificationCleanupJob
     {
         private readonly AppDbContext _db;
+        private readonly IDbConnectionFactory _dbFactory;
         private readonly ILogger<NotificationCleanupJob> _logger;
 
-        public NotificationCleanupJob(AppDbContext db, ILogger<NotificationCleanupJob> logger)
+        public NotificationCleanupJob(
+            AppDbContext db, 
+            IDbConnectionFactory dbFactory,
+            ILogger<NotificationCleanupJob> logger)
         {
             _db = db;
+            _dbFactory = dbFactory;
             _logger = logger;
         }
 
@@ -28,9 +35,12 @@ namespace Wihngo.BackgroundJobs
             {
                 var cutoffDate = DateTime.UtcNow.AddDays(-30);
                 
-                var oldNotifications = await _db.Notifications
-                    .Where(n => n.IsRead && n.ReadAt < cutoffDate)
-                    .ToListAsync();
+                // Use raw SQL to get old notifications
+                var sql = @"
+                    SELECT * FROM notifications
+                    WHERE is_read = true AND read_at < @CutoffDate";
+                
+                var oldNotifications = await _dbFactory.QueryListAsync<Notification>(sql, new { CutoffDate = cutoffDate });
 
                 if (oldNotifications.Any())
                 {
@@ -55,9 +65,12 @@ namespace Wihngo.BackgroundJobs
             {
                 var cutoffDate = DateTime.UtcNow.AddDays(-90);
                 
-                var veryOldNotifications = await _db.Notifications
-                    .Where(n => n.CreatedAt < cutoffDate)
-                    .ToListAsync();
+                // Use raw SQL to get very old notifications
+                var sql = @"
+                    SELECT * FROM notifications
+                    WHERE created_at < @CutoffDate";
+                
+                var veryOldNotifications = await _dbFactory.QueryListAsync<Notification>(sql, new { CutoffDate = cutoffDate });
 
                 if (veryOldNotifications.Any())
                 {

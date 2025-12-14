@@ -1,9 +1,10 @@
 using Hangfire;
-using Microsoft.EntityFrameworkCore;
+using Dapper;
 using Wihngo.Data;
 using Wihngo.Services.Interfaces;
 
 namespace Wihngo.BackgroundJobs;
+using System;
 
 public class PaymentMonitorJob
 {
@@ -460,13 +461,22 @@ public class PaymentMonitorJob
 
         try
         {
-            var expiredCount = await _context.CryptoPaymentRequests
-                .Where(p => p.Status == "pending" && p.ExpiresAt < DateTime.UtcNow)
-                .ExecuteUpdateAsync(p => p
-                    .SetProperty(x => x.Status, "expired")
-                    .SetProperty(x => x.UpdatedAt, DateTime.UtcNow));
-
-            _logger.LogInformation($"Expired {expiredCount} payments");
+            // Use raw SQL UPDATE with Dapper
+            var sql = @"
+                UPDATE crypto_payment_requests 
+                SET status = 'expired', updated_at = @Now
+                WHERE status = 'pending' AND expires_at < @Now";
+            
+            var connection = await _context.GetDbFactory().CreateOpenConnectionAsync();
+            try
+            {
+                var expiredCount = await connection.ExecuteAsync(sql, new { Now = DateTime.UtcNow });
+                _logger.LogInformation($"Expired {expiredCount} payments");
+            }
+            finally
+            {
+                await connection.DisposeAsync();
+            }
         }
         catch (Exception ex)
         {

@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using Wihngo.Data;
 using Wihngo.Dtos;
@@ -25,6 +24,16 @@ public class CryptoPaymentController : ControllerBase
         _paymentService = paymentService;
         _context = context;
         _logger = logger;
+    }
+
+    private Guid GetUserId()
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(userId, out var userGuid))
+        {
+            throw new UnauthorizedAccessException("Invalid user ID in token");
+        }
+        return userGuid;
     }
 
     /// <summary>
@@ -450,7 +459,7 @@ public class CryptoPaymentController : ControllerBase
                                 _logger.LogInformation($"[CheckStatus] Payment {payment.Id} completed - Status: {previousStatus} -> {payment.Status}");
                             }
                         }
-                        else
+                        else if (payment.Status != "confirming")
                         {
                             payment.Status = "confirming";
                             payment.UpdatedAt = DateTime.UtcNow;
@@ -462,12 +471,12 @@ public class CryptoPaymentController : ControllerBase
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error checking blockchain status for payment {PaymentId}", paymentId);
+                    _logger.LogError(ex, "Error checking blockchain status in CheckPaymentStatus for {PaymentId}", paymentId);
                     // Don't fail the request, just return current status
                 }
             }
 
-            // Reload to get updated status
+            // Reload to ensure we have the latest data
             await _context.Entry(payment).ReloadAsync();
 
             return Ok(new PaymentResponseDto
@@ -502,15 +511,5 @@ public class CryptoPaymentController : ControllerBase
             _logger.LogError(ex, "Error checking payment status {PaymentId}", paymentId);
             return StatusCode(500, new { error = "Failed to check payment status" });
         }
-    }
-
-    private Guid GetUserId()
-    {
-        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (string.IsNullOrEmpty(userIdClaim))
-        {
-            throw new UnauthorizedAccessException("User not authenticated");
-        }
-        return Guid.Parse(userIdClaim);
     }
 }
