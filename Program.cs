@@ -59,8 +59,13 @@ builder.Logging.AddFilter("Wihngo.Controllers.WebhooksController", LogLevel.Info
 
 // ? Enable auth and security logs
 builder.Logging.AddFilter("Wihngo.Controllers.AuthController", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Controllers.UsersController", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Controllers.StoriesController", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Services.TokenService", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Middleware.RateLimitingMiddleware", LogLevel.Information);
+// Add ASP.NET Core authentication logs
+builder.Logging.AddFilter("Microsoft.AspNetCore.Authentication", LogLevel.Information);
+builder.Logging.AddFilter("Microsoft.AspNetCore.Authorization", LogLevel.Information);
 
 // ? Enable media/S3 logs
 builder.Logging.AddFilter("Wihngo.Services.S3Service", LogLevel.Information);
@@ -210,6 +215,10 @@ builder.Services.AddDbContext<AppDbContext>(options =>
         
         // Set command timeout
         npgsqlOptions.CommandTimeout(30);
+        
+        // Use split query behavior for all queries with multiple includes
+        // This prevents PostgreSQL "WITHIN GROUP is required for ordered-set aggregate" errors
+        npgsqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
     })
     .UseSnakeCaseNamingConvention();
     
@@ -655,9 +664,51 @@ Console.WriteLine("════════════════════�
 Console.WriteLine("🚀 APPLICATION STARTING");
 Console.WriteLine("═══════════════════════════════════════════════");
 Console.WriteLine($"Environment: {app.Environment.EnvironmentName}");
-Console.WriteLine($"API Documentation: {(app.Environment.IsDevelopment() ? "https://localhost:5001/scalar/v1" : "Disabled")}");
-Console.WriteLine($"OpenAPI Spec: {(app.Environment.IsDevelopment() ? "https://localhost:5001/openapi/v1.json" : "Disabled")}");
-Console.WriteLine($"Hangfire Dashboard: {(isDatabaseAvailable ? "https://localhost:5001/hangfire" : "Disabled")}");
+Console.WriteLine($"API Documentation: {(app.Environment.IsDevelopment() ? "https://localhost:7297/scalar/v1" : "Disabled")}");
+Console.WriteLine($"OpenAPI Spec: {(app.Environment.IsDevelopment() ? "https://localhost:7297/openapi/v1.json" : "Disabled")}");
+Console.WriteLine($"Hangfire Dashboard: {(isDatabaseAvailable ? "https://localhost:7297/hangfire" : "Disabled")}");
+Console.WriteLine("");
+
+if (app.Environment.IsDevelopment())
+{
+    Console.WriteLine("🔑 TEST USER CREDENTIALS (Development Only):");
+    Console.WriteLine("   Email: alice@example.com");
+    Console.WriteLine("   Password: Password123!");
+    Console.WriteLine("");
+    Console.WriteLine("📊 GET USER STATS:");
+    Console.WriteLine("   All Users: GET http://localhost:5162/api/dev/users");
+    Console.WriteLine("   Quick Creds: GET http://localhost:5162/api/dev/test-credentials");
+    Console.WriteLine("   User Details: GET http://localhost:5162/api/dev/users/{email}");
+    Console.WriteLine("");
+}
+
+Console.WriteLine("📱 MOBILE APP CONNECTION URLS:");
+Console.WriteLine("   For localhost/emulator: https://localhost:7297/api/");
+
+// Display network IP addresses for mobile device connections
+try
+{
+    var hostName = System.Net.Dns.GetHostName();
+    var hostEntry = System.Net.Dns.GetHostEntry(hostName);
+    var localIPs = hostEntry.AddressList
+        .Where(ip => ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        .ToList();
+    
+    if (localIPs.Any())
+    {
+        Console.WriteLine("   For mobile devices on same network:");
+        foreach (var ip in localIPs)
+        {
+            Console.WriteLine($"   - https://{ip}:7297/api/");
+            Console.WriteLine($"     (or http://{ip}:5162/api/)");
+        }
+    }
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"   ⚠️ Could not determine network IP: {ex.Message}");
+}
+
 Console.WriteLine("═══════════════════════════════════════════════");
 Console.WriteLine("");
 

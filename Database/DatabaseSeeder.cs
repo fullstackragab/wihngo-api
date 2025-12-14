@@ -333,14 +333,15 @@ public static class DatabaseSeeder
 
         var storyTemplates = new[]
         {
-            ("First Sighting!", "Today we saw {name} for the very first time! What an amazing moment. They came to the feeder around 7am and stayed for almost 10 minutes."),
-            ("Favorite Flower", "{name} has discovered the salvia patch! Watching them dart between the red blooms is absolutely mesmerizing."),
-            ("Territorial Display", "Witnessed {name} performing an incredible territorial display today. The dive was breathtaking - they must have reached 60mph!"),
-            ("Bath Time", "Caught {name} taking a bath in the fountain! The water droplets sparkled on their feathers like diamonds."),
-            ("Nest Building", "Exciting news! {name} is building a nest in our Japanese maple tree. We're being very careful not to disturb them.")
+            ("First Sighting!", "Today we saw {name} for the very first time! What an amazing moment. They came to the feeder around 7am and stayed for almost 10 minutes.", StoryMode.NewBeginning),
+            ("Favorite Flower", "{name} has discovered the salvia patch! Watching them dart between the red blooms is absolutely mesmerizing.", StoryMode.PeacefulMoment),
+            ("Territorial Display", "Witnessed {name} performing an incredible territorial display today. The dive was breathtaking - they must have reached 60mph!", StoryMode.FunnyMoment),
+            ("Bath Time", "Caught {name} taking a bath in the fountain! The water droplets sparkled on their feathers like diamonds.", StoryMode.DailyLife),
+            ("Nest Building", "Exciting news! {name} is building a nest in our Japanese maple tree. We're being very careful not to disturb them.", StoryMode.ProgressAndWins)
         };
 
         var stories = new List<Story>();
+        var storyBirds = new List<StoryBird>();
         var random = new Random(42);
 
         foreach (var bird in birds.Take(7)) // Add stories for first 7 birds
@@ -349,21 +350,40 @@ public static class DatabaseSeeder
             for (int i = 0; i < storyCount; i++)
             {
                 var template = storyTemplates[random.Next(storyTemplates.Length)];
-                stories.Add(new Story
+                var storyId = Guid.NewGuid();
+                
+                // Create story with optional mode (sometimes null)
+                var story = new Story
                 {
-                    StoryId = Guid.NewGuid(),
-                    BirdId = bird.BirdId,
+                    StoryId = storyId,
                     AuthorId = bird.OwnerId,
                     Content = template.Item2.Replace("{name}", bird.Name),
+                    Mode = random.Next(100) < 80 ? template.Item3 : null, // 80% have mood, 20% don't
                     ImageUrl = random.Next(100) < 50 ? $"https://example.com/story_{Guid.NewGuid()}.jpg" : null,
+                    VideoUrl = random.Next(100) < 20 ? $"https://example.com/story_{Guid.NewGuid()}.mp4" : null,
                     CreatedAt = DateTime.UtcNow.AddDays(-random.Next(1, 30))
+                };
+                
+                stories.Add(story);
+                
+                // Create StoryBird relationship
+                storyBirds.Add(new StoryBird
+                {
+                    StoryBirdId = Guid.NewGuid(),
+                    StoryId = storyId,
+                    BirdId = bird.BirdId,
+                    CreatedAt = story.CreatedAt
                 });
             }
         }
 
         await context.Stories.AddRangeAsync(stories);
         await context.SaveChangesAsync();
-        logger.LogInformation($"? Seeded {stories.Count} stories");
+        
+        await context.StoryBirds.AddRangeAsync(storyBirds);
+        await context.SaveChangesAsync();
+        
+        logger.LogInformation($"? Seeded {stories.Count} stories with {storyBirds.Count} story-bird relationships");
     }
 
     private static async Task SeedNotificationsAsync(AppDbContext context, ILogger logger, List<User> users)

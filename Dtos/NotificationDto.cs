@@ -20,4 +20,9 @@ namespace Wihngo.Dtos
         public int GroupCount { get; set; }
         public DateTime CreatedAt { get; set; }
     }
+
+    public class MarkAsReadDto
+    {
+        public Guid NotificationId { get; set; }
+    }
 }

@@ -13,7 +13,7 @@ namespace Wihngo.Services.Interfaces
         /// <summary>
         /// Send push notification to specific device token
         /// </summary>
-        Task SendToDeviceAsync(string pushToken, string title, string message, object? data = null);
+        Task SendToDeviceAsync(string pushToken, string title, string message, object? data = null, int? badge = null);
 
         /// <summary>
         /// Validate if a push token is valid (Expo format)

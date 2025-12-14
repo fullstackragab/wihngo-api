@@ -38,20 +38,6 @@ namespace Wihngo.Mapping
                 .ForMember(dest => dest.LovedBy, opt => opt.MapFrom(src => src.LovedCount))
                 .ForMember(dest => dest.SupportedBy, opt => opt.MapFrom(src => src.SupportedCount));
 
-            CreateMap<Story, StorySummaryDto>()
-                .ForMember(dest => dest.Title, opt => opt.MapFrom(src => src.Content.Length > 30 ? src.Content.Substring(0, 30) + "..." : src.Content))
-                .ForMember(dest => dest.Bird, opt => opt.MapFrom(src => src.Bird != null ? src.Bird.Name : string.Empty))
-                .ForMember(dest => dest.Date, opt => opt.MapFrom(src => src.CreatedAt.ToString("MMMM d, yyyy")))
-                .ForMember(dest => dest.Preview, opt => opt.MapFrom(src => src.Content.Length > 140 ? src.Content.Substring(0, 140) + "..." : src.Content))
-                .ForMember(dest => dest.ImageS3Key, opt => opt.MapFrom(src => src.ImageUrl))
-                .ForMember(dest => dest.ImageUrl, opt => opt.Ignore()); // Set by controller
-
-            CreateMap<Story, StoryReadDto>()
-                .ForMember(dest => dest.Bird, opt => opt.MapFrom(src => src.Bird))
-                .ForMember(dest => dest.Author, opt => opt.MapFrom(src => src.Author))
-                .ForMember(dest => dest.ImageS3Key, opt => opt.MapFrom(src => src.ImageUrl))
-                .ForMember(dest => dest.ImageUrl, opt => opt.Ignore()); // Set by controller
-
             CreateMap<Bird, BirdSummaryDto>()
                 .ForMember(dest => dest.BirdId, opt => opt.MapFrom(src => src.BirdId))
                 .ForMember(dest => dest.Name, opt => opt.MapFrom(src => src.Name))
