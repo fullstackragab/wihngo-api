@@ -33,10 +33,6 @@ namespace Wihngo.Models
         [MaxLength(1000)]
         public string ImageUrl { get; set; } = string.Empty;
 
-        [Required]
-        [MaxLength(1000)]
-        public string VideoUrl { get; set; } = string.Empty;
-
         public int LovedCount { get; set; } = 0;
 
         public int SupportedCount { get; set; } = 0;

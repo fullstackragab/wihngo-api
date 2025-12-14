@@ -14,7 +14,6 @@
     using Wihngo.Models;
     using Wihngo.Models.Enums;
     using Wihngo.Services.Interfaces;
-    using Wihngo.Extensions;
 
     [Route("api/[controller]")]
     [ApiController]
@@ -30,7 +29,7 @@
         public StoriesController(
             AppDbContext db,
             IDbConnectionFactory dbFactory,
-            IMapper mapper, 
+            IMapper mapper,
             INotificationService notificationService,
             IS3Service s3Service,
             ILogger<StoriesController> logger)
@@ -62,89 +61,66 @@
                 // Get total count
                 var total = await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM stories");
 
-                // Get stories with pagination
+                // Get stories with bird name - direct join, no aggregation needed
                 var sql = @"
-                    SELECT s.*, 
-                           u.user_id as Author_UserId, u.name as Author_Name, u.email as Author_Email,
-                           sb.story_bird_id, sb.bird_id, sb.created_at as StoryBird_CreatedAt,
-                           b.bird_id as Bird_BirdId, b.name as Bird_Name, b.species as Bird_Species
+                    SELECT 
+                        s.story_id,
+                        s.content,
+                        s.mode,
+                        s.image_url,
+                        s.video_url,
+                        s.created_at,
+                        b.name as bird_name
                     FROM stories s
-                    LEFT JOIN users u ON s.author_id = u.user_id
-                    LEFT JOIN story_birds sb ON s.story_id = sb.story_id
-                    LEFT JOIN birds b ON sb.bird_id = b.bird_id
+                    JOIN birds b ON s.bird_id = b.bird_id
                     ORDER BY s.created_at DESC
                     OFFSET @Offset LIMIT @Limit";
 
-                var storyDict = new Dictionary<Guid, Story>();
-                
-                await connection.QueryAsync<Story, User, StoryBird, Bird, Story>(
-                    sql,
-                    (story, author, storyBird, bird) =>
-                    {
-                        if (!storyDict.TryGetValue(story.StoryId, out var storyEntry))
-                        {
-                            storyEntry = story;
-                            storyEntry.Author = author;
-                            storyEntry.StoryBirds = new List<StoryBird>();
-                            storyDict.Add(story.StoryId, storyEntry);
-                        }
+                var stories = await connection.QueryAsync<dynamic>(sql, new { Offset = (page - 1) * pageSize, Limit = pageSize });
+                var dtoItems = new List<StorySummaryDto>(stories.Count());
 
-                        if (storyBird != null && bird != null)
-                        {
-                            storyBird.Bird = bird;
-                            if (!storyEntry.StoryBirds.Any(sb => sb.StoryBirdId == storyBird.StoryBirdId))
-                            {
-                                storyEntry.StoryBirds.Add(storyBird);
-                            }
-                        }
-
-                        return storyEntry;
-                    },
-                    new { Offset = (page - 1) * pageSize, Limit = pageSize },
-                    splitOn: "Author_UserId,story_bird_id,Bird_BirdId");
-
-                var items = storyDict.Values.ToList();
-                var dtoItems = new List<StorySummaryDto>();
-
-                foreach (var story in items)
+                foreach (var story in stories)
                 {
+                    string content = story.content ?? string.Empty;
+                    string birdName = story.bird_name ?? string.Empty;
+
                     var dto = new StorySummaryDto
                     {
-                        StoryId = story.StoryId,
-                        Birds = story.StoryBirds
-                            .OrderBy(sb => sb.CreatedAt)
-                            .Where(sb => sb.Bird != null)
-                            .Select(sb => sb.Bird!.Name)
-                            .ToList(),
-                        Mode = story.Mode,
-                        Date = story.CreatedAt.ToString("MMMM d, yyyy"),
-                        Preview = story.Content.Length > 140 ? story.Content.Substring(0, 140) + "..." : story.Content,
-                        ImageS3Key = story.ImageUrl,
-                        VideoS3Key = story.VideoUrl
+                        StoryId = (Guid)story.story_id,
+                        Birds = string.IsNullOrWhiteSpace(birdName) 
+                            ? new List<string>() 
+                            : new List<string> { birdName },
+                        Mode = (StoryMode?)story.mode,
+                        Date = ((DateTime)story.created_at).ToString("MMMM d, yyyy"),
+                        Preview = content.Length > 140 ? content.Substring(0, 140) + "..." : content,
+                        ImageS3Key = story.image_url,
+                        VideoS3Key = story.video_url
                     };
 
                     // Generate download URLs
-                    if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+                    string? imageUrl = story.image_url;
+                    if (!string.IsNullOrWhiteSpace(imageUrl))
                     {
                         try
                         {
-                            dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.ImageUrl);
+                            dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(imageUrl);
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogWarning(ex, "Failed to generate download URL for story image {StoryId}", story.StoryId);
+                            _logger.LogWarning(ex, "Failed to generate download URL for story image {StoryId}", dto.StoryId);
                         }
                     }
 
-                    if (!string.IsNullOrWhiteSpace(story.VideoUrl))
+                    string? videoUrl = story.video_url;
+                    if (!string.IsNullOrWhiteSpace(videoUrl))
                     {
                         try
                         {
-                            dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(story.VideoUrl);
+                            dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(videoUrl);
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogWarning(ex, "Failed to generate video download URL for story {StoryId}", story.StoryId);
+                            _logger.LogWarning(ex, "Failed to generate video download URL for story {StoryId}", dto.StoryId);
                         }
                     }
 
@@ -172,8 +148,8 @@
         /// </summary>
         [HttpGet("user/{userId}")]
         public async Task<ActionResult<PagedResult<StorySummaryDto>>> GetUserStories(
-            Guid userId, 
-            [FromQuery] int page = 1, 
+            Guid userId,
+            [FromQuery] int page = 1,
             [FromQuery] int pageSize = 10)
         {
             if (page < 1) page = 1;
@@ -187,90 +163,67 @@
                     "SELECT COUNT(*) FROM stories WHERE author_id = @UserId",
                     new { UserId = userId });
 
-                // Get stories with pagination
+                // Get stories with bird name - direct join
                 var sql = @"
-                    SELECT s.*, 
-                           u.user_id as Author_UserId, u.name as Author_Name, u.email as Author_Email,
-                           sb.story_bird_id, sb.bird_id, sb.created_at as StoryBird_CreatedAt,
-                           b.bird_id as Bird_BirdId, b.name as Bird_Name, b.species as Bird_Species
+                    SELECT 
+                        s.story_id,
+                        s.content,
+                        s.mode,
+                        s.image_url,
+                        s.video_url,
+                        s.created_at,
+                        b.name as bird_name
                     FROM stories s
-                    LEFT JOIN users u ON s.author_id = u.user_id
-                    LEFT JOIN story_birds sb ON s.story_id = sb.story_id
-                    LEFT JOIN birds b ON sb.bird_id = b.bird_id
+                    JOIN birds b ON s.bird_id = b.bird_id
                     WHERE s.author_id = @UserId
                     ORDER BY s.created_at DESC
                     OFFSET @Offset LIMIT @Limit";
 
-                var storyDict = new Dictionary<Guid, Story>();
-                
-                await connection.QueryAsync<Story, User, StoryBird, Bird, Story>(
-                    sql,
-                    (story, author, storyBird, bird) =>
-                    {
-                        if (!storyDict.TryGetValue(story.StoryId, out var storyEntry))
-                        {
-                            storyEntry = story;
-                            storyEntry.Author = author;
-                            storyEntry.StoryBirds = new List<StoryBird>();
-                            storyDict.Add(story.StoryId, storyEntry);
-                        }
+                var stories = await connection.QueryAsync<dynamic>(sql, new { UserId = userId, Offset = (page - 1) * pageSize, Limit = pageSize });
+                var dtoItems = new List<StorySummaryDto>(stories.Count());
 
-                        if (storyBird != null && bird != null)
-                        {
-                            storyBird.Bird = bird;
-                            if (!storyEntry.StoryBirds.Any(sb => sb.StoryBirdId == storyBird.StoryBirdId))
-                            {
-                                storyEntry.StoryBirds.Add(storyBird);
-                            }
-                        }
-
-                        return storyEntry;
-                    },
-                    new { UserId = userId, Offset = (page - 1) * pageSize, Limit = pageSize },
-                    splitOn: "Author_UserId,story_bird_id,Bird_BirdId");
-
-                var items = storyDict.Values.ToList();
-                var dtoItems = new List<StorySummaryDto>();
-
-                foreach (var story in items)
+                foreach (var story in stories)
                 {
+                    string content = story.content ?? string.Empty;
+                    string birdName = story.bird_name ?? string.Empty;
+
                     var dto = new StorySummaryDto
                     {
-                        StoryId = story.StoryId,
-                        Birds = story.StoryBirds
-                            .OrderBy(sb => sb.CreatedAt)
-                            .Where(sb => sb.Bird != null)
-                            .Select(sb => sb.Bird!.Name)
-                            .ToList(),
-                        Mode = story.Mode,
-                        Date = story.CreatedAt.ToString("MMMM d, yyyy"),
-                        Preview = story.Content.Length > 140 ? story.Content.Substring(0, 140) + "..." : story.Content,
-                        ImageS3Key = story.ImageUrl,
-                        VideoS3Key = story.VideoUrl
+                        StoryId = (Guid)story.story_id,
+                        Birds = string.IsNullOrWhiteSpace(birdName) 
+                            ? new List<string>() 
+                            : new List<string> { birdName },
+                        Mode = (StoryMode?)story.mode,
+                        Date = ((DateTime)story.created_at).ToString("MMMM d, yyyy"),
+                        Preview = content.Length > 140 ? content.Substring(0, 140) + "..." : content,
+                        ImageS3Key = story.image_url,
+                        VideoS3Key = story.video_url
                     };
 
                     // Generate download URLs
-                    if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+                    string? imageUrl = story.image_url;
+                    if (!string.IsNullOrWhiteSpace(imageUrl))
                     {
                         try
                         {
-                            dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.ImageUrl);
+                            dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(imageUrl);
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogWarning(ex, "Failed to generate download URL for story {StoryId}", story.StoryId);
+                            _logger.LogWarning(ex, "Failed to generate download URL for story {StoryId}", dto.StoryId);
                         }
                     }
 
-                    if (!string.IsNullOrWhiteSpace(story.VideoUrl))
+                    string? videoUrl = story.video_url;
+                    if (!string.IsNullOrWhiteSpace(videoUrl))
                     {
                         try
                         {
-                            dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(story.VideoUrl);
+                            dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(videoUrl);
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogWarning(ex, "Failed to generate video download URL for story {StoryId}", story.StoryId);
+                            _logger.LogWarning(ex, "Failed to generate video download URL for story {StoryId}", dto.StoryId);
                         }
                     }
 
@@ -299,7 +252,7 @@
         [HttpGet("my-stories")]
         [Authorize]
         public async Task<ActionResult<PagedResult<StorySummaryDto>>> GetMyStories(
-            [FromQuery] int page = 1, 
+            [FromQuery] int page = 1,
             [FromQuery] int pageSize = 10)
         {
             var userId = GetUserIdClaim();
@@ -314,85 +267,74 @@
             var connection = await _dbFactory.CreateOpenConnectionAsync();
             try
             {
+                // Get story with bird data - direct join, no junction table
                 var sql = @"
-                    SELECT s.*, 
-                           u.user_id as Author_UserId, u.name as Author_Name, u.email as Author_Email,
-                           sb.story_bird_id, sb.bird_id, sb.created_at as StoryBird_CreatedAt,
-                           b.bird_id as Bird_BirdId, b.name as Bird_Name, b.species as Bird_Species, 
-                           b.image_url as Bird_ImageUrl, b.video_url as Bird_VideoUrl, b.tagline as Bird_Tagline,
-                           b.loved_count as Bird_LovedCount, b.supported_count as Bird_SupportedCount, b.owner_id as Bird_OwnerId
+                    SELECT 
+                        s.story_id,
+                        s.content,
+                        s.mode,
+                        s.image_url,
+                        s.video_url,
+                        s.created_at,
+                        s.author_id,
+                        u.user_id as author_user_id,
+                        u.name as author_name,
+                        b.bird_id,
+                        b.name as bird_name,
+                        b.species,
+                        b.image_url as bird_image_url,
+                        b.tagline,
+                        b.loved_count,
+                        b.supported_count,
+                        b.owner_id
                     FROM stories s
                     LEFT JOIN users u ON s.author_id = u.user_id
-                    LEFT JOIN story_birds sb ON s.story_id = sb.story_id
-                    LEFT JOIN birds b ON sb.bird_id = b.bird_id
+                    LEFT JOIN birds b ON s.bird_id = b.bird_id
                     WHERE s.story_id = @StoryId";
 
-                Story? story = null;
-                
-                await connection.QueryAsync<Story, User, StoryBird, Bird, Story>(
-                    sql,
-                    (s, author, storyBird, bird) =>
-                    {
-                        if (story == null)
-                        {
-                            story = s;
-                            story.Author = author;
-                            story.StoryBirds = new List<StoryBird>();
-                        }
-
-                        if (storyBird != null && bird != null)
-                        {
-                            storyBird.Bird = bird;
-                            if (!story.StoryBirds.Any(sb => sb.StoryBirdId == storyBird.StoryBirdId))
-                            {
-                                story.StoryBirds.Add(storyBird);
-                            }
-                        }
-
-                        return story;
-                    },
-                    new { StoryId = id },
-                    splitOn: "Author_UserId,story_bird_id,Bird_BirdId");
+                var story = await connection.QueryFirstOrDefaultAsync<dynamic>(sql, new { StoryId = id });
 
                 if (story == null) return NotFound();
 
+                // Build DTO
                 var dto = new StoryReadDto
                 {
-                    StoryId = story.StoryId,
-                    Content = story.Content,
-                    Mode = story.Mode,
-                    ImageS3Key = story.ImageUrl,
-                    VideoS3Key = story.VideoUrl,
-                    CreatedAt = story.CreatedAt,
-                    Author = story.Author != null ? new UserSummaryDto
+                    StoryId = (Guid)story.story_id,
+                    Content = story.content ?? string.Empty,
+                    Mode = (StoryMode?)story.mode,
+                    ImageS3Key = story.image_url,
+                    VideoS3Key = story.video_url,
+                    CreatedAt = (DateTime)story.created_at,
+                    Author = story.author_user_id != null ? new UserSummaryDto
                     {
-                        UserId = story.Author.UserId,
-                        Name = story.Author.Name
+                        UserId = (Guid)story.author_user_id,
+                        Name = story.author_name ?? string.Empty
                     } : new UserSummaryDto(),
-                    Birds = story.StoryBirds
-                        .OrderBy(sb => sb.CreatedAt)
-                        .Where(sb => sb.Bird != null)
-                        .Select(sb => new BirdSummaryDto
-                        {
-                            BirdId = sb.Bird!.BirdId,
-                            Name = sb.Bird.Name,
-                            Species = sb.Bird.Species,
-                            ImageS3Key = sb.Bird.ImageUrl,
-                            VideoS3Key = sb.Bird.VideoUrl,
-                            Tagline = sb.Bird.Tagline,
-                            LovedBy = sb.Bird.LovedCount,
-                            SupportedBy = sb.Bird.SupportedCount,
-                            OwnerId = sb.Bird.OwnerId
-                        })
-                        .ToList()
+                    Birds = new List<BirdSummaryDto>()
                 };
 
+                // Add the single bird if it exists
+                if (story.bird_id != null)
+                {
+                    dto.Birds.Add(new BirdSummaryDto
+                    {
+                        BirdId = (Guid)story.bird_id,
+                        Name = story.bird_name ?? string.Empty,
+                        Species = story.species,
+                        ImageS3Key = story.bird_image_url,
+                        Tagline = story.tagline,
+                        LovedBy = story.loved_count ?? 0,
+                        SupportedBy = story.supported_count ?? 0,
+                        OwnerId = (Guid)story.owner_id
+                    });
+                }
+
                 // Generate download URLs
-                if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+                if (!string.IsNullOrWhiteSpace(story.image_url))
                 {
                     try
                     {
-                        dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.ImageUrl);
+                        dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.image_url);
                     }
                     catch (Exception ex)
                     {
@@ -400,11 +342,11 @@
                     }
                 }
 
-                if (!string.IsNullOrWhiteSpace(story.VideoUrl))
+                if (!string.IsNullOrWhiteSpace(story.video_url))
                 {
                     try
                     {
-                        dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(story.VideoUrl);
+                        dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(story.video_url);
                     }
                     catch (Exception ex)
                     {
@@ -412,7 +354,7 @@
                     }
                 }
 
-                // Generate download URLs for bird images and videos
+                // Generate download URL for bird image
                 foreach (var bird in dto.Birds)
                 {
                     if (!string.IsNullOrWhiteSpace(bird.ImageS3Key))
@@ -420,14 +362,6 @@
                         try
                         {
                             bird.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.ImageS3Key);
-                        }
-                        catch { }
-                    }
-                    if (!string.IsNullOrWhiteSpace(bird.VideoS3Key))
-                    {
-                        try
-                        {
-                            bird.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(bird.VideoS3Key);
                         }
                         catch { }
                     }
@@ -450,25 +384,21 @@
             var userId = GetUserIdClaim();
             if (userId == null) return Unauthorized();
 
-            // Validate that at least one bird is selected
-            if (dto.BirdIds == null || dto.BirdIds.Count == 0)
-            {
-                return BadRequest(new { message = "At least one bird must be selected" });
-            }
-
             // Validate that only ONE media type is provided (image OR video, not both)
             if (!string.IsNullOrWhiteSpace(dto.ImageS3Key) && !string.IsNullOrWhiteSpace(dto.VideoS3Key))
             {
                 return BadRequest(new { message = "Story can have either an image or a video, not both" });
             }
 
-            // Verify all birds exist
-            var birds = await _db.Birds.Where(b => dto.BirdIds.Contains(b.BirdId)).ToListAsync();
-            if (birds.Count != dto.BirdIds.Count)
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+            // Verify bird exists using raw SQL
+            var birdCheckSql = "SELECT bird_id FROM birds WHERE bird_id = @BirdId";
+            var foundBirdId = await connection.QueryFirstOrDefaultAsync<Guid?>(birdCheckSql, new { BirdId = dto.BirdId });
+
+            if (foundBirdId == null)
             {
-                var foundIds = birds.Select(b => b.BirdId).ToList();
-                var missingIds = dto.BirdIds.Except(foundIds).ToList();
-                return NotFound(new { message = "Some birds not found", missingBirdIds = missingIds });
+                return NotFound(new { message = "Bird not found", birdId = dto.BirdId });
             }
 
             // Verify image exists in S3 if provided
@@ -491,178 +421,77 @@
                 }
             }
 
-            var story = new Story
+            var storyId = Guid.NewGuid();
+            var now = DateTime.UtcNow;
+
+            // Insert story using raw SQL with bird_id foreign key
+            var insertStorySql = @"
+                INSERT INTO stories (story_id, author_id, bird_id, content, mode, image_url, video_url, created_at)
+                VALUES (@StoryId, @AuthorId, @BirdId, @Content, @Mode, @ImageUrl, @VideoUrl, @CreatedAt)";
+
+            await connection.ExecuteAsync(insertStorySql, new
             {
-                StoryId = Guid.NewGuid(),
+                StoryId = storyId,
                 AuthorId = userId.Value,
+                BirdId = dto.BirdId,
                 Content = dto.Content,
-                Mode = dto.Mode, // Optional - can be null
+                Mode = dto.Mode,
                 ImageUrl = dto.ImageS3Key,
                 VideoUrl = dto.VideoS3Key,
-                CreatedAt = DateTime.UtcNow
-            };
+                CreatedAt = now
+            });
 
-            _db.Stories.Add(story);
-            await _db.SaveChangesAsync();
+            _logger.LogInformation("Story created: {StoryId} by user {UserId} for bird {BirdId}",
+                storyId, userId.Value, dto.BirdId);
 
-            // Create story-bird relationships
-            foreach (var birdId in dto.BirdIds)
+            // Notify users who loved this bird about new story
+            _ = Task.Run(async () =>
             {
-                var storyBird = new StoryBird
+                try
                 {
-                    StoryBirdId = Guid.NewGuid(),
-                    StoryId = story.StoryId,
-                    BirdId = birdId,
-                    CreatedAt = DateTime.UtcNow
-                };
-                _db.StoryBirds.Add(storyBird);
-            }
-            await _db.SaveChangesAsync();
+                    // Get bird name
+                    var birdNameSql = "SELECT name FROM birds WHERE bird_id = @BirdId";
+                    var birdName = await connection.QueryFirstOrDefaultAsync<string>(birdNameSql, new { BirdId = dto.BirdId });
 
-            _logger.LogInformation("Story created: {StoryId} by user {UserId} with {BirdCount} birds", 
-                story.StoryId, userId.Value, dto.BirdIds.Count);
-
-            // Load created story with relationships
-            var created = await _db.Stories
-                .Include(s => s.StoryBirds)
-                    .ThenInclude<Story, StoryBird, Bird>(sb => sb.Bird)
-                .Include(s => s.Author)
-                .FirstOrDefaultAsync(s => s.StoryId == story.StoryId);
-
-            // Notify users who loved these birds about new story
-            if (created?.StoryBirds != null && created.StoryBirds.Any())
-            {
-                _ = Task.Run(async () =>
-                {
-                    try
+                    if (!string.IsNullOrEmpty(birdName))
                     {
-                        var birdIds = created.StoryBirds.Select(sb => sb.BirdId).ToList();
-                        var birdNames = created.StoryBirds
-                            .Where(sb => sb.Bird != null)
-                            .Select(sb => sb.Bird!.Name)
-                            .ToList();
-                        var birdNamesStr = string.Join(", ", birdNames);
+                        // Use raw SQL to get lover user IDs
+                        var loversSql = @"
+                            SELECT DISTINCT user_id 
+                            FROM loves 
+                            WHERE bird_id = @BirdId AND user_id != @AuthorId";
 
-                        try
+                        var lovers = await connection.QueryAsync<Guid>(loversSql, new
                         {
-                            // Use raw SQL to get lover user IDs
-                            var loversSql = @"
-                                SELECT DISTINCT user_id 
-                                FROM loves 
-                                WHERE bird_id = ANY(@BirdIds) AND user_id != @AuthorId";
-                        
-                            var lovers = await _dbFactory.QueryListAsync<Guid>(loversSql, new 
-                            { 
-                                BirdIds = birdIds.ToArray(), 
-                                AuthorId = story.AuthorId 
-                            });
+                            BirdId = dto.BirdId,
+                            AuthorId = userId.Value
+                        });
 
-                            foreach (var loverId in lovers)
+                        foreach (var loverId in lovers)
+                        {
+                            await _notificationService.CreateNotificationAsync(new CreateNotificationDto
                             {
-                                await _notificationService.CreateNotificationAsync(new CreateNotificationDto
-                                {
-                                    UserId = loverId,
-                                    Type = NotificationType.NewStory,
-                                    Title = "Book New story: " + birdNamesStr,
-                                    Message = $"{birdNamesStr} has a new story to share!",
-                                    Priority = NotificationPriority.Low,
-                                    Channels = NotificationChannel.InApp | NotificationChannel.Push,
-                                    DeepLink = $"/story/{story.StoryId}",
-                                    StoryId = story.StoryId,
-                                    ActorUserId = story.AuthorId
-                                });
-                            }
-                        }
-                        catch
-                        {
-                            // Ignore notification errors
+                                UserId = loverId,
+                                Type = NotificationType.NewStory,
+                                Title = "New story: " + birdName,
+                                Message = $"{birdName} has a new story to share!",
+                                Priority = NotificationPriority.Low,
+                                Channels = NotificationChannel.InApp | NotificationChannel.Push,
+                                DeepLink = $"/story/{storyId}",
+                                StoryId = storyId,
+                                ActorUserId = userId.Value
+                            });
                         }
                     }
-                    catch
-                    {
-                        // Ignore notification errors
-                    }
-                });
-            }
+                }
+                catch
+                {
+                    // Ignore notification errors
+                }
+            });
 
-            var resultDto = new StoryReadDto
-            {
-                StoryId = created!.StoryId,
-                Content = created.Content,
-                Mode = created.Mode,
-                ImageS3Key = created.ImageUrl,
-                VideoS3Key = created.VideoUrl,
-                CreatedAt = created.CreatedAt,
-                Author = created.Author != null ? new UserSummaryDto
-                {
-                    UserId = created.Author.UserId,
-                    Name = created.Author.Name
-                } : new UserSummaryDto(),
-                Birds = created.StoryBirds
-                    .OrderBy(sb => sb.CreatedAt)
-                    .Where(sb => sb.Bird != null)
-                    .Select(sb => new BirdSummaryDto
-                    {
-                        BirdId = sb.Bird!.BirdId,
-                        Name = sb.Bird.Name,
-                        Species = sb.Bird.Species,
-                        ImageS3Key = sb.Bird.ImageUrl,
-                        VideoS3Key = sb.Bird.VideoUrl,
-                        Tagline = sb.Bird.Tagline,
-                        LovedBy = sb.Bird.LovedCount,
-                        SupportedBy = sb.Bird.SupportedCount,
-                        OwnerId = sb.Bird.OwnerId
-                    })
-                    .ToList()
-            };
-            
-            // Generate download URLs
-            if (!string.IsNullOrWhiteSpace(created.ImageUrl))
-            {
-                try
-                {
-                    resultDto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(created.ImageUrl);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to generate download URL for story image {StoryId}", story.StoryId);
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(created.VideoUrl))
-            {
-                try
-                {
-                    resultDto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(created.VideoUrl);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to generate download URL for story video {StoryId}", story.StoryId);
-                }
-            }
-
-            // Generate download URLs for bird images
-            foreach (var bird in resultDto.Birds)
-            {
-                if (!string.IsNullOrWhiteSpace(bird.ImageS3Key))
-                {
-                    try
-                    {
-                        bird.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.ImageS3Key);
-                    }
-                    catch { }
-                }
-                if (!string.IsNullOrWhiteSpace(bird.VideoS3Key))
-                {
-                    try
-                    {
-                        bird.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(bird.VideoS3Key);
-                    }
-                    catch { }
-                }
-            }
-
-            return CreatedAtAction(nameof(Get), new { id = story.StoryId }, resultDto);
+            // Fetch created story to return
+            return await Get(storyId);
         }
 
         [HttpPut("{id}")]
@@ -670,13 +499,13 @@
         public async Task<IActionResult> Put(Guid id, [FromBody] StoryUpdateDto dto)
         {
             _logger.LogInformation("Edit story request for {StoryId}", id);
-            _logger.LogInformation("DTO Content: {HasContent}, Length: {Length}", 
-                !string.IsNullOrWhiteSpace(dto.Content), 
+            _logger.LogInformation("DTO Content: {HasContent}, Length: {Length}",
+                !string.IsNullOrWhiteSpace(dto.Content),
                 dto.Content?.Length ?? 0);
             _logger.LogInformation("DTO ImageS3Key: {ImageS3Key}", dto.ImageS3Key ?? "NULL");
             _logger.LogInformation("DTO VideoS3Key: {VideoS3Key}", dto.VideoS3Key ?? "NULL");
             _logger.LogInformation("DTO Mode: {Mode}", dto.Mode?.ToString() ?? "NULL");
-            _logger.LogInformation("DTO BirdIds: {BirdCount}", dto.BirdIds?.Count ?? 0);
+            _logger.LogInformation("DTO BirdId: {BirdId}", dto.BirdId?.ToString() ?? "NULL");
 
             if (!ModelState.IsValid)
             {
@@ -691,10 +520,16 @@
                 return Unauthorized();
             }
 
-            var story = await _db.Stories
-                .Include(s => s.StoryBirds)
-                .FirstOrDefaultAsync(s => s.StoryId == id);
-                
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+            // Get story with raw SQL
+            var getStorySql = @"
+                SELECT story_id, author_id, bird_id, content, mode, image_url, video_url, created_at, is_highlighted, highlight_order
+                FROM stories
+                WHERE story_id = @StoryId";
+
+            var story = await connection.QueryFirstOrDefaultAsync<dynamic>(getStorySql, new { StoryId = id });
+
             if (story == null)
             {
                 _logger.LogWarning("Story not found: {StoryId}", id);
@@ -702,21 +537,26 @@
             }
 
             // Only author can update story
-            if (story.AuthorId != userId.Value)
+            if ((Guid)story.author_id != userId.Value)
             {
-                _logger.LogWarning("User {UserId} attempted to update story {StoryId} owned by {OwnerId}", 
-                    userId.Value, id, story.AuthorId);
+                _logger.LogWarning("User {UserId} attempted to update story {StoryId} owned by {OwnerId}",
+                    userId.Value, id, (Guid)story.author_id);
                 return Forbid();
             }
 
-            _logger.LogInformation("Current story content length: {Length}", story.Content.Length);
+            _logger.LogInformation("Current story content length: {Length}", ((string)story.content).Length);
+
+            var updates = new List<string>();
+            var parameters = new DynamicParameters();
+            parameters.Add("StoryId", id);
 
             // Update content if provided
             if (!string.IsNullOrWhiteSpace(dto.Content))
             {
-                _logger.LogInformation("Updating story content from {OldLength} to {NewLength} chars", 
-                    story.Content.Length, dto.Content.Length);
-                story.Content = dto.Content.Trim();
+                _logger.LogInformation("Updating story content from {OldLength} to {NewLength} chars",
+                    ((string)story.content).Length, dto.Content.Length);
+                updates.Add("content = @Content");
+                parameters.Add("Content", dto.Content.Trim());
             }
             else if (dto.Content != null)
             {
@@ -727,41 +567,28 @@
             // Update mode if provided
             if (dto.Mode.HasValue)
             {
-                _logger.LogInformation("Updating story mode from {OldMode} to {NewMode}", 
-                    story.Mode, dto.Mode.Value);
-                story.Mode = dto.Mode.Value;
+                _logger.LogInformation("Updating story mode from {OldMode} to {NewMode}",
+                    (int?)story.mode, (int)dto.Mode.Value);
+                updates.Add("mode = @Mode");
+                parameters.Add("Mode", dto.Mode.Value);
             }
 
-            // Update birds if provided
-            if (dto.BirdIds != null && dto.BirdIds.Any())
+            // Update bird if provided
+            if (dto.BirdId.HasValue)
             {
-                // Validate that all birds exist
-                var birds = await _db.Birds.Where(b => dto.BirdIds.Contains(b.BirdId)).ToListAsync();
-                if (birds.Count != dto.BirdIds.Count)
+                // Validate that bird exists
+                var birdCheckSql = "SELECT bird_id FROM birds WHERE bird_id = @BirdId";
+                var foundBirdId = await connection.QueryFirstOrDefaultAsync<Guid?>(birdCheckSql, new { BirdId = dto.BirdId.Value });
+
+                if (foundBirdId == null)
                 {
-                    var foundIds = birds.Select(b => b.BirdId).ToList();
-                    var missingIds = dto.BirdIds.Except(foundIds).ToList();
-                    return NotFound(new { message = "Some birds not found", missingBirdIds = missingIds });
+                    return NotFound(new { message = "Bird not found", birdId = dto.BirdId.Value });
                 }
 
-                // Remove existing bird associations
-                var existingStoryBirds = await _db.StoryBirds.Where(sb => sb.StoryId == id).ToListAsync();
-                _db.StoryBirds.RemoveRange(existingStoryBirds);
+                updates.Add("bird_id = @BirdId");
+                parameters.Add("BirdId", dto.BirdId.Value);
 
-                // Add new bird associations
-                foreach (var birdId in dto.BirdIds)
-                {
-                    var storyBird = new StoryBird
-                    {
-                        StoryBirdId = Guid.NewGuid(),
-                        StoryId = id,
-                        BirdId = birdId,
-                        CreatedAt = DateTime.UtcNow
-                    };
-                    _db.StoryBirds.Add(storyBird);
-                }
-                
-                _logger.LogInformation("Updated birds for story {StoryId}, new count: {Count}", id, dto.BirdIds.Count);
+                _logger.LogInformation("Updated bird for story {StoryId} to bird {BirdId}", id, dto.BirdId.Value);
             }
 
             // Update image if provided
@@ -771,11 +598,12 @@
                 {
                     _logger.LogInformation("Removing image from story {StoryId}", id);
                     // Remove image
-                    if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+                    string? oldImageUrl = story.image_url;
+                    if (!string.IsNullOrWhiteSpace(oldImageUrl))
                     {
                         try
                         {
-                            await _s3Service.DeleteFileAsync(story.ImageUrl);
+                            await _s3Service.DeleteFileAsync(oldImageUrl);
                             _logger.LogInformation("Deleted story image for story {StoryId}", id);
                         }
                         catch (Exception ex)
@@ -783,12 +611,13 @@
                             _logger.LogWarning(ex, "Failed to delete story image");
                         }
                     }
-                    story.ImageUrl = null;
+                    updates.Add("image_url = NULL");
                 }
-                else if (dto.ImageS3Key != story.ImageUrl)
+                else if (dto.ImageS3Key != (string?)story.image_url)
                 {
-                    _logger.LogInformation("Updating image for story {StoryId} from {OldKey} to {NewKey}", 
-                        id, story.ImageUrl ?? "NULL", dto.ImageS3Key);
+                    string? oldImageUrl = story.image_url;
+                    _logger.LogInformation("Updating image for story {StoryId} from {OldKey} to {NewKey}",
+                        id, oldImageUrl ?? "NULL", dto.ImageS3Key);
                     // New image provided
                     var imageExists = await _s3Service.FileExistsAsync(dto.ImageS3Key);
                     if (!imageExists)
@@ -798,11 +627,11 @@
                     }
 
                     // Delete old image
-                    if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+                    if (!string.IsNullOrWhiteSpace(oldImageUrl))
                     {
                         try
                         {
-                            await _s3Service.DeleteFileAsync(story.ImageUrl);
+                            await _s3Service.DeleteFileAsync(oldImageUrl);
                             _logger.LogInformation("Deleted old story image");
                         }
                         catch (Exception ex)
@@ -811,21 +640,23 @@
                         }
                     }
 
-                    story.ImageUrl = dto.ImageS3Key;
-                    
+                    updates.Add("image_url = @ImageUrl");
+                    parameters.Add("ImageUrl", dto.ImageS3Key);
+
                     // IMPORTANT: Setting image removes video (one media type only)
-                    if (!string.IsNullOrWhiteSpace(story.VideoUrl))
+                    string? oldVideoUrl = story.video_url;
+                    if (!string.IsNullOrWhiteSpace(oldVideoUrl))
                     {
                         try
                         {
-                            await _s3Service.DeleteFileAsync(story.VideoUrl);
+                            await _s3Service.DeleteFileAsync(oldVideoUrl);
                             _logger.LogInformation("Deleted story video when switching to image for story {StoryId}", id);
                         }
                         catch (Exception ex)
                         {
                             _logger.LogWarning(ex, "Failed to delete story video when switching to image");
                         }
-                        story.VideoUrl = null;
+                        updates.Add("video_url = NULL");
                     }
                 }
             }
@@ -837,11 +668,12 @@
                 {
                     _logger.LogInformation("Removing video from story {StoryId}", id);
                     // Remove video
-                    if (!string.IsNullOrWhiteSpace(story.VideoUrl))
+                    string? oldVideoUrl = story.video_url;
+                    if (!string.IsNullOrWhiteSpace(oldVideoUrl))
                     {
                         try
                         {
-                            await _s3Service.DeleteFileAsync(story.VideoUrl);
+                            await _s3Service.DeleteFileAsync(oldVideoUrl);
                             _logger.LogInformation("Deleted story video for story {StoryId}", id);
                         }
                         catch (Exception ex)
@@ -849,12 +681,13 @@
                             _logger.LogWarning(ex, "Failed to delete story video");
                         }
                     }
-                    story.VideoUrl = null;
+                    updates.Add("video_url = NULL");
                 }
-                else if (dto.VideoS3Key != story.VideoUrl)
+                else if (dto.VideoS3Key != (string?)story.video_url)
                 {
-                    _logger.LogInformation("Updating video for story {StoryId} from {OldKey} to {NewKey}", 
-                        id, story.VideoUrl ?? "NULL", dto.VideoS3Key);
+                    string? oldVideoUrl = story.video_url;
+                    _logger.LogInformation("Updating video for story {StoryId} from {OldKey} to {NewKey}",
+                        id, oldVideoUrl ?? "NULL", dto.VideoS3Key);
                     // New video provided
                     var videoExists = await _s3Service.FileExistsAsync(dto.VideoS3Key);
                     if (!videoExists)
@@ -864,11 +697,11 @@
                     }
 
                     // Delete old video
-                    if (!string.IsNullOrWhiteSpace(story.VideoUrl))
+                    if (!string.IsNullOrWhiteSpace(oldVideoUrl))
                     {
                         try
                         {
-                            await _s3Service.DeleteFileAsync(story.VideoUrl);
+                            await _s3Service.DeleteFileAsync(oldVideoUrl);
                             _logger.LogInformation("Deleted old story video");
                         }
                         catch (Exception ex)
@@ -877,30 +710,36 @@
                         }
                     }
 
-                    story.VideoUrl = dto.VideoS3Key;
-                    
+                    updates.Add("video_url = @VideoUrl");
+                    parameters.Add("VideoUrl", dto.VideoS3Key);
+
                     // IMPORTANT: Setting video removes image (one media type only)
-                    if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+                    string? oldImageUrl = story.image_url;
+                    if (!string.IsNullOrWhiteSpace(oldImageUrl))
                     {
                         try
                         {
-                            await _s3Service.DeleteFileAsync(story.ImageUrl);
+                            await _s3Service.DeleteFileAsync(oldImageUrl);
                             _logger.LogInformation("Deleted story image when switching to video for story {StoryId}", id);
                         }
                         catch (Exception ex)
                         {
                             _logger.LogWarning(ex, "Failed to delete story image when switching to video");
                         }
-                        story.ImageUrl = null;
+                        updates.Add("image_url = NULL");
                     }
                 }
             }
 
-            await _db.SaveChangesAsync();
-            
-            _logger.LogInformation("Story updated successfully: {StoryId}, Content length: {Length}", 
-                id, story.Content.Length);
-            
+            // Execute update if there are changes
+            if (updates.Any())
+            {
+                var updateSql = $"UPDATE stories SET {string.Join(", ", updates)} WHERE story_id = @StoryId";
+                await connection.ExecuteAsync(updateSql, parameters);
+
+                _logger.LogInformation("Story updated successfully: {StoryId}", id);
+            }
+
             return NoContent();
         }
 
@@ -911,18 +750,23 @@
             var userId = GetUserIdClaim();
             if (userId == null) return Unauthorized();
 
-            var story = await _db.Stories.FindAsync(id);
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+            // Get story using raw SQL
+            var getStorySql = "SELECT author_id, image_url, video_url FROM stories WHERE story_id = @StoryId";
+            var story = await connection.QueryFirstOrDefaultAsync<dynamic>(getStorySql, new { StoryId = id });
+
             if (story == null) return NotFound();
 
             // Only author can delete story
-            if (story.AuthorId != userId.Value) return Forbid();
+            if ((Guid)story.author_id != userId.Value) return Forbid();
 
             // Delete image from S3 if exists
-            if (!string.IsNullOrWhiteSpace(story.ImageUrl))
+            if (!string.IsNullOrWhiteSpace(story.image_url))
             {
                 try
                 {
-                    await _s3Service.DeleteFileAsync(story.ImageUrl);
+                    await _s3Service.DeleteFileAsync(story.image_url);
                     _logger.LogInformation("Deleted story image for story {StoryId}", id);
                 }
                 catch (Exception ex)
@@ -932,11 +776,11 @@
             }
 
             // Delete video from S3 if exists
-            if (!string.IsNullOrWhiteSpace(story.VideoUrl))
+            if (!string.IsNullOrWhiteSpace(story.video_url))
             {
                 try
                 {
-                    await _s3Service.DeleteFileAsync(story.VideoUrl);
+                    await _s3Service.DeleteFileAsync(story.video_url);
                     _logger.LogInformation("Deleted story video for story {StoryId}", id);
                 }
                 catch (Exception ex)
@@ -945,11 +789,11 @@
                 }
             }
 
-            _db.Stories.Remove(story);
-            await _db.SaveChangesAsync();
-            
+            // Delete story using raw SQL (cascade will delete story_birds)
+            await connection.ExecuteAsync("DELETE FROM stories WHERE story_id = @StoryId", new { StoryId = id });
+
             _logger.LogInformation("Story deleted: {StoryId}", id);
-            
+
             return NoContent();
         }
 
@@ -957,126 +801,116 @@
         [HttpPatch("{id}/highlight")]
         public async Task<IActionResult> ToggleHighlight(Guid id, [FromBody] StoryHighlightDto dto)
         {
-            var story = await _db.Stories
-                .Include(s => s.StoryBirds)
-                    .ThenInclude<Story, StoryBird, Bird>(sb => sb.Bird)
-                .FirstOrDefaultAsync(s => s.StoryId == id);
-                
-            if (story == null) return NotFound();
-
             var userId = GetUserIdClaim();
             if (userId == null) return Unauthorized();
 
-            // Verify story has at least one bird and user owns at least one of the birds
-            if (story.StoryBirds == null || !story.StoryBirds.Any())
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+            // Get story with bird info using raw SQL - direct relationship
+            var getStoryBirdSql = @"
+                SELECT s.story_id, s.bird_id, s.is_highlighted, s.highlight_order, b.owner_id
+                FROM stories s
+                LEFT JOIN birds b ON s.bird_id = b.bird_id
+                WHERE s.story_id = @StoryId";
+
+            var story = await connection.QueryFirstOrDefaultAsync<dynamic>(getStoryBirdSql, new { StoryId = id });
+
+            if (story == null) return NotFound();
+
+            // Verify story has a bird
+            if (story.bird_id == null)
             {
-                return BadRequest("Story must have at least one bird");
+                return BadRequest("Story must have a bird");
             }
 
-            var userOwnsBird = story.StoryBirds.Any(sb => sb.Bird != null && sb.Bird.OwnerId == userId.Value);
-            if (!userOwnsBird)
+            Guid birdId = (Guid)story.bird_id;
+
+            // Verify user owns the bird
+            if (story.owner_id == null || (Guid)story.owner_id != userId.Value)
             {
-                return Forbid("You must own at least one of the birds in this story");
+                return Forbid("You must own the bird in this story");
             }
 
-            // Get the bird IDs from the story
-            var birdIds = story.StoryBirds.Select(sb => sb.BirdId).ToList();
+            // Check if bird is premium
+            var premiumCheckSql = @"
+                SELECT COUNT(*) 
+                FROM bird_premium_subscriptions 
+                WHERE bird_id = @BirdId AND status = 'active'";
+            var hasPremiumBird = await connection.ExecuteScalarAsync<int>(premiumCheckSql, new { BirdId = birdId }) > 0;
 
-            // Check if any bird is premium
-            var hasPremiumBird = await _db.BirdPremiumSubscriptions
-                .AnyAsync(s => birdIds.Contains(s.BirdId) && s.Status == "active");
-                
             if (!hasPremiumBird)
             {
-                return Forbid("At least one bird in the story must be premium");
+                return Forbid("The bird in this story must be premium");
             }
 
             // When highlighting, enforce a max of 3 highlights per bird
             if (dto.IsHighlighted)
             {
-                foreach (var birdId in birdIds)
+                var countSql = @"
+                    SELECT COUNT(*)
+                    FROM stories
+                    WHERE bird_id = @BirdId AND is_highlighted = true";
+                var count = await connection.ExecuteScalarAsync<int>(countSql, new { BirdId = birdId });
+
+                if (count >= 3)
                 {
-                    var count = await _db.Stories
-                        .Where(s => s.StoryBirds.Any(sb => sb.BirdId == birdId) && s.IsHighlighted)
-                        .CountAsync();
-                        
-                    if (count >= 3)
-                    {
-                        return BadRequest($"Maximum of 3 highlights allowed per bird");
-                    }
+                    return BadRequest($"Maximum of 3 highlights allowed per bird");
                 }
 
                 // If pin requested, set highlight order to 1 and bump others
                 if (dto.PinToProfile)
                 {
-                    foreach (var birdId in birdIds)
-                    {
-                        var existing = await _db.Stories
-                            .Where(s => s.StoryBirds.Any(sb => sb.BirdId == birdId) && s.IsHighlighted)
-                            .ToListAsync();
-                            
-                        foreach (var ex in existing)
-                        {
-                            ex.HighlightOrder = (ex.HighlightOrder ?? 1) + 1;
-                        }
-                    }
-                    story.HighlightOrder = 1;
+                    var bumpSql = @"
+                        UPDATE stories
+                        SET highlight_order = COALESCE(highlight_order, 1) + 1
+                        WHERE bird_id = @BirdId 
+                          AND is_highlighted = true";
+                    await connection.ExecuteAsync(bumpSql, new { BirdId = birdId });
+
+                    await connection.ExecuteAsync(
+                        "UPDATE stories SET is_highlighted = true, highlight_order = 1 WHERE story_id = @StoryId",
+                        new { StoryId = id });
                 }
                 else
                 {
-                    // set next order - get max across all birds in story
-                    int maxOrder = 0;
-                    foreach (var birdId in birdIds)
-                    {
-                        // Use raw SQL to get highlight orders
-                        var ordersSql = @"
-                            SELECT s.highlight_order
-                            FROM stories s
-                            JOIN story_birds sb ON s.story_id = sb.story_id
-                            WHERE sb.bird_id = @BirdId 
-                              AND s.is_highlighted = true 
-                              AND s.highlight_order IS NOT NULL";
-                        
-                        var highlightOrders = await _dbFactory.QueryListAsync<int>(ordersSql, new { BirdId = birdId });
-                            
-                        if (highlightOrders.Any())
-                        {
-                            var birdMax = highlightOrders.Max();
-                            if (birdMax > maxOrder)
-                            {
-                                maxOrder = birdMax;
-                            }
-                        }
-                    }
-                    story.HighlightOrder = maxOrder + 1;
+                    // set next order - get max for this bird
+                    var ordersSql = @"
+                        SELECT highlight_order
+                        FROM stories
+                        WHERE bird_id = @BirdId 
+                          AND is_highlighted = true 
+                          AND highlight_order IS NOT NULL";
+
+                    var highlightOrders = await connection.QueryAsync<int>(ordersSql, new { BirdId = birdId });
+
+                    int maxOrder = highlightOrders.Any() ? highlightOrders.Max() : 0;
+
+                    await connection.ExecuteAsync(
+                        "UPDATE stories SET is_highlighted = true, highlight_order = @Order WHERE story_id = @StoryId",
+                        new { Order = maxOrder + 1, StoryId = id });
                 }
             }
             else
             {
-                // Clearing highlight, compact orders for all birds
-                if (story.IsHighlighted && story.HighlightOrder != null)
+                // Clearing highlight, compact orders for this bird
+                if (story.is_highlighted && story.highlight_order != null)
                 {
-                    var currentOrder = story.HighlightOrder.Value;
-                    foreach (var birdId in birdIds)
-                    {
-                        var others = await _db.Stories
-                            .Where(s => s.StoryBirds.Any(sb => sb.BirdId == birdId) && 
-                                       s.IsHighlighted && 
-                                       s.HighlightOrder > currentOrder)
-                            .ToListAsync();
-                            
-                        foreach (var o in others)
-                        {
-                            o.HighlightOrder = o.HighlightOrder - 1;
-                        }
-                    }
+                    var currentOrder = (int)story.highlight_order;
+
+                    var compactSql = @"
+                        UPDATE stories
+                        SET highlight_order = highlight_order - 1
+                        WHERE bird_id = @BirdId 
+                          AND is_highlighted = true 
+                          AND highlight_order > @CurrentOrder";
+                    await connection.ExecuteAsync(compactSql, new { BirdId = birdId, CurrentOrder = currentOrder });
                 }
-                story.HighlightOrder = null;
+
+                await connection.ExecuteAsync(
+                    "UPDATE stories SET is_highlighted = false, highlight_order = NULL WHERE story_id = @StoryId",
+                    new { StoryId = id });
             }
 
-            story.IsHighlighted = dto.IsHighlighted;
-
-            await _db.SaveChangesAsync();
             return Ok();
         }
     }

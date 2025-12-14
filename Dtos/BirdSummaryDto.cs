@@ -18,16 +18,6 @@ namespace Wihngo.Dtos
         /// </summary>
         public string? ImageUrl { get; set; }
         
-        /// <summary>
-        /// S3 key for bird video
-        /// </summary>
-        public string? VideoS3Key { get; set; }
-        
-        /// <summary>
-        /// Pre-signed download URL for bird video (expires in 10 minutes)
-        /// </summary>
-        public string? VideoUrl { get; set; }
-        
         public string? Tagline { get; set; }
         public int LovedBy { get; set; }
         public int SupportedBy { get; set; }

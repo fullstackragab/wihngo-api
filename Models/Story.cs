@@ -17,6 +17,12 @@ namespace Wihngo.Models
         public User? Author { get; set; }
 
         [Required]
+        public Guid BirdId { get; set; }
+
+        [ForeignKey(nameof(BirdId))]
+        public Bird? Bird { get; set; }
+
+        [Required]
         [MaxLength(5000)]
         public string Content { get; set; } = string.Empty;
 
@@ -36,8 +42,5 @@ namespace Wihngo.Models
         // Premium highlight fields
         public bool IsHighlighted { get; set; } = false;
         public int? HighlightOrder { get; set; }
-
-        // Navigation property for many-to-many relationship with Birds
-        public ICollection<StoryBird> StoryBirds { get; set; } = new List<StoryBird>();
     }
 }

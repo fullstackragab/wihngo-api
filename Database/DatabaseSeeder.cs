@@ -203,16 +203,16 @@ public static class DatabaseSeeder
 
         var birdData = new[]
         {
-            ("Sunny", "Anna's Hummingbird", "A vibrant backyard regular who guards her favorite feeder", "https://example.com/sunny.jpg", "https://example.com/sunny.mp4"),
-            ("Flash", "Ruby-throated Hummingbird", "Named for his incredible speed and iridescent throat", "https://example.com/flash.jpg", "https://example.com/flash.mp4"),
-            ("Bella", "Black-chinned Hummingbird", "A gentle soul who shares feeders with everyone", "https://example.com/bella.jpg", "https://example.com/bella.mp4"),
-            ("Spike", "Allen's Hummingbird", "Territorial and fierce, but beautiful to watch", "https://example.com/spike.jpg", "https://example.com/spike.mp4"),
-            ("Luna", "Calliope Hummingbird", "Our smallest visitor with the biggest personality", "https://example.com/luna.jpg", "https://example.com/luna.mp4"),
-            ("Zippy", "Rufous Hummingbird", "Travels 3,000 miles for migration - a true warrior", "https://example.com/zippy.jpg", "https://example.com/zippy.mp4"),
-            ("Jewel", "Costa's Hummingbird", "Desert beauty with a purple crown", "https://example.com/jewel.jpg", "https://example.com/jewel.mp4"),
-            ("Blaze", "Broad-tailed Hummingbird", "His wings whistle like a cricket", "https://example.com/blaze.jpg", "https://example.com/blaze.mp4"),
-            ("Misty", "Buff-bellied Hummingbird", "Rare visitor from Mexico who stole our hearts", "https://example.com/misty.jpg", "https://example.com/misty.mp4"),
-            ("Emerald", "Magnificent Hummingbird", "Living up to his name every single day", "https://example.com/emerald.jpg", "https://example.com/emerald.mp4")
+            ("Sunny", "Anna's Hummingbird", "A vibrant backyard regular who guards her favorite feeder", "https://example.com/sunny.jpg"),
+            ("Flash", "Ruby-throated Hummingbird", "Named for his incredible speed and iridescent throat", "https://example.com/flash.jpg"),
+            ("Bella", "Black-chinned Hummingbird", "A gentle soul who shares feeders with everyone", "https://example.com/bella.jpg"),
+            ("Spike", "Allen's Hummingbird", "Territorial and fierce, but beautiful to watch", "https://example.com/spike.jpg"),
+            ("Luna", "Calliope Hummingbird", "Our smallest visitor with the biggest personality", "https://example.com/luna.jpg"),
+            ("Zippy", "Rufous Hummingbird", "Travels 3,000 miles for migration - a true warrior", "https://example.com/zippy.jpg"),
+            ("Jewel", "Costa's Hummingbird", "Desert beauty with a purple crown", "https://example.com/jewel.jpg"),
+            ("Blaze", "Broad-tailed Hummingbird", "His wings whistle like a cricket", "https://example.com/blaze.jpg"),
+            ("Misty", "Buff-bellied Hummingbird", "Rare visitor from Mexico who stole our hearts", "https://example.com/misty.jpg"),
+            ("Emerald", "Magnificent Hummingbird", "Living up to his name every single day", "https://example.com/emerald.jpg")
         };
 
         var birds = new List<Bird>();
@@ -220,7 +220,7 @@ public static class DatabaseSeeder
 
         for (int i = 0; i < birdData.Length; i++)
         {
-            var (name, species, tagline, image, video) = birdData[i];
+            var (name, species, tagline, image) = birdData[i];
             var owner = users[i % users.Count];
 
             var bird = new Bird
@@ -232,7 +232,6 @@ public static class DatabaseSeeder
                 Tagline = tagline,
                 Description = $"{name} is a wonderful {species} that brings joy to everyone who sees them. They love nectar, flowers, and showing off their amazing flying skills!",
                 ImageUrl = image,
-                VideoUrl = video,
                 LovedCount = random.Next(10, 150),
                 DonationCents = random.Next(100, 50000),
                 CreatedAt = DateTime.UtcNow.AddDays(-random.Next(1, 60))
@@ -342,7 +341,6 @@ public static class DatabaseSeeder
         };
 
         var stories = new List<Story>();
-        var storyBirds = new List<StoryBird>();
         var random = new Random(42);
 
         foreach (var bird in birds.Take(7)) // Add stories for first 7 birds
@@ -351,13 +349,13 @@ public static class DatabaseSeeder
             for (int i = 0; i < storyCount; i++)
             {
                 var template = storyTemplates[random.Next(storyTemplates.Length)];
-                var storyId = Guid.NewGuid();
                 
-                // Create story with optional mode (sometimes null)
+                // Create story with bird_id foreign key (one bird per story)
                 var story = new Story
                 {
-                    StoryId = storyId,
+                    StoryId = Guid.NewGuid(),
                     AuthorId = bird.OwnerId,
+                    BirdId = bird.BirdId, // Direct foreign key relationship
                     Content = template.Item2.Replace("{name}", bird.Name),
                     Mode = random.Next(100) < 80 ? template.Item3 : null, // 80% have mood, 20% don't
                     ImageUrl = random.Next(100) < 50 ? $"https://example.com/story_{Guid.NewGuid()}.jpg" : null,
@@ -366,25 +364,13 @@ public static class DatabaseSeeder
                 };
                 
                 stories.Add(story);
-                
-                // Create StoryBird relationship
-                storyBirds.Add(new StoryBird
-                {
-                    StoryBirdId = Guid.NewGuid(),
-                    StoryId = storyId,
-                    BirdId = bird.BirdId,
-                    CreatedAt = story.CreatedAt
-                });
             }
         }
 
         await context.Stories.AddRangeAsync(stories);
         await context.SaveChangesAsync();
         
-        await context.StoryBirds.AddRangeAsync(storyBirds);
-        await context.SaveChangesAsync();
-        
-        logger.LogInformation($"? Seeded {stories.Count} stories with {storyBirds.Count} story-bird relationships");
+        logger.LogInformation($"?? Seeded {stories.Count} stories (one bird per story)");
     }
 
     private static async Task SeedNotificationsAsync(AppDbContext context, ILogger logger, List<User> users)
