@@ -67,6 +67,9 @@ namespace Wihngo.Data
         public StubDbSet<AuditLog> AuditLogs => new StubDbSet<AuditLog>(_dbFactory, "audit_logs");
         public StubDbSet<WebhookReceived> WebhooksReceived => new StubDbSet<WebhookReceived>(_dbFactory, "webhooks_received");
         public StubDbSet<BlockchainCursor> BlockchainCursors => new StubDbSet<BlockchainCursor>(_dbFactory, "blockchain_cursors");
+        public StubDbSet<StoryLike> StoryLikes => new StubDbSet<StoryLike>(_dbFactory, "story_likes");
+        public StubDbSet<Comment> Comments => new StubDbSet<Comment>(_dbFactory, "comments");
+        public StubDbSet<CommentLike> CommentLikes => new StubDbSet<CommentLike>(_dbFactory, "comment_likes");
 
         public StubDatabase Database => new StubDatabase();
 

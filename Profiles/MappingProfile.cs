@@ -49,6 +49,29 @@ namespace Wihngo.Mapping
             CreateMap<User, UserSummaryDto>()
                 .ForMember(dest => dest.UserId, opt => opt.MapFrom(src => src.UserId))
                 .ForMember(dest => dest.Name, opt => opt.MapFrom(src => src.Name));
+
+            // Story Like mappings
+            CreateMap<StoryLike, StoryLikeDto>()
+                .ForMember(dest => dest.UserName, opt => opt.MapFrom(src => src.User != null ? src.User.Name : string.Empty))
+                .ForMember(dest => dest.UserProfileImage, opt => opt.MapFrom(src => src.User != null ? src.User.ProfileImage : null));
+
+            // Comment mappings
+            CreateMap<Comment, CommentDto>()
+                .ForMember(dest => dest.UserName, opt => opt.MapFrom(src => src.User != null ? src.User.Name : string.Empty))
+                .ForMember(dest => dest.UserProfileImage, opt => opt.MapFrom(src => src.User != null ? src.User.ProfileImage : null))
+                .ForMember(dest => dest.IsLikedByCurrentUser, opt => opt.Ignore())
+                .ForMember(dest => dest.ReplyCount, opt => opt.MapFrom(src => src.Replies.Count));
+
+            CreateMap<Comment, CommentWithRepliesDto>()
+                .ForMember(dest => dest.UserName, opt => opt.MapFrom(src => src.User != null ? src.User.Name : string.Empty))
+                .ForMember(dest => dest.UserProfileImage, opt => opt.MapFrom(src => src.User != null ? src.User.ProfileImage : null))
+                .ForMember(dest => dest.IsLikedByCurrentUser, opt => opt.Ignore())
+                .ForMember(dest => dest.Replies, opt => opt.MapFrom(src => src.Replies));
+
+            // Comment Like mappings
+            CreateMap<CommentLike, CommentLikeDto>()
+                .ForMember(dest => dest.UserName, opt => opt.MapFrom(src => src.User != null ? src.User.Name : string.Empty))
+                .ForMember(dest => dest.UserProfileImage, opt => opt.MapFrom(src => src.User != null ? src.User.ProfileImage : null));
         }
     }
 }
