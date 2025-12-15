@@ -4,7 +4,9 @@ using Wihngo.Data;
 using Wihngo.Models;
 using Wihngo.Models.Entities;
 using Wihngo.Models.Enums;
+using Wihngo.Models.Payout;
 using Wihngo.Extensions;
+using Dapper;
 
 namespace Wihngo.Database;
 
@@ -49,6 +51,9 @@ public static class DatabaseSeeder
 
             // 9. Seed Crypto Payment Requests
             await SeedCryptoPaymentRequestsAsync(context, logger, users);
+
+            // 10. Seed Payout System Data
+            await SeedPayoutDataAsync(context, logger);
 
             logger.LogInformation("? Database seeding completed successfully!");
         }
@@ -528,5 +533,279 @@ public static class DatabaseSeeder
         await context.CryptoPaymentRequests.AddRangeAsync(requests);
         await context.SaveChangesAsync();
         logger.LogInformation($"? Seeded {requests.Count} crypto payment requests");
+    }
+
+    private static async Task SeedPayoutDataAsync(AppDbContext context, ILogger logger)
+    {
+        if (await context.PayoutMethods.AnyAsync())
+        {
+            logger.LogInformation("??  Payout data already exists, skipping...");
+            return;
+        }
+
+        var random = new Random(42);
+        var dbFactory = context.GetDbFactory();
+        using var connection = await dbFactory.CreateOpenConnectionAsync();
+
+        // Get bird owners (users who own birds)
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT DISTINCT owner_id FROM birds LIMIT 5";
+        var ownerIds = new List<Guid>();
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            ownerIds.Add(reader.GetGuid(0));
+        }
+        await reader.CloseAsync();
+
+        if (!ownerIds.Any())
+        {
+            logger.LogWarning("??  No bird owners found, skipping payout data");
+            return;
+        }
+
+        var methodCount = 0;
+        var transactionCount = 0;
+
+        foreach (var ownerId in ownerIds)
+        {
+            // Create 1-2 payout methods per owner
+            var methodTypes = new[] { "iban", "paypal", "usdc-solana" };
+            var methodsToCreate = random.Next(1, 3);
+
+            for (int i = 0; i < methodsToCreate; i++)
+            {
+                var methodType = methodTypes[random.Next(methodTypes.Length)];
+                var isDefault = i == 0; // First method is default
+
+                using var insertMethod = connection.CreateCommand();
+                insertMethod.CommandText = @"
+                    INSERT INTO payout_methods (
+                        id, user_id, method_type, is_default, is_verified,
+                        account_holder_name, iban, bic, bank_name,
+                        paypal_email, wallet_address, network, currency,
+                        created_at, updated_at
+                    ) VALUES (
+                        @id, @user_id, @method_type, @is_default, @is_verified,
+                        @account_holder_name, @iban, @bic, @bank_name,
+                        @paypal_email, @wallet_address, @network, @currency,
+                        @created_at, @updated_at
+                    ) RETURNING id";
+
+                var methodId = Guid.NewGuid();
+                insertMethod.Parameters.AddWithValue("id", methodId);
+                insertMethod.Parameters.AddWithValue("user_id", ownerId);
+                insertMethod.Parameters.AddWithValue("method_type", methodType);
+                insertMethod.Parameters.AddWithValue("is_default", isDefault);
+                insertMethod.Parameters.AddWithValue("is_verified", true);
+                
+                // Method-specific fields
+                if (methodType == "iban")
+                {
+                    insertMethod.Parameters.AddWithValue("account_holder_name", "Test User");
+                    insertMethod.Parameters.AddWithValue("iban", $"DE89370400440532{random.Next(100000, 999999)}");
+                    insertMethod.Parameters.AddWithValue("bic", "COBADEFFXXX");
+                    insertMethod.Parameters.AddWithValue("bank_name", "Test Bank");
+                    insertMethod.Parameters.AddWithValue("paypal_email", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("wallet_address", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("network", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("currency", DBNull.Value);
+                }
+                else if (methodType == "paypal")
+                {
+                    insertMethod.Parameters.AddWithValue("account_holder_name", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("iban", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("bic", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("bank_name", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("paypal_email", $"test{random.Next(1000, 9999)}@paypal.com");
+                    insertMethod.Parameters.AddWithValue("wallet_address", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("network", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("currency", DBNull.Value);
+                }
+                else // usdc-solana
+                {
+                    insertMethod.Parameters.AddWithValue("account_holder_name", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("iban", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("bic", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("bank_name", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("paypal_email", DBNull.Value);
+                    insertMethod.Parameters.AddWithValue("wallet_address", $"{Guid.NewGuid():N}{Guid.NewGuid():N}".Substring(0, 44));
+                    insertMethod.Parameters.AddWithValue("network", "solana");
+                    insertMethod.Parameters.AddWithValue("currency", "usdc");
+                }
+
+                insertMethod.Parameters.AddWithValue("created_at", DateTime.UtcNow.AddDays(-random.Next(5, 30)));
+                insertMethod.Parameters.AddWithValue("updated_at", DateTime.UtcNow.AddDays(-random.Next(0, 5)));
+
+                await insertMethod.ExecuteNonQueryAsync();
+                methodCount++;
+
+                // Create 0-2 payout transactions for this method
+                if (isDefault && random.Next(100) < 70) // 70% chance for default method
+                {
+                    var txCount = random.Next(0, 3);
+                    for (int j = 0; j < txCount; j++)
+                    {
+                        var amount = random.Next(20, 101); // €20-€100
+                        var platformFee = amount * 0.05m;
+                        var providerFee = methodType == "iban" ? 1.00m : amount * 0.02m;
+                        var netAmount = amount - platformFee - providerFee;
+                        var status = j == 0 ? "completed" : (random.Next(100) < 80 ? "completed" : "failed");
+
+                        using var insertTx = connection.CreateCommand();
+                        insertTx.CommandText = @"
+                            INSERT INTO payout_transactions (
+                                id, user_id, payout_method_id, amount, currency, status,
+                                platform_fee, provider_fee, net_amount,
+                                scheduled_at, processed_at, completed_at, transaction_id,
+                                created_at, updated_at
+                            ) VALUES (
+                                @id, @user_id, @payout_method_id, @amount, @currency, @status,
+                                @platform_fee, @provider_fee, @net_amount,
+                                @scheduled_at, @processed_at, @completed_at, @transaction_id,
+                                @created_at, @updated_at
+                            )";
+
+                        var scheduledDate = DateTime.UtcNow.AddDays(-random.Next(1, 15));
+                        insertTx.Parameters.AddWithValue("id", Guid.NewGuid());
+                        insertTx.Parameters.AddWithValue("user_id", ownerId);
+                        insertTx.Parameters.AddWithValue("payout_method_id", methodId);
+                        insertTx.Parameters.AddWithValue("amount", amount);
+                        insertTx.Parameters.AddWithValue("currency", "EUR");
+                        insertTx.Parameters.AddWithValue("status", status);
+                        insertTx.Parameters.AddWithValue("platform_fee", platformFee);
+                        insertTx.Parameters.AddWithValue("provider_fee", providerFee);
+                        insertTx.Parameters.AddWithValue("net_amount", netAmount);
+                        insertTx.Parameters.AddWithValue("scheduled_at", scheduledDate);
+                        insertTx.Parameters.AddWithValue("processed_at", status != "pending" ? scheduledDate.AddMinutes(5) : DBNull.Value);
+                        insertTx.Parameters.AddWithValue("completed_at", status == "completed" ? scheduledDate.AddMinutes(30) : DBNull.Value);
+                        insertTx.Parameters.AddWithValue("transaction_id", status == "completed" ? $"TXN_{Guid.NewGuid():N}".Substring(0, 20) : DBNull.Value);
+                        insertTx.Parameters.AddWithValue("created_at", scheduledDate);
+                        insertTx.Parameters.AddWithValue("updated_at", scheduledDate);
+
+                        await insertTx.ExecuteNonQueryAsync();
+                        transactionCount++;
+                    }
+                }
+            }
+        }
+
+        logger.LogInformation($"?? Seeded {methodCount} payout methods and {transactionCount} payout transactions");
+
+        // ===============================================
+        // Memorial Test Data
+        // ===============================================
+
+        // Special case: create two specific users for memorial testing
+        var memorialUserId1 = Guid.NewGuid();
+        var memorialUserId2 = Guid.NewGuid();
+
+        await connection.ExecuteAsync(@"
+            INSERT INTO users (user_id, name, email, password_hash, email_confirmed, created_at, last_login_at, last_password_change_at)
+            VALUES 
+                (@Id1, 'Memorial User One', 'memorial1@example.com', 'passwordhash1', true, @Now, @Now, @Now),
+                (@Id2, 'Memorial User Two', 'memorial2@example.com', 'passwordhash2', true, @Now, @Now, @Now)
+            ON CONFLICT (user_id) DO NOTHING",
+            new { Id1 = memorialUserId1, Id2 = memorialUserId2, Now = DateTime.UtcNow });
+
+        Console.WriteLine($"? Memorial users seeded: {memorialUserId1}, {memorialUserId2}");
+
+        // =========================================================================
+        // Memorial Payout Balances
+        // =========================================================================
+
+        // Insert or update memorial payout balances
+        await connection.ExecuteAsync(@"
+            INSERT INTO payout_balances (user_id, available_balance, pending_balance, currency, next_payout_date, updated_at)
+            VALUES 
+                (@User1, 50.00, 15.00, 'EUR', @NextMonth, @Now),
+                (@User2, 120.50, 30.00, 'EUR', @NextMonth, @Now)
+            ON CONFLICT (user_id) DO UPDATE SET
+                available_balance = EXCLUDED.available_balance,
+                pending_balance = EXCLUDED.pending_balance,
+                updated_at = EXCLUDED.updated_at",
+            new { User1 = memorialUserId1, User2 = memorialUserId2, NextMonth = DateTime.UtcNow.AddMonths(1), Now = DateTime.UtcNow });
+
+        Console.WriteLine("? Payout balances seeded");
+
+        // =========================================================================
+        // Memorial Birds and Messages
+        // ============================================================================
+
+        // Create a memorial bird
+        var memorialBirdId = Guid.NewGuid();
+        await connection.ExecuteAsync(@"
+            INSERT INTO birds (bird_id, owner_id, name, species, tagline, description, image_url, loved_count, supported_count, created_at, is_memorial, memorial_date, memorial_reason, funds_redirection_choice)
+            VALUES (@BirdId, @OwnerId, @Name, @Species, @Tagline, @Description, @ImageUrl, @LovedCount, @SupportedCount, @CreatedAt, true, @MemorialDate, @MemorialReason, @FundsRedirection)
+            ON CONFLICT (bird_id) DO NOTHING",
+            new
+            {
+                BirdId = memorialBirdId,
+                OwnerId = memorialUserId1,
+                Name = "Tweety",
+                Species = "Canary",
+                Tagline = "A beautiful yellow canary who brought joy to many",
+                Description = "Thank you to everyone who supported Tweety. Your love made a real difference in their life. Tweety passed away peacefully after a wonderful life full of song and sunshine.",
+                ImageUrl = "birds/memorial-bird.jpg",
+                LovedCount = 523,
+                SupportedCount = 142,
+                CreatedAt = DateTime.UtcNow.AddMonths(-6),
+                MemorialDate = DateTime.UtcNow.AddDays(-7),
+                MemorialReason = "Passed away peacefully after a wonderful life",
+                FundsRedirection = "emergency_fund"
+            });
+
+        Console.WriteLine($"? Memorial bird seeded: {memorialBirdId}");
+
+        // Add memorial messages
+        var memorialMessages = new[]
+        {
+            new { MessageId = Guid.NewGuid(), UserId = memorialUserId2, Message = "Tweety was such a beautiful bird. Sending love to the owner. ??" },
+            new { MessageId = Guid.NewGuid(), UserId = memorialUserId1, Message = "I will miss seeing Tweety's happy chirps. Rest in peace little one. ???" },
+            new { MessageId = Guid.NewGuid(), UserId = memorialUserId2, Message = "Thank you for sharing Tweety with us. Their memory will live on forever." }
+        };
+
+        foreach (var msg in memorialMessages)
+        {
+            await connection.ExecuteAsync(@"
+                INSERT INTO memorial_messages (message_id, bird_id, user_id, message, is_approved, created_at, updated_at)
+                VALUES (@MessageId, @BirdId, @UserId, @Message, true, @Now, @Now)
+                ON CONFLICT (message_id) DO NOTHING",
+                new
+                {
+                    MessageId = msg.MessageId,
+                    BirdId = memorialBirdId,
+                    UserId = msg.UserId,
+                    Message = msg.Message,
+                    Now = DateTime.UtcNow
+                });
+        }
+
+        Console.WriteLine($"? {memorialMessages.Length} memorial messages seeded");
+
+        // Add fund redirection record
+        var redirectionId = Guid.NewGuid();
+        await connection.ExecuteAsync(@"
+            INSERT INTO memorial_fund_redirections 
+            (redirection_id, bird_id, previous_owner_id, remaining_balance, redirection_type, status, processed_at, transaction_id, notes, created_at, updated_at)
+            VALUES (@RedirectionId, @BirdId, @OwnerId, @Balance, @Type, @Status, @ProcessedAt, @TxId, @Notes, @Now, @Now)
+            ON CONFLICT (redirection_id) DO NOTHING",
+            new
+            {
+                RedirectionId = redirectionId,
+                BirdId = memorialBirdId,
+                OwnerId = memorialUserId1,
+                Balance = 50.00m,
+                Type = "emergency_fund",
+                Status = "completed",
+                ProcessedAt = DateTime.UtcNow.AddDays(-6),
+                TxId = "EMERG-12345678",
+                Notes = "Transferred $50.00 to platform emergency fund",
+                Now = DateTime.UtcNow
+            });
+
+        Console.WriteLine($"? Memorial fund redirection seeded: {redirectionId}");
+
+        Console.WriteLine("==============================================");
     }
 }

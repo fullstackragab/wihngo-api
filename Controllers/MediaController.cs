@@ -21,6 +21,22 @@ namespace Wihngo.Controllers
         }
 
         /// <summary>
+        /// DIAGNOSTIC ENDPOINT - Test what the API receives
+        /// </summary>
+        [HttpPost("test-request")]
+        public IActionResult TestRequest([FromBody] object rawRequest)
+        {
+            _logger.LogInformation("?? RAW REQUEST RECEIVED: {Request}", System.Text.Json.JsonSerializer.Serialize(rawRequest));
+            
+            return Ok(new 
+            { 
+                message = "Request received successfully",
+                received = rawRequest,
+                type = rawRequest?.GetType().Name
+            });
+        }
+
+        /// <summary>
         /// Generate a pre-signed URL for uploading media to S3
         /// </summary>
         /// <remarks>
@@ -38,9 +54,38 @@ namespace Wihngo.Controllers
         {
             try
             {
+                // Log the incoming request for debugging
+                _logger.LogInformation("?? Upload URL request received - MediaType: {MediaType}, FileExtension: {FileExtension}, FileName: {FileName}, RelatedId: {RelatedId}",
+                    request?.MediaType ?? "NULL",
+                    request?.FileExtension ?? "NULL",
+                    request?.FileName ?? "NULL",
+                    request?.RelatedId?.ToString() ?? "NULL");
+
                 if (!ModelState.IsValid)
                 {
-                    return BadRequest(new { message = "Validation failed", errors = ModelState });
+                    var errors = ModelState
+                        .Where(x => x.Value?.Errors.Count > 0)
+                        .ToDictionary(
+                            kvp => kvp.Key,
+                            kvp => kvp.Value?.Errors.Select(e => e.ErrorMessage).ToArray()
+                        );
+                    
+                    _logger.LogWarning("? Model validation failed: {Errors}", 
+                        string.Join(", ", errors.Select(e => $"{e.Key}: {string.Join(", ", e.Value ?? Array.Empty<string>())}")));
+                    
+                    return BadRequest(new 
+                    { 
+                        message = "Validation failed", 
+                        errors = errors,
+                        received = new 
+                        {
+                            mediaType = request?.MediaType,
+                            fileExtension = request?.FileExtension,
+                            fileName = request?.FileName,
+                            relatedId = request?.RelatedId
+                        },
+                        hint = "Expected JSON format: { \"mediaType\": \"bird-profile-image\", \"fileExtension\": \"png\" }"
+                    });
                 }
 
                 var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -53,18 +98,39 @@ namespace Wihngo.Controllers
                 var validMediaTypes = new[] { "profile-image", "story-image", "story-video", "bird-profile-image", "bird-video" };
                 if (!validMediaTypes.Contains(request.MediaType.ToLower()))
                 {
+                    _logger.LogWarning("? Invalid media type: {MediaType}", request.MediaType);
                     return BadRequest(new { message = "Invalid media type. Valid types: " + string.Join(", ", validMediaTypes) });
                 }
 
-                // Validate file extension
-                var validExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov", ".avi", ".webm" };
-                var extension = request.FileExtension.ToLower();
+                // Determine file extension
+                string? extension = request.FileExtension;
+                
+                // If no extension provided, try to derive from filename
+                if (string.IsNullOrWhiteSpace(extension) && !string.IsNullOrWhiteSpace(request.FileName))
+                {
+                    extension = Path.GetExtension(request.FileName);
+                    _logger.LogInformation("?? Derived extension from filename: {Extension}", extension);
+                }
+                
+                // If still no extension, default based on media type
+                if (string.IsNullOrWhiteSpace(extension))
+                {
+                    extension = request.MediaType.ToLower().Contains("video") ? ".mp4" : ".jpg";
+                    _logger.LogInformation("?? Using default extension: {Extension}", extension);
+                }
+
+                // Normalize file extension - ensure it starts with a dot and is lowercase
+                extension = extension.ToLower();
                 if (!extension.StartsWith("."))
                 {
                     extension = "." + extension;
                 }
+
+                // Validate file extension
+                var validExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov", ".avi", ".webm" };
                 if (!validExtensions.Contains(extension))
                 {
+                    _logger.LogWarning("? Invalid file extension: {Extension}", extension);
                     return BadRequest(new { message = "Invalid file extension. Valid extensions: " + string.Join(", ", validExtensions) });
                 }
 
@@ -72,6 +138,7 @@ namespace Wihngo.Controllers
                 // Note: bird-profile-image and bird-video no longer require RelatedId (can upload before bird creation)
                 if (request.MediaType.ToLower() == "story-image" && !request.RelatedId.HasValue)
                 {
+                    _logger.LogWarning("? RelatedId required for media type: {MediaType}", request.MediaType);
                     return BadRequest(new { message = $"RelatedId is required for media type: {request.MediaType}" });
                 }
 
@@ -81,8 +148,8 @@ namespace Wihngo.Controllers
                     extension,
                     request.RelatedId);
 
-                _logger.LogInformation("Generated upload URL for user {UserId}, media type {MediaType}", 
-                    userId, request.MediaType);
+                _logger.LogInformation("? Generated upload URL for user {UserId}, media type {MediaType}, S3 key: {S3Key}", 
+                    userId, request.MediaType, s3Key);
 
                 // Determine recommended Content-Type
                 var contentType = extension.ToLower() switch
@@ -108,8 +175,8 @@ namespace Wihngo.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error generating upload URL");
-                return StatusCode(500, new { message = "Failed to generate upload URL" });
+                _logger.LogError(ex, "? Error generating upload URL");
+                return StatusCode(500, new { message = "Failed to generate upload URL", error = ex.Message });
             }
         }
 

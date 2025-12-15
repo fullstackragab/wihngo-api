@@ -70,5 +70,24 @@ namespace Wihngo.Models
         // Optional QR code URL for offline-to-online profile link
         [MaxLength(1000)]
         public string? QrCodeUrl { get; set; }
+
+        // Memorial fields
+        [Column("is_memorial")]
+        public bool IsMemorial { get; set; } = false;
+
+        [Column("memorial_date")]
+        public DateTime? MemorialDate { get; set; }
+
+        [MaxLength(500)]
+        [Column("memorial_reason")]
+        public string? MemorialReason { get; set; }
+
+        [MaxLength(50)]
+        [Column("funds_redirection_choice")]
+        public string? FundsRedirectionChoice { get; set; }
+
+        // Navigation properties for memorial
+        public List<MemorialMessage> MemorialMessages { get; set; } = new();
+        public List<MemorialFundRedirection> FundRedirections { get; set; } = new();
     }
 }

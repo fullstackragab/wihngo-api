@@ -13,6 +13,7 @@ using Wihngo.Configuration;
 using Wihngo.Models.Entities;
 using Wihngo.Middleware;
 using Scalar.AspNetCore;
+using Dapper;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -85,6 +86,9 @@ builder.Services.AddControllers().AddJsonOptions(opts =>
 {
     // Prevent circular reference errors when returning entities with navigation properties
     opts.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+    
+    // Make property name matching case-insensitive (accepts both camelCase and PascalCase)
+    opts.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
 });
 
 builder.Services.AddOpenApi();
@@ -158,11 +162,9 @@ for (int attempt = 1; attempt <= maxRetries; attempt++)
         Console.WriteLine($"✅ Database connection successful on attempt {attempt}!");
         isDatabaseAvailable = true;
         
-        // Get PostgreSQL version
-        using var cmd = testConnection.CreateCommand();
-        cmd.CommandText = "SELECT version()";
-        var version = await cmd.ExecuteScalarAsync();
-        Console.WriteLine($"📊 PostgreSQL Version: {version?.ToString()?.Split('\n')[0]}");
+        // Get PostgreSQL version with Dapper
+        var version = await testConnection.ExecuteScalarAsync<string>("SELECT version()");
+        Console.WriteLine($"📊 PostgreSQL Version: {version?.Split('\n')[0]}");
         
         await testConnection.CloseAsync();
         break;
@@ -234,6 +236,8 @@ builder.Services.Configure<InvoiceConfiguration>(builder.Configuration.GetSectio
 builder.Services.Configure<SolanaConfiguration>(builder.Configuration.GetSection("Solana"));
 builder.Services.Configure<Wihngo.Configuration.BaseConfiguration>(builder.Configuration.GetSection("Base"));
 builder.Services.Configure<PayPalConfiguration>(builder.Configuration.GetSection("PayPal"));
+builder.Services.Configure<WiseConfiguration>(builder.Configuration.GetSection("Wise"));
+builder.Services.Configure<PayoutConfiguration>(builder.Configuration.GetSection("Payout"));
 
 // SendGrid/SMTP Email Configuration - Read from environment variables or appsettings.json
 builder.Services.Configure<SmtpConfiguration>(config =>
@@ -371,6 +375,19 @@ builder.Services.AddScoped<IPremiumSubscriptionService, PremiumSubscriptionServi
 builder.Services.AddScoped<ICharityService, CharityService>();
 builder.Services.AddScoped<CharityAllocationJob>();
 
+// Payout Services
+builder.Services.AddScoped<IPayoutService, PayoutService>();
+builder.Services.AddScoped<IPayoutValidationService, PayoutValidationService>();
+builder.Services.AddScoped<IPayoutCalculationService, PayoutCalculationService>();
+builder.Services.AddScoped<IWisePayoutService, WisePayoutService>();
+builder.Services.AddScoped<IPayPalPayoutService, PayPalPayoutService>();
+builder.Services.AddScoped<ISolanaPayoutService, SolanaPayoutService>();
+builder.Services.AddScoped<IBasePayoutService, BasePayoutService>();
+builder.Services.AddScoped<MonthlyPayoutJob>();
+
+// Memorial Services
+builder.Services.AddScoped<IMemorialService, MemorialService>();
+
 // 📋 HANGFIRE - CONDITIONAL SETUP
 if (isDatabaseAvailable)
 {
@@ -489,7 +506,9 @@ if (isDatabaseAvailable)
             if (app.Environment.IsDevelopment())
             {
                 logger.LogInformation("🌱 Seeding development data...");
-                await Wihngo.Database.DatabaseSeeder.SeedDevelopmentDataAsync(app.Services);
+                // TEMPORARILY DISABLED: Database seeder needs migration to raw SQL
+                // await Wihngo.Database.DatabaseSeeder.SeedDevelopmentDataAsync(app.Services);
+                logger.LogWarning("⚠️  Development data seeding is temporarily disabled - needs migration to raw SQL");
             }
             else
             {
@@ -517,51 +536,33 @@ async Task SeedDatabaseAsync(IDbConnectionFactory dbFactory, ILogger logger)
         using var connection = await dbFactory.CreateOpenConnectionAsync();
         
         // Create invoice sequence if it doesn't exist
-        using var cmd1 = connection.CreateCommand();
-        cmd1.CommandText = @"
+        await connection.ExecuteAsync(@"
             DO $$ 
             BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_sequences WHERE schemaname = 'public' AND sequencename = 'wihngo_invoice_seq') THEN
                     CREATE SEQUENCE wihngo_invoice_seq START 1;
                 END IF;
-            END $$;
-        ";
-        await cmd1.ExecuteNonQueryAsync();
+            END $$;");
         
         logger.LogInformation("✅ Invoice sequence created");
         
         // Seed supported tokens if not exist
-        using var checkCmd = connection.CreateCommand();
-        checkCmd.CommandText = "SELECT COUNT(*) FROM supported_tokens";
-        var count = (long?)await checkCmd.ExecuteScalarAsync() ?? 0;
+        var count = await connection.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM supported_tokens");
         
         if (count == 0)
         {
             var tokens = new[]
             {
-                new { Id = Guid.NewGuid(), TokenSymbol = "USDC", Chain = "solana", MintAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", Decimals = 6, IsActive = true, TolerancePercent = 0.5m },
-                new { Id = Guid.NewGuid(), TokenSymbol = "EURC", Chain = "solana", MintAddress = "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr", Decimals = 6, IsActive = true, TolerancePercent = 0.5m },
-                new { Id = Guid.NewGuid(), TokenSymbol = "USDC", Chain = "base", MintAddress = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", Decimals = 6, IsActive = true, TolerancePercent = 0.5m },
-                new { Id = Guid.NewGuid(), TokenSymbol = "EURC", Chain = "base", MintAddress = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42", Decimals = 6, IsActive = true, TolerancePercent = 0.5m }
+                new { Id = Guid.NewGuid(), TokenSymbol = "USDC", Chain = "solana", MintAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", Decimals = 6, IsActive = true, TolerancePercent = 0.5m, CreatedAt = DateTime.UtcNow },
+                new { Id = Guid.NewGuid(), TokenSymbol = "EURC", Chain = "solana", MintAddress = "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr", Decimals = 6, IsActive = true, TolerancePercent = 0.5m, CreatedAt = DateTime.UtcNow },
+                new { Id = Guid.NewGuid(), TokenSymbol = "USDC", Chain = "base", MintAddress = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", Decimals = 6, IsActive = true, TolerancePercent = 0.5m, CreatedAt = DateTime.UtcNow },
+                new { Id = Guid.NewGuid(), TokenSymbol = "EURC", Chain = "base", MintAddress = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42", Decimals = 6, IsActive = true, TolerancePercent = 0.5m, CreatedAt = DateTime.UtcNow }
             };
             
-            foreach (var token in tokens)
-            {
-                using var insertCmd = connection.CreateCommand();
-                insertCmd.CommandText = @"
-                    INSERT INTO supported_tokens (id, token_symbol, chain, mint_address, decimals, is_active, tolerance_percent, created_at)
-                    VALUES (@id, @symbol, @chain, @mint, @decimals, @active, @tolerance, @created)
-                ";
-                insertCmd.Parameters.AddWithValue("id", token.Id);
-                insertCmd.Parameters.AddWithValue("symbol", token.TokenSymbol);
-                insertCmd.Parameters.AddWithValue("chain", token.Chain);
-                insertCmd.Parameters.AddWithValue("mint", token.MintAddress);
-                insertCmd.Parameters.AddWithValue("decimals", token.Decimals);
-                insertCmd.Parameters.AddWithValue("active", token.IsActive);
-                insertCmd.Parameters.AddWithValue("tolerance", token.TolerancePercent);
-                insertCmd.Parameters.AddWithValue("created", DateTime.UtcNow);
-                await insertCmd.ExecuteNonQueryAsync();
-            }
+            await connection.ExecuteAsync(@"
+                INSERT INTO supported_tokens (id, token_symbol, chain, mint_address, decimals, is_active, tolerance_percent, created_at)
+                VALUES (@Id, @TokenSymbol, @Chain, @MintAddress, @Decimals, @IsActive, @TolerancePercent, @CreatedAt)",
+                tokens);
             
             logger.LogInformation("✅ Seeded {Count} supported tokens", tokens.Length);
         }
@@ -654,5 +655,4 @@ catch (Exception ex)
 Console.WriteLine("═══════════════════════════════════════════════");
 Console.WriteLine("");
 
-// This is critical - keeps the application running
 app.Run();
