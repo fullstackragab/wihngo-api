@@ -26,6 +26,7 @@ namespace Wihngo.Controllers
         private readonly INotificationService _notificationService;
         private readonly IS3Service _s3Service;
         private readonly ILogger<BirdsController> _logger;
+        private readonly IMemorialService _memorialService;
 
         public BirdsController(
             AppDbContext db,
@@ -33,7 +34,8 @@ namespace Wihngo.Controllers
             IMapper mapper, 
             INotificationService notificationService,
             IS3Service s3Service,
-            ILogger<BirdsController> logger)
+            ILogger<BirdsController> logger,
+            IMemorialService memorialService)
         {
             _db = db;
             _dbFactory = dbFactory;
@@ -41,6 +43,7 @@ namespace Wihngo.Controllers
             _notificationService = notificationService;
             _s3Service = s3Service;
             _logger = logger;
+            _memorialService = memorialService;
         }
 
         private Guid? GetUserIdClaim()
@@ -57,6 +60,12 @@ namespace Wihngo.Controllers
             var bird = await _db.Birds.FindAsync(birdId);
             if (bird == null) return false;
             return bird.OwnerId == userId.Value;
+        }
+
+        private bool IsMilestone(int count)
+        {
+            int[] milestones = { 10, 50, 100, 500, 1000, 5000 };
+            return milestones.Contains(count);
         }
 
         [HttpGet]
@@ -292,8 +301,30 @@ namespace Wihngo.Controllers
                 CreatedAt = DateTime.UtcNow
             };
 
-            _db.Birds.Add(bird);
-            await _db.SaveChangesAsync();
+            // Use Dapper with all required columns
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+            await connection.ExecuteAsync(@"
+                INSERT INTO birds (
+                    bird_id, owner_id, name, species, tagline, description, image_url, created_at, 
+                    loved_count, supported_count, donation_cents, 
+                    is_premium, is_memorial, max_media_count
+                )
+                VALUES (
+                    @BirdId, @OwnerId, @Name, @Species, @Tagline, @Description, @ImageUrl, @CreatedAt, 
+                    0, 0, 0,
+                    false, false, 10
+                )",
+                new
+                {
+                    bird.BirdId,
+                    bird.OwnerId,
+                    bird.Name,
+                    bird.Species,
+                    bird.Tagline,
+                    bird.Description,
+                    bird.ImageUrl,
+                    bird.CreatedAt
+                });
 
             _logger.LogInformation("Bird created: {BirdId} by user {UserId}", bird.BirdId, userId.Value);
 
@@ -331,15 +362,19 @@ namespace Wihngo.Controllers
         {
             if (!await EnsureOwner(id)) return Forbid();
 
-            var bird = await _db.Birds.FindAsync(id);
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+            
+            // Get current bird data
+            var bird = await connection.QueryFirstOrDefaultAsync<Bird>(
+                "SELECT * FROM birds WHERE bird_id = @BirdId",
+                new { BirdId = id });
+                
             if (bird == null) return NotFound();
 
-            bird.Name = dto.Name;
-            bird.Species = dto.Species;
-            bird.Description = dto.Description;
-            bird.Tagline = dto.Tagline;
-
             // Update image if provided and different
+            string? imageToDelete = null;
+            var newImageUrl = bird.ImageUrl;
+            
             if (!string.IsNullOrWhiteSpace(dto.ImageS3Key) && dto.ImageS3Key != bird.ImageUrl)
             {
                 var imageExists = await _s3Service.FileExistsAsync(dto.ImageS3Key);
@@ -348,23 +383,46 @@ namespace Wihngo.Controllers
                     return BadRequest(new { message = "Bird profile image not found in S3." });
                 }
 
-                // Delete old image
+                // Mark old image for deletion
                 if (!string.IsNullOrWhiteSpace(bird.ImageUrl))
                 {
-                    try
-                    {
-                        await _s3Service.DeleteFileAsync(bird.ImageUrl);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to delete old bird image");
-                    }
+                    imageToDelete = bird.ImageUrl;
                 }
 
-                bird.ImageUrl = dto.ImageS3Key;
+                newImageUrl = dto.ImageS3Key;
             }
 
-            await _db.SaveChangesAsync();
+            // Update bird with Dapper
+            await connection.ExecuteAsync(@"
+                UPDATE birds 
+                SET name = @Name, 
+                    species = @Species, 
+                    description = @Description, 
+                    tagline = @Tagline, 
+                    image_url = @ImageUrl
+                WHERE bird_id = @BirdId",
+                new
+                {
+                    Name = dto.Name,
+                    Species = dto.Species,
+                    Description = dto.Description,
+                    Tagline = dto.Tagline,
+                    ImageUrl = newImageUrl,
+                    BirdId = id
+                });
+
+            // Delete old image after successful update
+            if (imageToDelete != null)
+            {
+                try
+                {
+                    await _s3Service.DeleteFileAsync(imageToDelete);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete old bird image");
+                }
+            }
             
             _logger.LogInformation("Bird updated: {BirdId}", id);
             
@@ -377,8 +435,19 @@ namespace Wihngo.Controllers
         {
             if (!await EnsureOwner(id)) return Forbid();
 
-            var bird = await _db.Birds.FindAsync(id);
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+            
+            // Get bird before deleting
+            var bird = await connection.QueryFirstOrDefaultAsync<Bird>(
+                "SELECT * FROM birds WHERE bird_id = @BirdId",
+                new { BirdId = id });
+                
             if (bird == null) return NotFound();
+
+            // Delete bird from database
+            await connection.ExecuteAsync(
+                "DELETE FROM birds WHERE bird_id = @BirdId",
+                new { BirdId = id });
 
             // Delete media file from S3
             if (!string.IsNullOrWhiteSpace(bird.ImageUrl))
@@ -392,9 +461,6 @@ namespace Wihngo.Controllers
                     _logger.LogWarning(ex, "Failed to delete bird image from S3");
                 }
             }
-
-            _db.Birds.Remove(bird);
-            await _db.SaveChangesAsync();
             
             _logger.LogInformation("Bird deleted: {BirdId}", id);
             
@@ -405,35 +471,55 @@ namespace Wihngo.Controllers
         [HttpPost("{id}/love")]
         public async Task<IActionResult> Love(Guid id)
         {
-            var bird = await _db.Birds.FindAsync(id);
-            if (bird == null) return NotFound("Bird not found");
-
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!Guid.TryParse(userIdClaim, out var userId)) return Unauthorized();
 
-            var user = await _db.Users.FindAsync(userId);
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+            // Get bird
+            var bird = await connection.QueryFirstOrDefaultAsync<Bird>(
+                "SELECT * FROM birds WHERE bird_id = @BirdId",
+                new { BirdId = id });
+                
+            if (bird == null) return NotFound("Bird not found");
+
+            // Get user
+            var user = await connection.QueryFirstOrDefaultAsync<User>(
+                "SELECT * FROM users WHERE user_id = @UserId",
+                new { UserId = userId });
+                
             if (user == null) return Unauthorized("User not found");
 
-            var exists = await _db.Loves.FindAsync(userId, id);
-            if (exists != null) return BadRequest("Already loved");
+            // Check if already loved
+            var exists = await connection.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM loves WHERE user_id = @UserId AND bird_id = @BirdId)",
+                new { UserId = userId, BirdId = id });
+                
+            if (exists) return BadRequest("Already loved");
 
-            var love = new Love { UserId = userId, BirdId = id };
-            _db.Loves.Add(love);
+            // Insert love record
+            await connection.ExecuteAsync(@"
+                INSERT INTO loves (user_id, bird_id)
+                VALUES (@UserId, @BirdId)",
+                new { UserId = userId, BirdId = id });
 
-            // Atomic increment
-            await _db.Database.ExecuteSqlInterpolatedAsync($"UPDATE birds SET loved_count = loved_count + 1 WHERE bird_id = {id}");
-            await _db.SaveChangesAsync();
+            // Atomic increment of loved_count
+            await connection.ExecuteAsync(
+                "UPDATE birds SET loved_count = loved_count + 1 WHERE bird_id = @BirdId",
+                new { BirdId = id });
+
+            // Get updated love count
+            var loveCount = await connection.ExecuteScalarAsync<int>(
+                "SELECT loved_count FROM birds WHERE bird_id = @BirdId",
+                new { BirdId = id });
 
             // Send notification to bird owner
-            if (bird.OwnerId != userId) // Don't notify if user loves their own bird
+            if (bird.OwnerId != userId)
             {
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        var updatedBird = await _db.Birds.AsNoTracking().FirstOrDefaultAsync(b => b.BirdId == id);
-                        var loveCount = updatedBird?.LovedCount ?? 0;
-
                         await _notificationService.CreateNotificationAsync(new CreateNotificationDto
                         {
                             UserId = bird.OwnerId,
@@ -480,13 +566,26 @@ namespace Wihngo.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!Guid.TryParse(userIdClaim, out var userId)) return Unauthorized();
 
-            var love = await _db.Loves.FindAsync(userId, id);
-            if (love == null) return NotFound();
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+            // Check if love exists
+            var exists = await connection.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM loves WHERE user_id = @UserId AND bird_id = @BirdId)",
+                new { UserId = userId, BirdId = id });
+                
+            if (!exists) return NotFound();
+
+            // Delete love record
+            await connection.ExecuteAsync(@"
+                DELETE FROM loves 
+                WHERE user_id = @UserId AND bird_id = @BirdId",
+                new { UserId = userId, BirdId = id });
 
             // Atomic decrement but not below zero
-            await _db.Database.ExecuteSqlInterpolatedAsync($"UPDATE birds SET loved_count = GREATEST(loved_count - 1, 0) WHERE bird_id = {id}");
-            _db.Loves.Remove(love);
-            await _db.SaveChangesAsync();
+            await connection.ExecuteAsync(
+                "UPDATE birds SET loved_count = GREATEST(loved_count - 1, 0) WHERE bird_id = @BirdId",
+                new { BirdId = id });
+                
             return NoContent();
         }
 
@@ -497,17 +596,33 @@ namespace Wihngo.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!Guid.TryParse(userIdClaim, out var userId)) return Unauthorized();
 
-            var love = await _db.Loves.FindAsync(userId, id);
-            if (love == null) return NotFound("Love record not found");
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+            // Check if love exists
+            var exists = await connection.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM loves WHERE user_id = @UserId AND bird_id = @BirdId)",
+                new { UserId = userId, BirdId = id });
+                
+            if (!exists) return NotFound("Love record not found");
 
             // Verify bird exists
-            var bird = await _db.Birds.FindAsync(id);
-            if (bird == null) return NotFound("Bird not found");
+            var birdExists = await connection.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM birds WHERE bird_id = @BirdId)",
+                new { BirdId = id });
+                
+            if (!birdExists) return NotFound("Bird not found");
+
+            // Delete love record
+            await connection.ExecuteAsync(@"
+                DELETE FROM loves 
+                WHERE user_id = @UserId AND bird_id = @BirdId",
+                new { UserId = userId, BirdId = id });
 
             // Atomic decrement but not below zero
-            await _db.Database.ExecuteSqlInterpolatedAsync($"UPDATE birds SET loved_count = GREATEST(loved_count - 1, 0) WHERE bird_id = {id}");
-            _db.Loves.Remove(love);
-            await _db.SaveChangesAsync();
+            await connection.ExecuteAsync(
+                "UPDATE birds SET loved_count = GREATEST(loved_count - 1, 0) WHERE bird_id = @BirdId",
+                new { BirdId = id });
+                
             return Ok();
         }
 
@@ -578,44 +693,61 @@ namespace Wihngo.Controllers
         {
             if (!await EnsureOwner(id)) return Forbid();
 
-            // Check for existing active subscription using raw SQL
-            var checkSql = "SELECT COUNT(*) FROM bird_premium_subscriptions WHERE bird_id = @BirdId AND status = 'active'";
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
-            var existingCount = await connection.ExecuteScalarAsync<int>(checkSql, new { BirdId = id });
+
+            // Check for existing active subscription
+            var existingCount = await connection.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM bird_premium_subscriptions WHERE bird_id = @BirdId AND status = 'active'",
+                new { BirdId = id });
             
             if (existingCount > 0) return BadRequest("Already subscribed");
 
             var userId = GetUserIdClaim().Value;
+            var subscriptionId = Guid.NewGuid();
+            var now = DateTime.UtcNow;
+            var periodEnd = now.AddMonths(1);
 
-            var subscription = new BirdPremiumSubscription
-            {
-                BirdId = id,
-                OwnerId = userId,
-                Status = "active",
-                Plan = "monthly",
-                Provider = "local",
-                ProviderSubscriptionId = Guid.NewGuid().ToString(),
-                PriceCents = 300,
-                DurationDays = 30,
-                StartedAt = DateTime.UtcNow,
-                CurrentPeriodEnd = DateTime.UtcNow.AddMonths(1),
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
+            // Insert subscription
+            await connection.ExecuteAsync(@"
+                INSERT INTO bird_premium_subscriptions 
+                    (id, bird_id, owner_id, status, plan, provider, provider_subscription_id, 
+                     price_cents, duration_days, started_at, current_period_end, created_at, updated_at)
+                VALUES (@Id, @BirdId, @OwnerId, @Status, @Plan, @Provider, @ProviderSubscriptionId, 
+                        @PriceCents, @DurationDays, @StartedAt, @CurrentPeriodEnd, @CreatedAt, @UpdatedAt)",
+                new
+                {
+                    Id = subscriptionId,
+                    BirdId = id,
+                    OwnerId = userId,
+                    Status = "active",
+                    Plan = "monthly",
+                    Provider = "local",
+                    ProviderSubscriptionId = Guid.NewGuid().ToString(),
+                    PriceCents = 300,
+                    DurationDays = 30,
+                    StartedAt = now,
+                    CurrentPeriodEnd = periodEnd,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
 
-            _db.BirdPremiumSubscriptions.Add(subscription);
+            // Update bird
+            await connection.ExecuteAsync(@"
+                UPDATE birds 
+                SET is_premium = true, 
+                    premium_plan = @Plan, 
+                    premium_expires_at = @ExpiresAt, 
+                    max_media_count = @MaxMediaCount
+                WHERE bird_id = @BirdId",
+                new
+                {
+                    Plan = "monthly",
+                    ExpiresAt = periodEnd,
+                    MaxMediaCount = 20,
+                    BirdId = id
+                });
 
-            var bird = await _db.Birds.FindAsync(id);
-            if (bird != null)
-            {
-                bird.IsPremium = true;
-                bird.PremiumPlan = subscription.Plan;
-                bird.PremiumExpiresAt = subscription.CurrentPeriodEnd;
-                bird.MaxMediaCount = 20;
-            }
-
-            await _db.SaveChangesAsync();
-            return Ok(new { subscriptionId = subscription.Id, expiry = subscription.CurrentPeriodEnd });
+            return Ok(new { subscriptionId, expiry = periodEnd });
         }
 
         [Authorize]
@@ -624,44 +756,59 @@ namespace Wihngo.Controllers
         {
             if (!await EnsureOwner(id)) return Forbid();
 
-            // Check for existing active subscription using raw SQL
-            var checkSql = "SELECT COUNT(*) FROM bird_premium_subscriptions WHERE bird_id = @BirdId AND status = 'active'";
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
-            var existingCount = await connection.ExecuteScalarAsync<int>(checkSql, new { BirdId = id });
+
+            // Check for existing active subscription
+            var existingCount = await connection.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM bird_premium_subscriptions WHERE bird_id = @BirdId AND status = 'active'",
+                new { BirdId = id });
             
             if (existingCount > 0) return BadRequest("Already subscribed");
 
             var userId = GetUserIdClaim().Value;
+            var subscriptionId = Guid.NewGuid();
+            var now = DateTime.UtcNow;
 
-            var subscription = new BirdPremiumSubscription
-            {
-                BirdId = id,
-                OwnerId = userId,
-                Status = "active",
-                Plan = "lifetime",
-                Provider = "local",
-                ProviderSubscriptionId = Guid.NewGuid().ToString(),
-                PriceCents = 7000,
-                DurationDays = int.MaxValue,
-                StartedAt = DateTime.UtcNow,
-                CurrentPeriodEnd = DateTime.MaxValue,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
+            // Insert subscription
+            await connection.ExecuteAsync(@"
+                INSERT INTO bird_premium_subscriptions 
+                    (id, bird_id, owner_id, status, plan, provider, provider_subscription_id, 
+                     price_cents, duration_days, started_at, current_period_end, created_at, updated_at)
+                VALUES (@Id, @BirdId, @OwnerId, @Status, @Plan, @Provider, @ProviderSubscriptionId, 
+                        @PriceCents, @DurationDays, @StartedAt, @CurrentPeriodEnd, @CreatedAt, @UpdatedAt)",
+                new
+                {
+                    Id = subscriptionId,
+                    BirdId = id,
+                    OwnerId = userId,
+                    Status = "active",
+                    Plan = "lifetime",
+                    Provider = "local",
+                    ProviderSubscriptionId = Guid.NewGuid().ToString(),
+                    PriceCents = 7000,
+                    DurationDays = int.MaxValue,
+                    StartedAt = now,
+                    CurrentPeriodEnd = DateTime.MaxValue,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
 
-            _db.BirdPremiumSubscriptions.Add(subscription);
+            // Update bird
+            await connection.ExecuteAsync(@"
+                UPDATE birds 
+                SET is_premium = true, 
+                    premium_plan = @Plan, 
+                    premium_expires_at = NULL, 
+                    max_media_count = @MaxMediaCount
+                WHERE bird_id = @BirdId",
+                new
+                {
+                    Plan = "lifetime",
+                    MaxMediaCount = 50,
+                    BirdId = id
+                });
 
-            var bird = await _db.Birds.FindAsync(id);
-            if (bird != null)
-            {
-                bird.IsPremium = true;
-                bird.PremiumPlan = subscription.Plan;
-                bird.PremiumExpiresAt = null;
-                bird.MaxMediaCount = 50;
-            }
-
-            await _db.SaveChangesAsync();
-            return Ok(new { subscriptionId = subscription.Id, plan = subscription.Plan });
+            return Ok(new { subscriptionId, plan = "lifetime" });
         }
 
         [Authorize]
@@ -670,20 +817,31 @@ namespace Wihngo.Controllers
         {
             if (!await EnsureOwner(id)) return Forbid();
 
-            var bird = await _db.Birds.FindAsync(id);
-            if (bird == null) return NotFound();
-
-            // Check for active subscription using raw SQL
-            var checkSql = "SELECT COUNT(*) FROM bird_premium_subscriptions WHERE bird_id = @BirdId AND status = 'active'";
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
-            var activeCount = await connection.ExecuteScalarAsync<int>(checkSql, new { BirdId = id });
+
+            // Check if bird exists
+            var birdExists = await connection.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM birds WHERE bird_id = @BirdId)",
+                new { BirdId = id });
+                
+            if (!birdExists) return NotFound();
+
+            // Check for active subscription
+            var activeCount = await connection.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM bird_premium_subscriptions WHERE bird_id = @BirdId AND status = 'active'",
+                new { BirdId = id });
             
             if (activeCount == 0) return Forbid("No active subscription");
 
             var json = JsonSerializer.Serialize(dto);
-            bird.PremiumStyleJson = json;
+            
+            // Update premium style
+            await connection.ExecuteAsync(@"
+                UPDATE birds 
+                SET premium_style_json = @StyleJson
+                WHERE bird_id = @BirdId",
+                new { StyleJson = json, BirdId = id });
 
-            await _db.SaveChangesAsync();
             return Ok();
         }
 
@@ -693,14 +851,25 @@ namespace Wihngo.Controllers
         {
             if (!await EnsureOwner(id)) return Forbid();
 
-            var bird = await _db.Birds.FindAsync(id);
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+            // Get bird to check premium status
+            var bird = await connection.QueryFirstOrDefaultAsync<Bird>(
+                "SELECT * FROM birds WHERE bird_id = @BirdId",
+                new { BirdId = id });
+                
             if (bird == null) return NotFound();
 
             // Allow qr to be set only if premium
             if (!bird.IsPremium) return Forbid("Only premium birds can have QR codes");
 
-            bird.QrCodeUrl = qrUrl;
-            await _db.SaveChangesAsync();
+            // Update QR code
+            await connection.ExecuteAsync(@"
+                UPDATE birds 
+                SET qr_code_url = @QrUrl
+                WHERE bird_id = @BirdId",
+                new { QrUrl = qrUrl, BirdId = id });
+
             return Ok();
         }
 
@@ -708,31 +877,66 @@ namespace Wihngo.Controllers
         [HttpPost("{id}/donate")]
         public async Task<IActionResult> DonateToBird(Guid id, [FromBody] long cents)
         {
-            var bird = await _db.Birds.FindAsync(id);
-            if (bird == null) return NotFound("Bird not found");
-
-            // Record a simple support transaction (not handling external payments here)
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (!Guid.TryParse(userIdClaim, out var supporterId)) return Unauthorized();
 
-            var tx = new SupportTransaction
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+            // Get bird
+            var bird = await connection.QueryFirstOrDefaultAsync<Bird>(
+                "SELECT * FROM birds WHERE bird_id = @BirdId",
+                new { BirdId = id });
+                
+            if (bird == null) return NotFound("Bird not found");
+
+            // Check if bird is memorial - prevent donations to deceased birds
+            if (bird.IsMemorial)
             {
-                TransactionId = Guid.NewGuid(),
-                BirdId = id,
-                SupporterId = supporterId,
-                Amount = cents / 100m,
-                Message = null,
-                CreatedAt = DateTime.UtcNow
-            };
+                return BadRequest(new
+                {
+                    error = "memorial_bird",
+                    message = "This bird has passed away and is no longer accepting donations. You can leave a memorial message instead.",
+                    canLeaveMessage = true
+                });
+            }
 
-            _db.SupportTransactions.Add(tx);
-            bird.DonationCents += cents;
+            // Create transaction record
+            var transactionId = Guid.NewGuid();
+            var now = DateTime.UtcNow;
             
-            // Use raw SQL to get count
-            var countSql = "SELECT COUNT(*) FROM support_transactions WHERE bird_id = @BirdId";
-            bird.SupportedCount = await _dbFactory.ExecuteScalarAsync<int>(countSql, new { BirdId = id });
+            await connection.ExecuteAsync(@"
+                INSERT INTO support_transactions (transaction_id, bird_id, supporter_id, amount, message, created_at)
+                VALUES (@TransactionId, @BirdId, @SupporterId, @Amount, NULL, @CreatedAt)",
+                new
+                {
+                    TransactionId = transactionId,
+                    BirdId = id,
+                    SupporterId = supporterId,
+                    Amount = cents / 100m,
+                    CreatedAt = now
+                });
 
-            await _db.SaveChangesAsync();
+            // Update bird donation amount and get count
+            await connection.ExecuteAsync(@"
+                UPDATE birds 
+                SET donation_cents = donation_cents + @Cents
+                WHERE bird_id = @BirdId",
+                new { Cents = cents, BirdId = id });
+            
+            var supportedCount = await connection.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM support_transactions WHERE bird_id = @BirdId",
+                new { BirdId = id });
+                
+            await connection.ExecuteAsync(@"
+                UPDATE birds 
+                SET supported_count = @SupportedCount
+                WHERE bird_id = @BirdId",
+                new { SupportedCount = supportedCount, BirdId = id });
+
+            // Get updated donation total
+            var totalDonated = await connection.ExecuteScalarAsync<long>(
+                "SELECT donation_cents FROM birds WHERE bird_id = @BirdId",
+                new { BirdId = id });
 
             // Send notification to bird owner
             if (bird.OwnerId != supporterId)
@@ -741,7 +945,10 @@ namespace Wihngo.Controllers
                 {
                     try
                     {
-                        var supporter = await _db.Users.FindAsync(supporterId);
+                        var supporter = await connection.QueryFirstOrDefaultAsync<User>(
+                            "SELECT * FROM users WHERE user_id = @UserId",
+                            new { UserId = supporterId });
+                            
                         var amountDisplay = (cents / 100m).ToString("F2");
 
                         await _notificationService.CreateNotificationAsync(new CreateNotificationDto
@@ -749,12 +956,12 @@ namespace Wihngo.Controllers
                             UserId = bird.OwnerId,
                             Type = NotificationType.BirdSupported,
                             Title = "Corn " + (supporter?.Name ?? "Someone") + " supported " + bird.Name + "!",
-                            Message = $"{supporter?.Name ?? "Someone"} contributed ${amountDisplay} to support {bird.Name}. Total: ${bird.DonationCents / 100m:F2}",
+                            Message = $"{supporter?.Name ?? "Someone"} contributed ${amountDisplay} to support {bird.Name}. Total: ${totalDonated / 100m:F2}",
                             Priority = NotificationPriority.High,
                             Channels = NotificationChannel.InApp | NotificationChannel.Push | NotificationChannel.Email,
                             DeepLink = $"/birds/{id}",
                             BirdId = id,
-                            TransactionId = tx.TransactionId,
+                            TransactionId = transactionId,
                             ActorUserId = supporterId
                         });
 
@@ -767,9 +974,9 @@ namespace Wihngo.Controllers
                             Message = $"Your ${amountDisplay} support for {bird.Name} was processed!",
                             Priority = NotificationPriority.High,
                             Channels = NotificationChannel.InApp | NotificationChannel.Push | NotificationChannel.Email,
-                            DeepLink = $"/support/{tx.TransactionId}",
+                            DeepLink = $"/support/{transactionId}",
                             BirdId = id,
-                            TransactionId = tx.TransactionId
+                            TransactionId = transactionId
                         });
                     }
                     catch
@@ -779,13 +986,131 @@ namespace Wihngo.Controllers
                 });
             }
 
-            return Ok(new { totalDonated = bird.DonationCents });
+            return Ok(new { totalDonated });
         }
 
-        private bool IsMilestone(int count)
+        // ============================================================================
+        // Memorial Bird Endpoints
+        // ============================================================================
+
+        /// <summary>
+        /// Mark a bird as memorial (deceased). Only the bird owner can perform this action.
+        /// POST /api/birds/{id}/memorial
+        /// </summary>
+        [Authorize]
+        [HttpPost("{id}/memorial")]
+        public async Task<ActionResult<MarkMemorialResponseDto>> MarkAsMemorial(Guid id, [FromBody] MemorialRequestDto request)
         {
-            int[] milestones = { 10, 50, 100, 500, 1000, 5000 };
-            return milestones.Contains(count);
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
+            var result = await _memorialService.MarkBirdAsMemorialAsync(id, userId.Value, request);
+
+            if (!result.Success)
+            {
+                return BadRequest(new { message = result.Message });
+            }
+
+            return Ok(result);
+        }
+
+        /// <summary>
+        /// Get memorial details for a deceased bird
+        /// GET /api/birds/{id}/memorial
+        /// </summary>
+        [HttpGet("{id}/memorial")]
+        public async Task<ActionResult<MemorialBirdDto>> GetMemorial(Guid id)
+        {
+            var memorial = await _memorialService.GetMemorialDetailsAsync(id);
+
+            if (memorial == null)
+            {
+                return NotFound(new { message = "Memorial bird not found" });
+            }
+
+            return Ok(memorial);
+        }
+
+        /// <summary>
+        /// Add a condolence/tribute message to a memorial bird
+        /// POST /api/birds/{id}/memorial/messages
+        /// </summary>
+        [Authorize]
+        [HttpPost("{id}/memorial/messages")]
+        public async Task<ActionResult<MemorialMessageDto>> AddMemorialMessage(Guid id, [FromBody] CreateMemorialMessageDto message)
+        {
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
+            try
+            {
+                var messageDto = await _memorialService.AddMemorialMessageAsync(id, userId.Value, message);
+                return CreatedAtAction(nameof(GetMemorialMessages), new { id = id }, messageDto);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Get paginated memorial messages for a bird
+        /// GET /api/birds/{id}/memorial/messages?page=1&pageSize=20&sortBy=recent
+        /// </summary>
+        [HttpGet("{id}/memorial/messages")]
+        public async Task<ActionResult<MemorialMessagePageDto>> GetMemorialMessages(
+            Guid id, 
+            [FromQuery] int page = 1, 
+            [FromQuery] int pageSize = 20,
+            [FromQuery] string sortBy = "recent")
+        {
+            var messages = await _memorialService.GetMemorialMessagesAsync(id, page, pageSize, sortBy);
+            return Ok(messages);
+        }
+
+        /// <summary>
+        /// Delete a memorial message (only bird owner or message author)
+        /// DELETE /api/birds/{id}/memorial/messages/{messageId}
+        /// </summary>
+        [Authorize]
+        [HttpDelete("{id}/memorial/messages/{messageId}")]
+        public async Task<IActionResult> DeleteMemorialMessage(Guid id, Guid messageId)
+        {
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
+            var deleted = await _memorialService.DeleteMemorialMessageAsync(messageId, userId.Value);
+
+            if (!deleted)
+            {
+                return NotFound(new { message = "Memorial message not found or you don't have permission to delete it" });
+            }
+
+            return Ok(new { success = true, message = "Memorial message deleted" });
+        }
+
+        /// <summary>
+        /// Process memorial fund redirection (Admin only)
+        /// POST /api/birds/{id}/memorial/process-funds
+        /// </summary>
+        [Authorize(Roles = "Admin")]
+        [HttpPost("{id}/memorial/process-funds")]
+        public async Task<ActionResult<MemorialFundRedirectionDto>> ProcessMemorialFunds(Guid id)
+        {
+            try
+            {
+                var result = await _memorialService.ProcessFundRedirectionAsync(id);
+                return Ok(new { success = true, redirection = result });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing memorial funds for bird {BirdId}", id);
+                return StatusCode(500, new { message = "An error occurred while processing memorial funds" });
+            }
         }
     }
 }

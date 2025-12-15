@@ -3,7 +3,7 @@ using AutoMapper;
 using BCrypt.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Npgsql;
+using Dapper;
 using Wihngo.Data;
 using Wihngo.Dtos;
 using Wihngo.Models;
@@ -68,10 +68,9 @@ namespace Wihngo.Controllers
                 using var connection = await _dbFactory.CreateOpenConnectionAsync();
 
                 // Check if email already exists
-                using var checkCmd = connection.CreateCommand();
-                checkCmd.CommandText = "SELECT user_id FROM users WHERE LOWER(email) = LOWER(@email)";
-                checkCmd.Parameters.AddWithValue("email", dto.Email);
-                var existingId = await checkCmd.ExecuteScalarAsync();
+                var existingId = await connection.ExecuteScalarAsync<Guid?>(
+                    "SELECT user_id FROM users WHERE LOWER(email) = LOWER(@Email)",
+                    new { Email = dto.Email });
                 
                 if (existingId != null)
                 {
@@ -97,36 +96,35 @@ namespace Wihngo.Controllers
                 user.RefreshTokenExpiry = DateTime.UtcNow.AddDays(RefreshTokenExpiryDays);
                 user.LastLoginAt = DateTime.UtcNow;
 
-                // Insert user
-                using var insertCmd = connection.CreateCommand();
-                insertCmd.CommandText = @"
+                // Insert user with Dapper
+                await connection.ExecuteAsync(@"
                     INSERT INTO users (user_id, name, email, password_hash, profile_image, bio, created_at, 
                                        email_confirmed, email_confirmation_token, email_confirmation_token_expiry,
                                        is_account_locked, failed_login_attempts, last_login_at,
                                        refresh_token_hash, refresh_token_expiry, last_password_change_at)
-                    VALUES (@user_id, @name, @email, @password_hash, @profile_image, @bio, @created_at,
-                            @email_confirmed, @email_confirmation_token, @email_confirmation_token_expiry,
-                            @is_account_locked, @failed_login_attempts, @last_login_at,
-                            @refresh_token_hash, @refresh_token_expiry, @last_password_change_at)
-                ";
-                insertCmd.Parameters.AddWithValue("user_id", user.UserId);
-                insertCmd.Parameters.AddWithValue("name", user.Name);
-                insertCmd.Parameters.AddWithValue("email", user.Email);
-                insertCmd.Parameters.AddWithValue("password_hash", user.PasswordHash);
-                insertCmd.Parameters.AddWithValue("profile_image", (object?)user.ProfileImage ?? DBNull.Value);
-                insertCmd.Parameters.AddWithValue("bio", (object?)user.Bio ?? DBNull.Value);
-                insertCmd.Parameters.AddWithValue("created_at", user.CreatedAt);
-                insertCmd.Parameters.AddWithValue("email_confirmed", user.EmailConfirmed);
-                insertCmd.Parameters.AddWithValue("email_confirmation_token", (object?)user.EmailConfirmationToken ?? DBNull.Value);
-                insertCmd.Parameters.AddWithValue("email_confirmation_token_expiry", (object?)user.EmailConfirmationTokenExpiry ?? DBNull.Value);
-                insertCmd.Parameters.AddWithValue("is_account_locked", user.IsAccountLocked);
-                insertCmd.Parameters.AddWithValue("failed_login_attempts", user.FailedLoginAttempts);
-                insertCmd.Parameters.AddWithValue("last_login_at", (object?)user.LastLoginAt ?? DBNull.Value);
-                insertCmd.Parameters.AddWithValue("refresh_token_hash", (object?)user.RefreshTokenHash ?? DBNull.Value);
-                insertCmd.Parameters.AddWithValue("refresh_token_expiry", (object?)user.RefreshTokenExpiry ?? DBNull.Value);
-                insertCmd.Parameters.AddWithValue("last_password_change_at", (object?)user.LastPasswordChangeAt ?? DBNull.Value);
-                
-                await insertCmd.ExecuteNonQueryAsync();
+                    VALUES (@UserId, @Name, @Email, @PasswordHash, @ProfileImage, @Bio, @CreatedAt,
+                            @EmailConfirmed, @EmailConfirmationToken, @EmailConfirmationTokenExpiry,
+                            @IsAccountLocked, @FailedLoginAttempts, @LastLoginAt,
+                            @RefreshTokenHash, @RefreshTokenExpiry, @LastPasswordChangeAt)",
+                    new
+                    {
+                        user.UserId,
+                        user.Name,
+                        user.Email,
+                        user.PasswordHash,
+                        user.ProfileImage,
+                        user.Bio,
+                        user.CreatedAt,
+                        user.EmailConfirmed,
+                        user.EmailConfirmationToken,
+                        user.EmailConfirmationTokenExpiry,
+                        user.IsAccountLocked,
+                        user.FailedLoginAttempts,
+                        user.LastLoginAt,
+                        user.RefreshTokenHash,
+                        user.RefreshTokenExpiry,
+                        user.LastPasswordChangeAt
+                    });
 
                 _logger.LogInformation("User registered: {Email}", dto.Email);
 
@@ -176,8 +174,15 @@ namespace Wihngo.Controllers
 
                 using var connection = await _dbFactory.CreateOpenConnectionAsync();
 
-                // Get user
-                var user = await GetUserByEmailAsync(connection, dto.Email);
+                // Get user with Dapper
+                var user = await connection.QueryFirstOrDefaultAsync<User>(@"
+                    SELECT user_id, name, email, password_hash, profile_image, bio, created_at,
+                           email_confirmed, is_account_locked, failed_login_attempts, lockout_end,
+                           last_login_at, last_password_change_at
+                    FROM users
+                    WHERE LOWER(email) = LOWER(@Email)",
+                    new { Email = dto.Email });
+                    
                 if (user == null)
                 {
                     _logger.LogWarning("Login attempt for non-existent email: {Email}", dto.Email);
@@ -200,14 +205,11 @@ namespace Wihngo.Controllers
                 // Unlock account if lockout period has expired
                 if (user.IsAccountLocked && user.LockoutEnd.HasValue && user.LockoutEnd.Value <= DateTime.UtcNow)
                 {
-                    using var unlockCmd = connection.CreateCommand();
-                    unlockCmd.CommandText = @"
+                    await connection.ExecuteAsync(@"
                         UPDATE users 
                         SET is_account_locked = false, lockout_end = NULL, failed_login_attempts = 0
-                        WHERE user_id = @user_id
-                    ";
-                    unlockCmd.Parameters.AddWithValue("user_id", user.UserId);
-                    await unlockCmd.ExecuteNonQueryAsync();
+                        WHERE user_id = @UserId",
+                        new { user.UserId });
                     
                     user.IsAccountLocked = false;
                     user.LockoutEnd = null;
@@ -227,29 +229,23 @@ namespace Wihngo.Controllers
                         user.IsAccountLocked = true;
                         user.LockoutEnd = DateTime.UtcNow.AddMinutes(LockoutDurationMinutes);
                         _logger.LogWarning("Account locked due to too many failed attempts: {Email}", dto.Email);
-                    }
-                    
-                    using var failCmd = connection.CreateCommand();
-                    if (shouldLock)
-                    {
-                        failCmd.CommandText = @"
+                        
+                        await connection.ExecuteAsync(@"
                             UPDATE users 
-                            SET failed_login_attempts = @attempts, is_account_locked = true, lockout_end = @lockout_end
-                            WHERE user_id = @user_id
-                        ";
-                        failCmd.Parameters.AddWithValue("lockout_end", user.LockoutEnd!.Value);
+                            SET failed_login_attempts = @FailedLoginAttempts, 
+                                is_account_locked = true, 
+                                lockout_end = @LockoutEnd
+                            WHERE user_id = @UserId",
+                            new { user.FailedLoginAttempts, user.LockoutEnd, user.UserId });
                     }
                     else
                     {
-                        failCmd.CommandText = @"
+                        await connection.ExecuteAsync(@"
                             UPDATE users 
-                            SET failed_login_attempts = @attempts
-                            WHERE user_id = @user_id
-                        ";
+                            SET failed_login_attempts = @FailedLoginAttempts
+                            WHERE user_id = @UserId",
+                            new { user.FailedLoginAttempts, user.UserId });
                     }
-                    failCmd.Parameters.AddWithValue("attempts", user.FailedLoginAttempts);
-                    failCmd.Parameters.AddWithValue("user_id", user.UserId);
-                    await failCmd.ExecuteNonQueryAsync();
                 
                     _logger.LogWarning("Failed login attempt for email: {Email}. Attempts: {Attempts}", 
                         dto.Email, user.FailedLoginAttempts);
@@ -261,18 +257,20 @@ namespace Wihngo.Controllers
                 var (token, expiresAt) = _tokenService.GenerateToken(user);
                 var refreshToken = _tokenService.GenerateRefreshToken();
                 
-                using var successCmd = connection.CreateCommand();
-                successCmd.CommandText = @"
+                await connection.ExecuteAsync(@"
                     UPDATE users 
-                    SET failed_login_attempts = 0, last_login_at = @last_login_at,
-                        refresh_token_hash = @refresh_token_hash, refresh_token_expiry = @refresh_token_expiry
-                    WHERE user_id = @user_id
-                ";
-                successCmd.Parameters.AddWithValue("last_login_at", DateTime.UtcNow);
-                successCmd.Parameters.AddWithValue("refresh_token_hash", _tokenService.HashRefreshToken(refreshToken));
-                successCmd.Parameters.AddWithValue("refresh_token_expiry", DateTime.UtcNow.AddDays(RefreshTokenExpiryDays));
-                successCmd.Parameters.AddWithValue("user_id", user.UserId);
-                await successCmd.ExecuteNonQueryAsync();
+                    SET failed_login_attempts = 0, 
+                        last_login_at = @LastLoginAt,
+                        refresh_token_hash = @RefreshTokenHash, 
+                        refresh_token_expiry = @RefreshTokenExpiry
+                    WHERE user_id = @UserId",
+                    new
+                    {
+                        LastLoginAt = DateTime.UtcNow,
+                        RefreshTokenHash = _tokenService.HashRefreshToken(refreshToken),
+                        RefreshTokenExpiry = DateTime.UtcNow.AddDays(RefreshTokenExpiryDays),
+                        user.UserId
+                    });
 
                 _logger.LogInformation("User logged in: {Email}", dto.Email);
 
@@ -310,22 +308,13 @@ namespace Wihngo.Controllers
                 var hashedToken = _tokenService.HashRefreshToken(dto.RefreshToken);
                 
                 using var connection = await _dbFactory.CreateOpenConnectionAsync();
-                using var cmd = connection.CreateCommand();
-                cmd.CommandText = @"
+                
+                var user = await connection.QueryFirstOrDefaultAsync<User>(@"
                     SELECT user_id, name, email, password_hash, profile_image, bio, created_at,
                            email_confirmed, is_account_locked, lockout_end
                     FROM users
-                    WHERE refresh_token_hash = @hash AND refresh_token_expiry > @now
-                ";
-                cmd.Parameters.AddWithValue("hash", hashedToken);
-                cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
-
-                User? user = null;
-                using var reader = await cmd.ExecuteReaderAsync();
-                if (await reader.ReadAsync())
-                {
-                    user = ReadUserFromReader(reader);
-                }
+                    WHERE refresh_token_hash = @Hash AND refresh_token_expiry > @Now",
+                    new { Hash = hashedToken, Now = DateTime.UtcNow });
 
                 if (user == null)
                 {
@@ -343,18 +332,16 @@ namespace Wihngo.Controllers
                 var (newToken, expiresAt) = _tokenService.GenerateToken(user);
                 var newRefreshToken = _tokenService.GenerateRefreshToken();
                 
-                await reader.CloseAsync();
-                
-                using var updateCmd = connection.CreateCommand();
-                updateCmd.CommandText = @"
+                await connection.ExecuteAsync(@"
                     UPDATE users 
-                    SET refresh_token_hash = @hash, refresh_token_expiry = @expiry
-                    WHERE user_id = @user_id
-                ";
-                updateCmd.Parameters.AddWithValue("hash", _tokenService.HashRefreshToken(newRefreshToken));
-                updateCmd.Parameters.AddWithValue("expiry", DateTime.UtcNow.AddDays(RefreshTokenExpiryDays));
-                updateCmd.Parameters.AddWithValue("user_id", user.UserId);
-                await updateCmd.ExecuteNonQueryAsync();
+                    SET refresh_token_hash = @Hash, refresh_token_expiry = @Expiry
+                    WHERE user_id = @UserId",
+                    new
+                    {
+                        Hash = _tokenService.HashRefreshToken(newRefreshToken),
+                        Expiry = DateTime.UtcNow.AddDays(RefreshTokenExpiryDays),
+                        user.UserId
+                    });
 
                 _logger.LogInformation("Token refreshed for user: {UserId}", user.UserId);
 
@@ -385,14 +372,12 @@ namespace Wihngo.Controllers
                 }
 
                 using var connection = await _dbFactory.CreateOpenConnectionAsync();
-                using var cmd = connection.CreateCommand();
-                cmd.CommandText = @"
+                
+                var rowsAffected = await connection.ExecuteAsync(@"
                     UPDATE users 
                     SET refresh_token_hash = NULL, refresh_token_expiry = NULL
-                    WHERE user_id = @user_id
-                ";
-                cmd.Parameters.AddWithValue("user_id", userGuid);
-                var rowsAffected = await cmd.ExecuteNonQueryAsync();
+                    WHERE user_id = @UserId",
+                    new { UserId = userGuid });
                 
                 if (rowsAffected == 0)
                 {
@@ -446,56 +431,40 @@ namespace Wihngo.Controllers
                 using var connection = await _dbFactory.CreateOpenConnectionAsync();
                 
                 // Find user with matching token
-                using var findCmd = connection.CreateCommand();
-                findCmd.CommandText = @"
-                    SELECT user_id, name, email
+                var userInfo = await connection.QueryFirstOrDefaultAsync<(string Name, string Email)>(@"
+                    SELECT name, email
                     FROM users
-                    WHERE LOWER(email) = LOWER(@email) 
-                      AND email_confirmation_token = @token 
-                      AND email_confirmation_token_expiry > @now
-                ";
-                findCmd.Parameters.AddWithValue("email", dto.Email);
-                findCmd.Parameters.AddWithValue("token", dto.Token);
-                findCmd.Parameters.AddWithValue("now", DateTime.UtcNow);
-                
-                string? userName = null;
-                string? userEmail = null;
-                using var reader = await findCmd.ExecuteReaderAsync();
-                if (await reader.ReadAsync())
-                {
-                    userName = reader.GetString(1);
-                    userEmail = reader.GetString(2);
-                }
-                await reader.CloseAsync();
+                    WHERE LOWER(email) = LOWER(@Email) 
+                      AND email_confirmation_token = @Token 
+                      AND email_confirmation_token_expiry > @Now",
+                    new { dto.Email, dto.Token, Now = DateTime.UtcNow });
 
-                if (userName == null || userEmail == null)
+                if (userInfo.Name == null || userInfo.Email == null)
                 {
                     return BadRequest(new { message = "Invalid or expired confirmation token" });
                 }
 
                 // Update user
-                using var updateCmd = connection.CreateCommand();
-                updateCmd.CommandText = @"
+                await connection.ExecuteAsync(@"
                     UPDATE users 
-                    SET email_confirmed = true, email_confirmation_token = NULL, email_confirmation_token_expiry = NULL
-                    WHERE LOWER(email) = LOWER(@email) AND email_confirmation_token = @token
-                ";
-                updateCmd.Parameters.AddWithValue("email", dto.Email);
-                updateCmd.Parameters.AddWithValue("token", dto.Token);
-                await updateCmd.ExecuteNonQueryAsync();
+                    SET email_confirmed = true, 
+                        email_confirmation_token = NULL, 
+                        email_confirmation_token_expiry = NULL
+                    WHERE LOWER(email) = LOWER(@Email) AND email_confirmation_token = @Token",
+                    new { dto.Email, dto.Token });
 
-                _logger.LogInformation("Email confirmed for user: {Email}", userEmail);
+                _logger.LogInformation("Email confirmed for user: {Email}", userInfo.Email);
 
                 // Send welcome email asynchronously
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        await _authEmailService.SendWelcomeEmailAsync(userEmail, userName);
+                        await _authEmailService.SendWelcomeEmailAsync(userInfo.Email, userInfo.Name);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Failed to send welcome email to {Email}", userEmail);
+                        _logger.LogError(ex, "Failed to send welcome email to {Email}", userInfo.Email);
                     }
                 });
 
@@ -517,22 +486,12 @@ namespace Wihngo.Controllers
                 using var connection = await _dbFactory.CreateOpenConnectionAsync();
                 
                 // Check if user exists
-                using var checkCmd = connection.CreateCommand();
-                checkCmd.CommandText = "SELECT user_id, name FROM users WHERE LOWER(email) = LOWER(@email)";
-                checkCmd.Parameters.AddWithValue("email", dto.Email);
-                
-                Guid? userId = null;
-                string? userName = null;
-                using var reader = await checkCmd.ExecuteReaderAsync();
-                if (await reader.ReadAsync())
-                {
-                    userId = reader.GetGuid(0);
-                    userName = reader.GetString(1);
-                }
-                await reader.CloseAsync();
+                var userInfo = await connection.QueryFirstOrDefaultAsync<(Guid UserId, string Name)>(
+                    "SELECT user_id, name FROM users WHERE LOWER(email) = LOWER(@Email)",
+                    new { dto.Email });
                 
                 // Don't reveal if user exists - always return success
-                if (userId == null)
+                if (userInfo.UserId == Guid.Empty)
                 {
                     _logger.LogWarning("Password reset requested for non-existent email: {Email}", dto.Email);
                     return Ok(new { message = "If the email exists, a password reset link has been sent." });
@@ -542,16 +501,11 @@ namespace Wihngo.Controllers
                 var resetToken = Convert.ToBase64String(Guid.NewGuid().ToByteArray());
                 var resetTokenExpiry = DateTime.UtcNow.AddHours(1);
                 
-                using var updateCmd = connection.CreateCommand();
-                updateCmd.CommandText = @"
+                await connection.ExecuteAsync(@"
                     UPDATE users 
-                    SET password_reset_token = @token, password_reset_token_expiry = @expiry
-                    WHERE user_id = @user_id
-                ";
-                updateCmd.Parameters.AddWithValue("token", resetToken);
-                updateCmd.Parameters.AddWithValue("expiry", resetTokenExpiry);
-                updateCmd.Parameters.AddWithValue("user_id", userId.Value);
-                await updateCmd.ExecuteNonQueryAsync();
+                    SET password_reset_token = @Token, password_reset_token_expiry = @Expiry
+                    WHERE user_id = @UserId",
+                    new { Token = resetToken, Expiry = resetTokenExpiry, userInfo.UserId });
 
                 _logger.LogInformation("Password reset token generated for: {Email}", dto.Email);
 
@@ -560,7 +514,7 @@ namespace Wihngo.Controllers
                 {
                     try
                     {
-                        await _authEmailService.SendPasswordResetAsync(dto.Email, userName!, resetToken);
+                        await _authEmailService.SendPasswordResetAsync(dto.Email, userInfo.Name, resetToken);
                     }
                     catch (Exception ex)
                     {
@@ -598,57 +552,41 @@ namespace Wihngo.Controllers
                 using var connection = await _dbFactory.CreateOpenConnectionAsync();
                 
                 // Find user with matching token
-                using var findCmd = connection.CreateCommand();
-                findCmd.CommandText = @"
+                var userInfo = await connection.QueryFirstOrDefaultAsync<(Guid UserId, string Name, string Email)>(@"
                     SELECT user_id, name, email
                     FROM users
-                    WHERE LOWER(email) = LOWER(@email) 
-                      AND password_reset_token = @token 
-                      AND password_reset_token_expiry > @now
-                ";
-                findCmd.Parameters.AddWithValue("email", dto.Email);
-                findCmd.Parameters.AddWithValue("token", dto.Token);
-                findCmd.Parameters.AddWithValue("now", DateTime.UtcNow);
-                
-                Guid? userId = null;
-                string? userName = null;
-                string? userEmail = null;
-                using var reader = await findCmd.ExecuteReaderAsync();
-                if (await reader.ReadAsync())
-                {
-                    userId = reader.GetGuid(0);
-                    userName = reader.GetString(1);
-                    userEmail = reader.GetString(2);
-                }
-                await reader.CloseAsync();
+                    WHERE LOWER(email) = LOWER(@Email) 
+                      AND password_reset_token = @Token 
+                      AND password_reset_token_expiry > @Now",
+                    new { dto.Email, dto.Token, Now = DateTime.UtcNow });
 
-                if (userId == null)
+                if (userInfo.UserId == Guid.Empty)
                 {
                     return BadRequest(new { message = "Invalid or expired reset token" });
                 }
 
                 var newPasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword, workFactor: 12);
                 
-                using var updateCmd = connection.CreateCommand();
-                updateCmd.CommandText = @"
+                await connection.ExecuteAsync(@"
                     UPDATE users 
-                    SET password_hash = @password_hash,
+                    SET password_hash = @PasswordHash,
                         password_reset_token = NULL,
                         password_reset_token_expiry = NULL,
-                        last_password_change_at = @last_change,
+                        last_password_change_at = @LastChange,
                         refresh_token_hash = NULL,
                         refresh_token_expiry = NULL,
                         failed_login_attempts = 0,
                         is_account_locked = false,
                         lockout_end = NULL
-                    WHERE user_id = @user_id
-                ";
-                updateCmd.Parameters.AddWithValue("password_hash", newPasswordHash);
-                updateCmd.Parameters.AddWithValue("last_change", DateTime.UtcNow);
-                updateCmd.Parameters.AddWithValue("user_id", userId.Value);
-                await updateCmd.ExecuteNonQueryAsync();
+                    WHERE user_id = @UserId",
+                    new
+                    {
+                        PasswordHash = newPasswordHash,
+                        LastChange = DateTime.UtcNow,
+                        userInfo.UserId
+                    });
 
-                _logger.LogInformation("Password reset successful for user: {Email}", userEmail);
+                _logger.LogInformation("Password reset successful for user: {Email}", userInfo.Email);
 
                 // Send security alert email asynchronously
                 _ = Task.Run(async () =>
@@ -656,14 +594,14 @@ namespace Wihngo.Controllers
                     try
                     {
                         await _authEmailService.SendSecurityAlertAsync(
-                            userEmail!, 
-                            userName!, 
+                            userInfo.Email, 
+                            userInfo.Name, 
                             "Password Changed", 
                             "Your password was successfully reset. If you didn't make this change, please contact support immediately.");
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Failed to send security alert email to {Email}", userEmail);
+                        _logger.LogError(ex, "Failed to send security alert email to {Email}", userInfo.Email);
                     }
                 });
 
@@ -696,29 +634,17 @@ namespace Wihngo.Controllers
                 using var connection = await _dbFactory.CreateOpenConnectionAsync();
                 
                 // Get user
-                using var getCmd = connection.CreateCommand();
-                getCmd.CommandText = "SELECT password_hash, email, name FROM users WHERE user_id = @user_id";
-                getCmd.Parameters.AddWithValue("user_id", userGuid);
+                var userInfo = await connection.QueryFirstOrDefaultAsync<(string PasswordHash, string Email, string Name)>(
+                    "SELECT password_hash, email, name FROM users WHERE user_id = @UserId",
+                    new { UserId = userGuid });
                 
-                string? currentPasswordHash = null;
-                string? userEmail = null;
-                string? userName = null;
-                using var reader = await getCmd.ExecuteReaderAsync();
-                if (await reader.ReadAsync())
-                {
-                    currentPasswordHash = reader.GetString(0);
-                    userEmail = reader.GetString(1);
-                    userName = reader.GetString(2);
-                }
-                await reader.CloseAsync();
-                
-                if (currentPasswordHash == null)
+                if (userInfo.PasswordHash == null)
                 {
                     return NotFound();
                 }
 
                 // Verify current password
-                var valid = BCrypt.Net.BCrypt.Verify(dto.CurrentPassword, currentPasswordHash);
+                var valid = BCrypt.Net.BCrypt.Verify(dto.CurrentPassword, userInfo.PasswordHash);
                 if (!valid)
                 {
                     return BadRequest(new { message = "Current password is incorrect" });
@@ -732,26 +658,26 @@ namespace Wihngo.Controllers
                 }
 
                 // Check if new password is same as current
-                if (BCrypt.Net.BCrypt.Verify(dto.NewPassword, currentPasswordHash))
+                if (BCrypt.Net.BCrypt.Verify(dto.NewPassword, userInfo.PasswordHash))
                 {
                     return BadRequest(new { message = "New password must be different from current password" });
                 }
 
                 var newPasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword, workFactor: 12);
                 
-                using var updateCmd = connection.CreateCommand();
-                updateCmd.CommandText = @"
+                await connection.ExecuteAsync(@"
                     UPDATE users 
-                    SET password_hash = @password_hash,
-                        last_password_change_at = @last_change,
+                    SET password_hash = @PasswordHash,
+                        last_password_change_at = @LastChange,
                         refresh_token_hash = NULL,
                         refresh_token_expiry = NULL
-                    WHERE user_id = @user_id
-                ";
-                updateCmd.Parameters.AddWithValue("password_hash", newPasswordHash);
-                updateCmd.Parameters.AddWithValue("last_change", DateTime.UtcNow);
-                updateCmd.Parameters.AddWithValue("user_id", userGuid);
-                await updateCmd.ExecuteNonQueryAsync();
+                    WHERE user_id = @UserId",
+                    new
+                    {
+                        PasswordHash = newPasswordHash,
+                        LastChange = DateTime.UtcNow,
+                        UserId = userGuid
+                    });
 
                 _logger.LogInformation("Password changed for user: {UserId}", userGuid);
 
@@ -761,14 +687,14 @@ namespace Wihngo.Controllers
                     try
                     {
                         await _authEmailService.SendSecurityAlertAsync(
-                            userEmail!, 
-                            userName!, 
+                            userInfo.Email, 
+                            userInfo.Name, 
                             "Password Changed", 
                             "Your password was successfully changed. If you didn't make this change, please contact support immediately and reset your password.");
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Failed to send security alert email to {Email}", userEmail);
+                        _logger.LogError(ex, "Failed to send security alert email to {Email}", userInfo.Email);
                     }
                 });
 
@@ -779,47 +705,6 @@ namespace Wihngo.Controllers
                 _logger.LogError(ex, "Password change error");
                 return StatusCode(500, new { message = "Password change failed" });
             }
-        }
-
-        // Helper methods
-        private async Task<User?> GetUserByEmailAsync(NpgsqlConnection connection, string email)
-        {
-            using var cmd = connection.CreateCommand();
-            cmd.CommandText = @"
-                SELECT user_id, name, email, password_hash, profile_image, bio, created_at,
-                       email_confirmed, is_account_locked, failed_login_attempts, lockout_end,
-                       last_login_at, last_password_change_at
-                FROM users
-                WHERE LOWER(email) = LOWER(@email)
-            ";
-            cmd.Parameters.AddWithValue("email", email);
-
-            using var reader = await cmd.ExecuteReaderAsync();
-            if (await reader.ReadAsync())
-            {
-                return ReadUserFromReader(reader);
-            }
-            return null;
-        }
-
-        private User ReadUserFromReader(NpgsqlDataReader reader)
-        {
-            return new User
-            {
-                UserId = reader.GetGuid(reader.GetOrdinal("user_id")),
-                Name = reader.GetString(reader.GetOrdinal("name")),
-                Email = reader.GetString(reader.GetOrdinal("email")),
-                PasswordHash = reader.GetString(reader.GetOrdinal("password_hash")),
-                ProfileImage = reader.IsDBNull(reader.GetOrdinal("profile_image")) ? null : reader.GetString(reader.GetOrdinal("profile_image")),
-                Bio = reader.IsDBNull(reader.GetOrdinal("bio")) ? null : reader.GetString(reader.GetOrdinal("bio")),
-                CreatedAt = reader.GetDateTime(reader.GetOrdinal("created_at")),
-                EmailConfirmed = reader.GetBoolean(reader.GetOrdinal("email_confirmed")),
-                IsAccountLocked = reader.GetBoolean(reader.GetOrdinal("is_account_locked")),
-                FailedLoginAttempts = reader.IsDBNull(reader.GetOrdinal("failed_login_attempts")) ? 0 : reader.GetInt32(reader.GetOrdinal("failed_login_attempts")),
-                LockoutEnd = reader.IsDBNull(reader.GetOrdinal("lockout_end")) ? null : reader.GetDateTime(reader.GetOrdinal("lockout_end")),
-                LastLoginAt = reader.IsDBNull(reader.GetOrdinal("last_login_at")) ? null : reader.GetDateTime(reader.GetOrdinal("last_login_at")),
-                LastPasswordChangeAt = reader.IsDBNull(reader.GetOrdinal("last_password_change_at")) ? null : reader.GetDateTime(reader.GetOrdinal("last_password_change_at"))
-            };
         }
     }
 }

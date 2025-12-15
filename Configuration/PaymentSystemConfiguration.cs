@@ -44,6 +44,9 @@ public class PayPalConfiguration
     public string ClientId { get; set; } = string.Empty;
     public string ClientSecret { get; set; } = string.Empty;
     public string Mode { get; set; } = "sandbox"; // sandbox or live
+    public string BaseUrl => Mode == "live" 
+        ? "https://api-m.paypal.com" 
+        : "https://api-m.sandbox.paypal.com";
     public string WebhookId { get; set; } = string.Empty;
     public string ReturnUrl { get; set; } = string.Empty;
     public string CancelUrl { get; set; } = string.Empty;
