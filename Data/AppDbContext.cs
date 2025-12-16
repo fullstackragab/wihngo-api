@@ -54,7 +54,7 @@ namespace Wihngo.Data
         public StubDbSet<CryptoTransaction> CryptoTransactions => new StubDbSet<CryptoTransaction>(_dbFactory, "crypto_transactions", "transaction_id", _logger);
         public StubDbSet<CryptoExchangeRate> CryptoExchangeRates => new StubDbSet<CryptoExchangeRate>(_dbFactory, "crypto_exchange_rates", "id", _logger);
         public StubDbSet<CryptoPaymentMethod> CryptoPaymentMethods => new StubDbSet<CryptoPaymentMethod>(_dbFactory, "crypto_payment_methods", "id", _logger);
-        public StubDbSet<OnChainDeposit> OnChainDeposits => new StubDbSet<OnChainDeposit>(_dbFactory, "on_chain_deposits", "id", _logger);
+        public StubDbSet<OnChainDeposit> OnChainDeposits => new StubDbSet<OnChainDeposit>(_dbFactory, "onchain_deposits", "id", _logger);
         public StubDbSet<TokenConfiguration> TokenConfigurations => new StubDbSet<TokenConfiguration>(_dbFactory, "token_configurations", "id", _logger);
         public StubDbSet<Notification> Notifications => new StubDbSet<Notification>(_dbFactory, "notifications", "id", _logger);
         public StubDbSet<NotificationPreference> NotificationPreferences => new StubDbSet<NotificationPreference>(_dbFactory, "notification_preferences", "id", _logger);

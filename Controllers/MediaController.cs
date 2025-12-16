@@ -42,11 +42,11 @@ namespace Wihngo.Controllers
         /// <remarks>
         /// Valid media types:
         /// - profile-image: User profile image
-        /// - story-image: Story image (requires relatedId as storyId)
+        /// - story-image: Story image (optional relatedId as storyId)
         /// - story-video: Story video
         /// - bird-profile-image: Bird profile image (optional relatedId as birdId)
         /// - bird-video: Bird video (optional relatedId as birdId)
-        /// 
+        ///
         /// Valid file extensions: .jpg, .jpeg, .png, .gif, .webp, .mp4, .mov, .avi, .webm
         /// </remarks>
         [HttpPost("upload-url")]
@@ -95,7 +95,7 @@ namespace Wihngo.Controllers
                 }
 
                 // Validate media type
-                var validMediaTypes = new[] { "profile-image", "story-image", "story-video", "bird-profile-image", "bird-video" };
+                var validMediaTypes = new[] { "profile-image", "story-image", "story-video", "story-audio", "bird-profile-image", "bird-video" };
                 if (!validMediaTypes.Contains(request.MediaType.ToLower()))
                 {
                     _logger.LogWarning("? Invalid media type: {MediaType}", request.MediaType);
@@ -115,7 +115,9 @@ namespace Wihngo.Controllers
                 // If still no extension, default based on media type
                 if (string.IsNullOrWhiteSpace(extension))
                 {
-                    extension = request.MediaType.ToLower().Contains("video") ? ".mp4" : ".jpg";
+                    extension = request.MediaType.ToLower().Contains("video") ? ".mp4"
+                              : request.MediaType.ToLower().Contains("audio") ? ".m4a"
+                              : ".jpg";
                     _logger.LogInformation("?? Using default extension: {Extension}", extension);
                 }
 
@@ -127,7 +129,7 @@ namespace Wihngo.Controllers
                 }
 
                 // Validate file extension
-                var validExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov", ".avi", ".webm" };
+                var validExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov", ".avi", ".webm", ".m4a", ".mp3", ".wav", ".aac", ".ogg" };
                 if (!validExtensions.Contains(extension))
                 {
                     _logger.LogWarning("? Invalid file extension: {Extension}", extension);
@@ -135,12 +137,8 @@ namespace Wihngo.Controllers
                 }
 
                 // Validate relatedId for media types that require it
-                // Note: bird-profile-image and bird-video no longer require RelatedId (can upload before bird creation)
-                if (request.MediaType.ToLower() == "story-image" && !request.RelatedId.HasValue)
-                {
-                    _logger.LogWarning("? RelatedId required for media type: {MediaType}", request.MediaType);
-                    return BadRequest(new { message = $"RelatedId is required for media type: {request.MediaType}" });
-                }
+                // Note: All media types now support optional RelatedId (can upload before creating the related entity)
+                // This allows mobile apps to upload media first, get S3 keys, then create stories/birds with those keys
 
                 var (uploadUrl, s3Key) = await _s3Service.GenerateUploadUrlAsync(
                     userId,
@@ -162,6 +160,11 @@ namespace Wihngo.Controllers
                     ".mov" => "video/quicktime",
                     ".avi" => "video/x-msvideo",
                     ".webm" => "video/webm",
+                    ".m4a" => "audio/mp4",
+                    ".mp3" => "audio/mpeg",
+                    ".wav" => "audio/wav",
+                    ".aac" => "audio/aac",
+                    ".ogg" => "audio/ogg",
                     _ => "application/octet-stream"
                 };
 

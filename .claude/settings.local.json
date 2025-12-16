@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -ExecutionPolicy Bypass -File \"C:\\.net\\Wihngo\\seed-payments.ps1\")",
+      "Bash(psql:*)",
+      "Bash(dotnet build:*)",
+      "Bash(export PGPASSWORD=postgres)",
+      "Bash(dotnet msbuild:*)",
+      "Bash(tasklist:*)",
+      "Bash(powershell -Command \"Get-Process | Where-Object { $_ProcessName -like ''*Wihngo*'' -or $_ProcessName -like ''*dotnet*'' } | Select-Object Id, ProcessName, Path\")",
+      "Bash(git rm:*)",
+      "Bash(git add:*)",
+      "Bash(dotnet run:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(powershell -Command \"Stop-Process -Id 23888 -Force\")",
+      "Bash(ls:*)",
+      "Bash(PGPASSWORD=postgres psql:*)",
+      "Bash(xargs:*)",
+      "Bash(npm start:*)",
+      "Bash(npx kill-port:*)",
+      "Bash(cat:*)",
+      "Bash(netstat:*)",
+      "Bash(dotnet clean:*)",
+      "Bash(timeout 15 dotnet run:*)",
+      "Bash(# Try the dev endpoint to get test credentials curl -s \"\"http://localhost:5162/api/dev/test-credentials\"\" echo \"\"\"\" echo \"\"=== Try getting all users ===\"\" curl -s \"\"http://localhost:5162/api/dev/users\"\")"
+    ]
+  }
+}

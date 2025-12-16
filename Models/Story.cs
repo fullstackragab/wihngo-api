@@ -37,6 +37,9 @@ namespace Wihngo.Models
         [MaxLength(1000)]
         public string? VideoUrl { get; set; }
 
+        [MaxLength(1000)]
+        public string? AudioUrl { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         // Premium highlight fields
