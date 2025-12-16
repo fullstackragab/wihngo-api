@@ -27,15 +27,19 @@ namespace Wihngo.Controllers
         private readonly IS3Service _s3Service;
         private readonly ILogger<BirdsController> _logger;
         private readonly IMemorialService _memorialService;
+        private readonly IContentModerationService _moderationService;
+        private readonly IBirdActivityService _activityService;
 
         public BirdsController(
             AppDbContext db,
             IDbConnectionFactory dbFactory,
-            IMapper mapper, 
+            IMapper mapper,
             INotificationService notificationService,
             IS3Service s3Service,
             ILogger<BirdsController> logger,
-            IMemorialService memorialService)
+            IMemorialService memorialService,
+            IContentModerationService moderationService,
+            IBirdActivityService activityService)
         {
             _db = db;
             _dbFactory = dbFactory;
@@ -44,6 +48,8 @@ namespace Wihngo.Controllers
             _s3Service = s3Service;
             _logger = logger;
             _memorialService = memorialService;
+            _moderationService = moderationService;
+            _activityService = activityService;
         }
 
         private Guid? GetUserIdClaim()
@@ -72,7 +78,7 @@ namespace Wihngo.Controllers
         public async Task<ActionResult<IEnumerable<BirdSummaryDto>>> Get()
         {
             var userId = GetUserIdClaim();
-            
+
             // Get all bird IDs this user has loved (if authenticated)
             HashSet<Guid> lovedBirdIds = new HashSet<Guid>();
             if (userId.HasValue)
@@ -82,9 +88,9 @@ namespace Wihngo.Controllers
                 lovedBirdIds = new HashSet<Guid>(lovedIds);
             }
 
-            // Get all birds - PostgreSQL returns lowercase column names
+            // Get all birds with activity tracking fields - PostgreSQL returns lowercase column names
             var birdsSql = @"
-                SELECT 
+                SELECT
                     bird_id,
                     name,
                     species,
@@ -92,7 +98,9 @@ namespace Wihngo.Controllers
                     tagline,
                     COALESCE(loved_count, 0) loved_count,
                     COALESCE(supported_count, 0) supported_count,
-                    owner_id
+                    owner_id,
+                    last_activity_at,
+                    is_memorial
                 FROM birds
                 WHERE owner_id IS NOT NULL AND bird_id IS NOT NULL";
 
@@ -114,6 +122,8 @@ namespace Wihngo.Controllers
                 // Access dynamic properties in lowercase (PostgreSQL default)
                 Guid birdId = (Guid)bird.bird_id;
                 Guid ownerId = (Guid)bird.owner_id;
+                DateTime? lastActivityAt = bird.last_activity_at as DateTime?;
+                bool isMemorial = bird.is_memorial ?? false;
 
                 try
                 {
@@ -127,6 +137,11 @@ namespace Wihngo.Controllers
                     _logger.LogWarning(ex, "Failed to generate download URL for bird {BirdId}", birdId);
                 }
 
+                // Calculate activity status
+                var activityStatus = _activityService.GetActivityStatus(lastActivityAt, isMemorial);
+                var canSupport = _activityService.CanReceiveSupport(activityStatus);
+                var lastSeenText = _activityService.GetLastSeenText(lastActivityAt, isMemorial);
+
                 birdDtos.Add(new BirdSummaryDto
                 {
                     BirdId = birdId,
@@ -138,7 +153,11 @@ namespace Wihngo.Controllers
                     LovedBy = bird.loved_count ?? 0,
                     SupportedBy = bird.supported_count ?? 0,
                     OwnerId = ownerId,
-                    IsLoved = lovedBirdIds.Contains(birdId)
+                    IsLoved = lovedBirdIds.Contains(birdId),
+                    ActivityStatus = activityStatus,
+                    LastSeenText = lastSeenText,
+                    CanSupport = canSupport,
+                    IsMemorial = isMemorial
                 });
             }
 
@@ -148,9 +167,9 @@ namespace Wihngo.Controllers
         [HttpGet("{id}")]
         public async Task<ActionResult<BirdProfileDto>> Get(Guid id)
         {
-            // Get bird with owner using raw SQL  
+            // Get bird with owner using raw SQL (including activity tracking fields)
             var birdSql = @"
-                SELECT 
+                SELECT
                     b.bird_id,
                     b.name,
                     b.species,
@@ -161,6 +180,8 @@ namespace Wihngo.Controllers
                     COALESCE(b.supported_count, 0) supported_count,
                     b.owner_id,
                     b.created_at,
+                    b.last_activity_at,
+                    b.is_memorial,
                     u.user_id owner_user_id,
                     u.name owner_name
                 FROM birds b
@@ -174,7 +195,7 @@ namespace Wihngo.Controllers
 
             // Get stories for this bird
             var storiesSql = @"
-                SELECT 
+                SELECT
                     story_id,
                     bird_id,
                     content,
@@ -186,16 +207,32 @@ namespace Wihngo.Controllers
 
             var stories = await connection.QueryAsync<Story>(storiesSql, new { BirdId = id });
 
+            // Extract activity tracking fields
+            DateTime? lastActivityAt = birdData.last_activity_at as DateTime?;
+            bool isMemorial = birdData.is_memorial ?? false;
+
+            // Calculate activity status
+            var activityStatus = _activityService.GetActivityStatus(lastActivityAt, isMemorial);
+            var canSupport = _activityService.CanReceiveSupport(activityStatus);
+            var lastSeenText = _activityService.GetLastSeenText(lastActivityAt, isMemorial);
+            var supportUnavailableMessage = _activityService.GetSupportUnavailableMessage(activityStatus);
+
             // Map to DTO (using property names from BirdProfileDto)
             var dto = new BirdProfileDto
             {
+                BirdId = id,
                 CommonName = birdData.name ?? string.Empty,
                 ScientificName = birdData.species ?? string.Empty,
                 Tagline = birdData.tagline ?? string.Empty,
                 Description = birdData.description ?? string.Empty,
                 LovedBy = birdData.loved_count ?? 0,
                 SupportedBy = birdData.supported_count ?? 0,
-                ImageS3Key = birdData.image_url
+                ImageS3Key = birdData.image_url,
+                ActivityStatus = activityStatus,
+                LastSeenText = lastSeenText,
+                CanSupport = canSupport,
+                SupportUnavailableMessage = supportUnavailableMessage,
+                IsMemorial = isMemorial
             };
 
             // Generate download URL for image
@@ -226,9 +263,9 @@ namespace Wihngo.Controllers
             // Map owner summary
             if (birdData.owner_user_id != null)
             {
-                dto.Owner = new UserSummaryDto 
-                { 
-                    UserId = (Guid)birdData.owner_user_id, 
+                dto.Owner = new UserSummaryDto
+                {
+                    UserId = (Guid)birdData.owner_user_id,
                     Name = birdData.owner_name ?? string.Empty
                 };
             }
@@ -289,6 +326,26 @@ namespace Wihngo.Controllers
                 return BadRequest(new { message = "Bird profile image not found in S3. Please upload the file first." });
             }
 
+            // Content moderation check
+            var moderationResult = await _moderationService.ModerateBirdProfileAsync(
+                dto.Name,
+                dto.Species,
+                dto.Tagline,
+                dto.Description,
+                dto.ImageS3Key);
+
+            if (moderationResult.IsBlocked)
+            {
+                _logger.LogWarning("Bird profile blocked by moderation for user {UserId}. Reason: {Reason}",
+                    userId.Value, moderationResult.BlockReason);
+                return BadRequest(new
+                {
+                    message = "Content blocked by moderation",
+                    reason = moderationResult.BlockReason,
+                    code = "CONTENT_MODERATION_BLOCKED"
+                });
+            }
+
             var bird = new Bird
             {
                 BirdId = Guid.NewGuid(),
@@ -305,14 +362,14 @@ namespace Wihngo.Controllers
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
             await connection.ExecuteAsync(@"
                 INSERT INTO birds (
-                    bird_id, owner_id, name, species, tagline, description, image_url, created_at, 
-                    loved_count, supported_count, donation_cents, 
-                    is_premium, is_memorial, max_media_count
+                    bird_id, owner_id, name, species, tagline, description, image_url, created_at,
+                    loved_count, supported_count, donation_cents,
+                    is_premium, is_memorial, max_media_count, last_activity_at
                 )
                 VALUES (
-                    @BirdId, @OwnerId, @Name, @Species, @Tagline, @Description, @ImageUrl, @CreatedAt, 
+                    @BirdId, @OwnerId, @Name, @Species, @Tagline, @Description, @ImageUrl, @CreatedAt,
                     0, 0, 0,
-                    false, false, 10
+                    false, false, 10, @CreatedAt
                 )",
                 new
                 {
@@ -350,7 +407,11 @@ namespace Wihngo.Controllers
                 LovedBy = 0,
                 SupportedBy = 0,
                 OwnerId = bird.OwnerId,
-                IsLoved = false
+                IsLoved = false,
+                ActivityStatus = Models.Enums.BirdActivityStatus.Active,
+                LastSeenText = "Recently active",
+                CanSupport = true,
+                IsMemorial = false
             };
 
             return CreatedAtAction(nameof(Get), new { id = bird.BirdId }, summary);
@@ -392,13 +453,33 @@ namespace Wihngo.Controllers
                 newImageUrl = dto.ImageS3Key;
             }
 
+            // Content moderation check for updates
+            var moderationResult = await _moderationService.ModerateBirdProfileAsync(
+                dto.Name,
+                dto.Species,
+                dto.Tagline,
+                dto.Description,
+                newImageUrl != bird.ImageUrl ? newImageUrl : null);
+
+            if (moderationResult.IsBlocked)
+            {
+                _logger.LogWarning("Bird profile update blocked by moderation for bird {BirdId}. Reason: {Reason}",
+                    id, moderationResult.BlockReason);
+                return BadRequest(new
+                {
+                    message = "Content blocked by moderation",
+                    reason = moderationResult.BlockReason,
+                    code = "CONTENT_MODERATION_BLOCKED"
+                });
+            }
+
             // Update bird with Dapper
             await connection.ExecuteAsync(@"
-                UPDATE birds 
-                SET name = @Name, 
-                    species = @Species, 
-                    description = @Description, 
-                    tagline = @Tagline, 
+                UPDATE birds
+                SET name = @Name,
+                    species = @Species,
+                    description = @Description,
+                    tagline = @Tagline,
                     image_url = @ImageUrl
                 WHERE bird_id = @BirdId",
                 new
@@ -425,7 +506,10 @@ namespace Wihngo.Controllers
             }
             
             _logger.LogInformation("Bird updated: {BirdId}", id);
-            
+
+            // Update bird's last activity timestamp
+            await _activityService.UpdateLastActivityAsync(id);
+
             return NoContent();
         }
 
@@ -889,14 +973,31 @@ namespace Wihngo.Controllers
                 
             if (bird == null) return NotFound("Bird not found");
 
-            // Check if bird is memorial - prevent donations to deceased birds
-            if (bird.IsMemorial)
+            // Check activity status - prevent donations to inactive or memorial birds
+            var activityStatus = _activityService.GetActivityStatus(bird.LastActivityAt, bird.IsMemorial);
+            var canSupport = _activityService.CanReceiveSupport(activityStatus);
+
+            if (!canSupport)
             {
+                var supportUnavailableMessage = _activityService.GetSupportUnavailableMessage(activityStatus);
+
+                if (bird.IsMemorial)
+                {
+                    return BadRequest(new
+                    {
+                        error = "memorial_bird",
+                        message = "This bird has passed away and is no longer accepting donations. You can leave a memorial message instead.",
+                        canLeaveMessage = true,
+                        activityStatus = activityStatus.ToString()
+                    });
+                }
+
                 return BadRequest(new
                 {
-                    error = "memorial_bird",
-                    message = "This bird has passed away and is no longer accepting donations. You can leave a memorial message instead.",
-                    canLeaveMessage = true
+                    error = "inactive_bird",
+                    message = supportUnavailableMessage ?? "Support is currently unavailable for this bird.",
+                    activityStatus = activityStatus.ToString(),
+                    lastSeenText = _activityService.GetLastSeenText(bird.LastActivityAt, bird.IsMemorial)
                 });
             }
 

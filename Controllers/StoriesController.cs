@@ -27,6 +27,8 @@
         private readonly ILogger<StoriesController> _logger;
         private readonly IAiStoryGenerationService _aiStoryService;
         private readonly IWhisperTranscriptionService _whisperService;
+        private readonly IContentModerationService _moderationService;
+        private readonly IBirdActivityService _activityService;
 
         public StoriesController(
             AppDbContext db,
@@ -36,7 +38,9 @@
             IS3Service s3Service,
             ILogger<StoriesController> logger,
             IAiStoryGenerationService aiStoryService,
-            IWhisperTranscriptionService whisperService)
+            IWhisperTranscriptionService whisperService,
+            IContentModerationService moderationService,
+            IBirdActivityService activityService)
         {
             _db = db;
             _dbFactory = dbFactory;
@@ -46,6 +50,8 @@
             _logger = logger;
             _aiStoryService = aiStoryService;
             _whisperService = whisperService;
+            _moderationService = moderationService;
+            _activityService = activityService;
         }
 
         private Guid? GetUserIdClaim()
@@ -609,6 +615,35 @@
                 }
             }
 
+            // Content moderation check
+            var moderationResult = await _moderationService.ModerateStoryContentAsync(
+                dto.Content,
+                dto.ImageS3Key,
+                dto.VideoS3Key);
+
+            // DEBUG: Log moderation results
+            _logger.LogWarning("MODERATION DEBUG: IsBlocked={IsBlocked}, ImageLabels={ImageLabels}, TextFlagged={TextFlagged}",
+                moderationResult.IsBlocked,
+                moderationResult.ImageResult?.DetectedLabels?.Count ?? 0,
+                moderationResult.TextResult?.IsFlagged ?? false);
+
+            if (moderationResult.IsBlocked)
+            {
+                _logger.LogWarning("Story content blocked by moderation for user {UserId}. Reason: {Reason}",
+                    userId.Value, moderationResult.BlockReason);
+                return BadRequest(new
+                {
+                    message = "Content blocked by moderation",
+                    reason = moderationResult.BlockReason,
+                    code = "CONTENT_MODERATION_BLOCKED",
+                    debug = new
+                    {
+                        imageLabels = moderationResult.ImageResult?.DetectedLabels,
+                        textCategories = moderationResult.TextResult?.FlaggedCategories
+                    }
+                });
+            }
+
             var storyId = Guid.NewGuid();
             var now = DateTime.UtcNow;
 
@@ -633,6 +668,9 @@
 
             _logger.LogInformation("Story created: {StoryId} by user {UserId} for bird {BirdId}",
                 storyId, userId.Value, dto.BirdId);
+
+            // Update bird's last activity timestamp
+            await _activityService.UpdateLastActivityAsync(dto.BirdId);
 
             // Notify users who loved this bird about new story
             _ = Task.Run(async () =>
@@ -973,6 +1011,29 @@
                     updates.Add("audio_url = @AudioUrl");
                     parameters.Add("AudioUrl", dto.AudioS3Key);
                     // Note: Audio can coexist with image/video, so no cross-deletion needed
+                }
+            }
+
+            // Content moderation check for any updated content
+            if (!string.IsNullOrWhiteSpace(dto.Content) ||
+                (!string.IsNullOrWhiteSpace(dto.ImageS3Key) && dto.ImageS3Key != (string?)story.image_url) ||
+                (!string.IsNullOrWhiteSpace(dto.VideoS3Key) && dto.VideoS3Key != (string?)story.video_url))
+            {
+                var moderationResult = await _moderationService.ModerateStoryContentAsync(
+                    dto.Content,
+                    !string.IsNullOrWhiteSpace(dto.ImageS3Key) && dto.ImageS3Key != (string?)story.image_url ? dto.ImageS3Key : null,
+                    !string.IsNullOrWhiteSpace(dto.VideoS3Key) && dto.VideoS3Key != (string?)story.video_url ? dto.VideoS3Key : null);
+
+                if (moderationResult.IsBlocked)
+                {
+                    _logger.LogWarning("Story update content blocked by moderation for story {StoryId}. Reason: {Reason}",
+                        id, moderationResult.BlockReason);
+                    return BadRequest(new
+                    {
+                        message = "Content blocked by moderation",
+                        reason = moderationResult.BlockReason,
+                        code = "CONTENT_MODERATION_BLOCKED"
+                    });
                 }
             }
 
