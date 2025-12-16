@@ -75,6 +75,9 @@ builder.Logging.AddFilter("Microsoft.AspNetCore.Authorization", LogLevel.Informa
 builder.Logging.AddFilter("Wihngo.Services.S3Service", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Controllers.MediaController", LogLevel.Information);
 
+// ? Enable content moderation logs
+builder.Logging.AddFilter("Wihngo.Services.ContentModerationService", LogLevel.Debug);
+
 // Configure console logging format
 builder.Logging.AddSimpleConsole(options =>
 {
@@ -395,9 +398,16 @@ builder.Services.AddScoped<MonthlyPayoutJob>();
 // Memorial Services
 builder.Services.AddScoped<IMemorialService, MemorialService>();
 
+// Bird Activity Services
+builder.Services.AddScoped<IBirdActivityService, BirdActivityService>();
+
 // AI Story Generation Services
 builder.Services.AddScoped<IAiStoryGenerationService, AiStoryGenerationService>();
 builder.Services.AddScoped<IWhisperTranscriptionService, WhisperTranscriptionService>();
+
+// Content Moderation Services
+builder.Services.Configure<ContentModerationConfiguration>(builder.Configuration.GetSection("ContentModeration"));
+builder.Services.AddScoped<IContentModerationService, ContentModerationService>();
 
 // 📋 HANGFIRE - CONDITIONAL SETUP
 if (isDatabaseAvailable)

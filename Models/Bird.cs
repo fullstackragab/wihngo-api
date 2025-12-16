@@ -71,6 +71,10 @@ namespace Wihngo.Models
         [MaxLength(1000)]
         public string? QrCodeUrl { get; set; }
 
+        // Activity tracking
+        [Column("last_activity_at")]
+        public DateTime? LastActivityAt { get; set; }
+
         // Memorial fields
         [Column("is_memorial")]
         public bool IsMemorial { get; set; } = false;
