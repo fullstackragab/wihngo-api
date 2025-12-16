@@ -31,7 +31,9 @@
       "Bash(git restore:*)",
       "Bash(npx tsc --noEmit)",
       "Bash(npx tsc:*)",
-      "Bash(npx expo-doctor:*)"
+      "Bash(npx expo-doctor:*)",
+      "Bash(where psql:*)",
+      "Bash(curl:*)"
     ]
   }
 }

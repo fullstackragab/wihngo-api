@@ -12,6 +12,7 @@ public interface IInvoicePdfService
 {
     Task<string> GenerateInvoicePdfAsync(Invoice invoice, Payment payment);
     Task<byte[]> GetInvoicePdfBytesAsync(string pdfUrl);
+    Task<byte[]> GenerateCryptoPaymentReceiptAsync(CryptoPaymentRequest payment, string invoiceNumber, string? userName = null, string? userEmail = null);
 }
 
 public class InvoicePdfService : IInvoicePdfService
@@ -315,5 +316,218 @@ public class InvoicePdfService : IInvoicePdfService
         // TODO: Implement S3 upload using AWS SDK
         _logger.LogWarning("S3 upload not implemented, returning local path");
         return $"/{_config.StoragePath}/{fileName}";
+    }
+
+    public Task<byte[]> GenerateCryptoPaymentReceiptAsync(CryptoPaymentRequest payment, string invoiceNumber, string? userName = null, string? userEmail = null)
+    {
+        try
+        {
+            var document = CreateCryptoPaymentDocument(payment, invoiceNumber, userName, userEmail);
+
+            using var stream = new MemoryStream();
+            document.GeneratePdf(stream);
+
+            _logger.LogInformation("Generated crypto payment receipt PDF for {InvoiceNumber}", invoiceNumber);
+
+            return Task.FromResult(stream.ToArray());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate crypto payment receipt PDF for {InvoiceNumber}", invoiceNumber);
+            throw;
+        }
+    }
+
+    private Document CreateCryptoPaymentDocument(CryptoPaymentRequest payment, string invoiceNumber, string? userName, string? userEmail)
+    {
+        return Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A4);
+                page.Margin(50);
+                page.DefaultTextStyle(x => x.FontSize(11).FontFamily("Arial"));
+
+                page.Header().Element(ComposeHeader);
+                page.Content().Element(content => ComposeCryptoContent(content, payment, invoiceNumber, userName, userEmail));
+                page.Footer().Element(ComposeFooter);
+            });
+        });
+    }
+
+    private void ComposeCryptoContent(IContainer container, CryptoPaymentRequest payment, string invoiceNumber, string? userName, string? userEmail)
+    {
+        container.PaddingVertical(20).Column(column =>
+        {
+            // Invoice Number
+            column.Item().Background(Colors.Grey.Lighten3).Padding(10).Row(row =>
+            {
+                row.RelativeItem().Text("Receipt Number:").Bold();
+                row.RelativeItem().Text(invoiceNumber).AlignRight();
+            });
+
+            column.Item().PaddingTop(5).Row(row =>
+            {
+                row.RelativeItem().Text("Invoice Date:").Bold();
+                row.RelativeItem().Text($"{payment.CreatedAt:yyyy-MM-dd HH:mm:ss} UTC").AlignRight();
+            });
+
+            column.Item().PaddingTop(5).Row(row =>
+            {
+                row.RelativeItem().Text("Payment Date:").Bold();
+                row.RelativeItem().Text($"{payment.CompletedAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? payment.ConfirmedAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "N/A"} UTC").AlignRight();
+            });
+
+            // Customer Details
+            if (!string.IsNullOrEmpty(userName) || !string.IsNullOrEmpty(userEmail))
+            {
+                column.Item().PaddingTop(15).Text("CUSTOMER").Bold().FontSize(12);
+                column.Item().PaddingTop(5).LineHorizontal(1).LineColor(Colors.Grey.Medium);
+
+                if (!string.IsNullOrEmpty(userName))
+                {
+                    column.Item().PaddingTop(5).Row(row =>
+                    {
+                        row.RelativeItem().Text("Name:").Bold();
+                        row.RelativeItem().Text(userName).AlignRight();
+                    });
+                }
+
+                if (!string.IsNullOrEmpty(userEmail))
+                {
+                    column.Item().PaddingTop(5).Row(row =>
+                    {
+                        row.RelativeItem().Text("Email:").Bold();
+                        row.RelativeItem().Text(userEmail).AlignRight();
+                    });
+                }
+            }
+
+            // Payment Details Section
+            column.Item().PaddingTop(20).Text("PAYMENT DETAILS").Bold().FontSize(14);
+            column.Item().PaddingTop(10).LineHorizontal(1).LineColor(Colors.Grey.Medium);
+
+            column.Item().PaddingTop(10).Row(row =>
+            {
+                row.RelativeItem().Text("Payment Method:").Bold();
+                row.RelativeItem().Text("CRYPTOCURRENCY").AlignRight();
+            });
+
+            column.Item().PaddingTop(5).Row(row =>
+            {
+                row.RelativeItem().Text("Currency:").Bold();
+                row.RelativeItem().Text(payment.Currency.ToUpper()).AlignRight();
+            });
+
+            column.Item().PaddingTop(5).Row(row =>
+            {
+                row.RelativeItem().Text("Network:").Bold();
+                row.RelativeItem().Text(payment.Network.ToUpper()).AlignRight();
+            });
+
+            if (!string.IsNullOrEmpty(payment.TransactionHash))
+            {
+                column.Item().PaddingTop(5).Row(row =>
+                {
+                    row.RelativeItem().Text("Transaction Hash:").Bold();
+                    row.RelativeItem().Text(TruncateHash(payment.TransactionHash)).AlignRight();
+                });
+
+                // Add blockchain explorer link
+                var explorerUrl = GetExplorerUrl(payment.Network, payment.TransactionHash);
+                if (!string.IsNullOrEmpty(explorerUrl))
+                {
+                    column.Item().PaddingTop(2).Row(row =>
+                    {
+                        row.RelativeItem().Text("");
+                        row.RelativeItem().Text($"View on explorer: {explorerUrl}")
+                            .FontSize(8)
+                            .FontColor(Colors.Blue.Medium)
+                            .AlignRight();
+                    });
+                }
+            }
+
+            column.Item().PaddingTop(5).Row(row =>
+            {
+                row.RelativeItem().Text("Wallet Address:").Bold();
+                row.RelativeItem().Text(TruncateHash(payment.WalletAddress)).AlignRight();
+            });
+
+            column.Item().PaddingTop(5).Row(row =>
+            {
+                row.RelativeItem().Text("Confirmations:").Bold();
+                row.RelativeItem().Text($"{payment.Confirmations}/{payment.RequiredConfirmations}").AlignRight();
+            });
+
+            column.Item().PaddingTop(5).Row(row =>
+            {
+                row.RelativeItem().Text("Purpose:").Bold();
+                row.RelativeItem().Text(FormatPurpose(payment.Purpose)).AlignRight();
+            });
+
+            if (!string.IsNullOrEmpty(payment.Plan))
+            {
+                column.Item().PaddingTop(5).Row(row =>
+                {
+                    row.RelativeItem().Text("Plan:").Bold();
+                    row.RelativeItem().Text(payment.Plan.ToUpper()).AlignRight();
+                });
+            }
+
+            // Amount Section
+            column.Item().PaddingTop(20).LineHorizontal(1).LineColor(Colors.Grey.Medium);
+
+            column.Item().PaddingTop(10).Row(row =>
+            {
+                row.RelativeItem().Text("Amount Paid (Crypto):").Bold();
+                row.RelativeItem().Text($"{payment.AmountCrypto:F6} {payment.Currency}").AlignRight();
+            });
+
+            column.Item().PaddingTop(5).Row(row =>
+            {
+                row.RelativeItem().Text("Exchange Rate:").Bold();
+                row.RelativeItem().Text($"1 {payment.Currency} = ${payment.ExchangeRate:F4} USD").AlignRight();
+            });
+
+            column.Item().PaddingTop(10).Background(Colors.Green.Lighten4).Padding(10).Row(row =>
+            {
+                row.RelativeItem().Text("TOTAL AMOUNT (USD):").Bold().FontSize(14);
+                row.RelativeItem().Text($"${payment.AmountUsd:F2}")
+                    .Bold()
+                    .FontSize(14)
+                    .AlignRight();
+            });
+
+            // Tax Deductibility Notice
+            column.Item().PaddingTop(30).Background(Colors.Yellow.Lighten3).Padding(15).Column(noticeColumn =>
+            {
+                noticeColumn.Item().Text("IMPORTANT TAX NOTICE").Bold().FontSize(12);
+                noticeColumn.Item().PaddingTop(5).Text(_config.DefaultReceiptNotes).FontSize(9);
+            });
+
+            // Status
+            column.Item().PaddingTop(20).Row(row =>
+            {
+                row.RelativeItem().Text("Payment Status:").Bold();
+                row.RelativeItem().Text(payment.Status.ToUpper())
+                    .FontColor(payment.Status == "completed" ? Colors.Green.Medium : Colors.Orange.Medium)
+                    .Bold()
+                    .AlignRight();
+            });
+        });
+    }
+
+    private string FormatPurpose(string? purpose)
+    {
+        if (string.IsNullOrEmpty(purpose)) return "General Payment";
+
+        return purpose switch
+        {
+            "donation" => "Donation / Support",
+            "premium_subscription" => "Premium Subscription",
+            "purchase" => "Purchase",
+            _ => purpose.Replace("_", " ").ToUpper()
+        };
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using Dapper;
 using Npgsql;
 using Wihngo.Data;
 using Wihngo.Dtos;
@@ -16,6 +17,8 @@ public class CryptoPaymentService : ICryptoPaymentService
     private readonly IConfiguration _configuration;
     private readonly ILogger<CryptoPaymentService> _logger;
     private readonly IHdWalletService? _hdWalletService;
+    private readonly IInvoiceEmailService? _invoiceEmailService;
+    private readonly IInvoicePdfService? _invoicePdfService;
 
     public CryptoPaymentService(
         AppDbContext context,
@@ -23,7 +26,9 @@ public class CryptoPaymentService : ICryptoPaymentService
         IBlockchainService blockchainService,
         IConfiguration configuration,
         ILogger<CryptoPaymentService> logger,
-        IHdWalletService? hdWalletService = null)
+        IHdWalletService? hdWalletService = null,
+        IInvoiceEmailService? invoiceEmailService = null,
+        IInvoicePdfService? invoicePdfService = null)
     {
         _context = context;
         _dbFactory = dbFactory;
@@ -31,6 +36,8 @@ public class CryptoPaymentService : ICryptoPaymentService
         _configuration = configuration;
         _logger = logger;
         _hdWalletService = hdWalletService;
+        _invoiceEmailService = invoiceEmailService;
+        _invoicePdfService = invoicePdfService;
     }
 
     // New helper: allocate a unique index from Postgres sequence (only for Solana)
@@ -74,9 +81,14 @@ public class CryptoPaymentService : ICryptoPaymentService
             throw new InvalidOperationException($"Minimum payment amount is ${minAmount}");
         }
 
-        // Get exchange rate
-        var rate = await _context.CryptoExchangeRates
-            .FirstOrDefaultAsync(r => r.Currency == dto.Currency.ToUpper());
+        // Get exchange rate using raw SQL
+        CryptoExchangeRate? rate;
+        using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+        {
+            rate = await conn.QueryFirstOrDefaultAsync<CryptoExchangeRate>(
+                "SELECT * FROM crypto_exchange_rates WHERE currency = @Currency",
+                new { Currency = dto.Currency.ToUpper() });
+        }
 
         if (rate == null)
         {
@@ -153,29 +165,48 @@ public class CryptoPaymentService : ICryptoPaymentService
         // Ensure DateTime is set to UTC with DateTimeKind.Utc
         var expiresAt = DateTime.SpecifyKind(DateTime.UtcNow.AddMinutes(30), DateTimeKind.Utc);
 
-        // Create payment request
-        var payment = new CryptoPaymentRequest
-        {
-            UserId = userId,
-            BirdId = dto.BirdId,
-            AmountUsd = dto.AmountUsd,
-            AmountCrypto = amountCrypto,
-            Currency = dto.Currency.ToUpper(),
-            Network = dto.Network.ToLower(),
-            ExchangeRate = rate.UsdRate,
-            WalletAddress = wallet.Address,
-            AddressIndex = addressIndex,
-            QrCodeData = qrCodeData,
-            PaymentUri = paymentUri,
-            RequiredConfirmations = requiredConfirmations,
-            Status = "pending",
-            Purpose = dto.Purpose,
-            Plan = dto.Plan,
-            ExpiresAt = expiresAt
-        };
+        // Create payment request using Dapper
+        var paymentId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
 
-        _context.CryptoPaymentRequests.Add(payment);
-        await _context.SaveChangesAsync();
+        CryptoPaymentRequest payment;
+        using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+        {
+            var sql = @"
+                INSERT INTO crypto_payment_requests (
+                    id, user_id, bird_id, amount_usd, amount_crypto, currency, network,
+                    exchange_rate, wallet_address, address_index, qr_code_data, payment_uri,
+                    confirmations, required_confirmations, status, purpose, plan, expires_at, created_at, updated_at
+                ) VALUES (
+                    @Id, @UserId, @BirdId, @AmountUsd, @AmountCrypto, @Currency, @Network,
+                    @ExchangeRate, @WalletAddress, @AddressIndex, @QrCodeData, @PaymentUri,
+                    @Confirmations, @RequiredConfirmations, @Status, @Purpose, @Plan, @ExpiresAt, @CreatedAt, @UpdatedAt
+                ) RETURNING *";
+
+            payment = await conn.QuerySingleAsync<CryptoPaymentRequest>(sql, new
+            {
+                Id = paymentId,
+                UserId = userId,
+                BirdId = dto.BirdId,
+                AmountUsd = dto.AmountUsd,
+                AmountCrypto = amountCrypto,
+                Currency = dto.Currency.ToUpper(),
+                Network = dto.Network.ToLower(),
+                ExchangeRate = rate.UsdRate,
+                WalletAddress = wallet.Address,
+                AddressIndex = addressIndex,
+                QrCodeData = qrCodeData,
+                PaymentUri = paymentUri,
+                Confirmations = 0,
+                RequiredConfirmations = requiredConfirmations,
+                Status = "pending",
+                Purpose = dto.Purpose,
+                Plan = dto.Plan,
+                ExpiresAt = expiresAt,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+        }
 
         _logger.LogInformation(
             "[Payment] Created payment request {PaymentId} for user {UserId} - Amount: {Amount} {Currency}, Wallet: {Wallet}, HD Index: {Index}",
@@ -186,8 +217,13 @@ public class CryptoPaymentService : ICryptoPaymentService
 
     public async Task<PaymentResponseDto?> GetPaymentRequestAsync(Guid paymentId, Guid userId)
     {
-        var payment = await _context.CryptoPaymentRequests
-            .FirstOrDefaultAsync(p => p.Id == paymentId && p.UserId == userId);
+        CryptoPaymentRequest? payment;
+        using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+        {
+            payment = await conn.QueryFirstOrDefaultAsync<CryptoPaymentRequest>(
+                "SELECT * FROM crypto_payment_requests WHERE id = @PaymentId AND user_id = @UserId",
+                new { PaymentId = paymentId, UserId = userId });
+        }
 
         if (payment == null)
         {
@@ -199,7 +235,12 @@ public class CryptoPaymentService : ICryptoPaymentService
         {
             payment.Status = "expired";
             payment.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
+            using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+            {
+                await conn.ExecuteAsync(
+                    "UPDATE crypto_payment_requests SET status = @Status, updated_at = @UpdatedAt WHERE id = @Id",
+                    new { Status = payment.Status, UpdatedAt = payment.UpdatedAt, Id = payment.Id });
+            }
         }
 
         return MapToDto(payment);
@@ -207,8 +248,13 @@ public class CryptoPaymentService : ICryptoPaymentService
 
     public async Task<PaymentResponseDto> VerifyPaymentAsync(Guid paymentId, Guid userId, VerifyPaymentDto dto)
     {
-        var payment = await _context.CryptoPaymentRequests
-            .FirstOrDefaultAsync(p => p.Id == paymentId && p.UserId == userId);
+        CryptoPaymentRequest? payment;
+        using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+        {
+            payment = await conn.QueryFirstOrDefaultAsync<CryptoPaymentRequest>(
+                "SELECT * FROM crypto_payment_requests WHERE id = @PaymentId AND user_id = @UserId",
+                new { PaymentId = paymentId, UserId = userId });
+        }
 
         if (payment == null)
         {
@@ -265,25 +311,58 @@ public class CryptoPaymentService : ICryptoPaymentService
             payment.ConfirmedAt = DateTime.UtcNow;
         }
 
-        // Create transaction record
-        var transaction = new CryptoTransaction
+        // Update payment and create transaction record using Dapper
+        using (var conn = await _dbFactory.CreateOpenConnectionAsync())
         {
-            PaymentRequestId = payment.Id,
-            TransactionHash = dto.TransactionHash,
-            FromAddress = txInfo.FromAddress,
-            ToAddress = txInfo.ToAddress,
-            Amount = txInfo.Amount,
-            Currency = payment.Currency,
-            Network = payment.Network,
-            Confirmations = txInfo.Confirmations,
-            BlockNumber = txInfo.BlockNumber,
-            BlockHash = txInfo.BlockHash,
-            Fee = txInfo.Fee,
-            Status = txInfo.Confirmations >= payment.RequiredConfirmations ? "confirmed" : "pending"
-        };
+            // Update payment request
+            await conn.ExecuteAsync(@"
+                UPDATE crypto_payment_requests SET
+                    transaction_hash = @TransactionHash,
+                    user_wallet_address = @UserWalletAddress,
+                    confirmations = @Confirmations,
+                    status = @Status,
+                    confirmed_at = @ConfirmedAt,
+                    updated_at = @UpdatedAt
+                WHERE id = @Id",
+                new
+                {
+                    TransactionHash = payment.TransactionHash,
+                    UserWalletAddress = payment.UserWalletAddress,
+                    Confirmations = payment.Confirmations,
+                    Status = payment.Status,
+                    ConfirmedAt = payment.ConfirmedAt,
+                    UpdatedAt = payment.UpdatedAt,
+                    Id = payment.Id
+                });
 
-        _context.CryptoTransactions.Add(transaction);
-        await _context.SaveChangesAsync();
+            // Create transaction record
+            await conn.ExecuteAsync(@"
+                INSERT INTO crypto_transactions (
+                    payment_request_id, transaction_hash, from_address, to_address, amount,
+                    currency, network, confirmations, block_number, block_hash, fee, status,
+                    detected_at
+                ) VALUES (
+                    @PaymentRequestId, @TransactionHash, @FromAddress, @ToAddress, @Amount,
+                    @Currency, @Network, @Confirmations, @BlockNumber, @BlockHash, @Fee, @Status,
+                    @DetectedAt
+                )",
+                new
+                {
+                    PaymentRequestId = payment.Id,
+                    TransactionHash = dto.TransactionHash,
+                    FromAddress = txInfo.FromAddress,
+                    ToAddress = txInfo.ToAddress,
+                    Amount = txInfo.Amount,
+                    Currency = payment.Currency,
+                    Network = payment.Network,
+                    Confirmations = txInfo.Confirmations,
+                    BlockNumber = txInfo.BlockNumber,
+                    BlockHash = txInfo.BlockHash,
+                    Fee = txInfo.Fee,
+                    Status = txInfo.Confirmations >= payment.RequiredConfirmations ? "confirmed" : "pending",
+                    DetectedAt = DateTime.UtcNow
+                });
+        }
 
         _logger.LogInformation($"[VerifyPayment] Payment {payment.Id} verified - Status: {previousStatus} -> {payment.Status}, Confirmations: {txInfo.Confirmations}/{payment.RequiredConfirmations}");
 
@@ -292,10 +371,15 @@ public class CryptoPaymentService : ICryptoPaymentService
         {
             _logger.LogInformation($"[VerifyPayment] Payment {payment.Id} has required confirmations, completing now");
             await CompletePaymentAsync(payment);
-            
-            // Reload to get updated status
-            await _context.Entry(payment).ReloadAsync();
-            
+
+            // Reload payment to get updated status
+            using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+            {
+                payment = await conn.QueryFirstOrDefaultAsync<CryptoPaymentRequest>(
+                    "SELECT * FROM crypto_payment_requests WHERE id = @Id",
+                    new { Id = payment.Id }) ?? payment;
+            }
+
             Console.WriteLine($"? Payment {payment.Id} completed via VerifyPayment endpoint");
         }
 
@@ -318,12 +402,15 @@ public class CryptoPaymentService : ICryptoPaymentService
 
     public async Task<PlatformWallet?> GetPlatformWalletAsync(string currency, string network)
     {
-        return await _context.PlatformWallets
-            .Where(w => w.Currency == currency.ToUpper() &&
-                       w.Network == network.ToLower() &&
-                       w.IsActive)
-            .OrderByDescending(w => w.CreatedAt)
-            .FirstOrDefaultAsync();
+        using var conn = await _dbFactory.CreateOpenConnectionAsync();
+        return await conn.QueryFirstOrDefaultAsync<PlatformWallet>(
+            @"SELECT * FROM platform_wallets
+              WHERE currency = @Currency
+              AND network = @Network
+              AND is_active = TRUE
+              ORDER BY created_at DESC
+              LIMIT 1",
+            new { Currency = currency.ToUpper(), Network = network.ToLower() });
     }
 
     public async Task CompletePaymentAsync(CryptoPaymentRequest payment)
@@ -331,9 +418,9 @@ public class CryptoPaymentService : ICryptoPaymentService
         try
         {
             var previousStatus = payment.Status;
-            
+
             _logger.LogInformation($"[CompletePayment] Starting completion for payment {payment.Id} (Current status: {previousStatus})");
-            
+
             payment.Status = "completed";
             payment.CompletedAt = DateTime.UtcNow;
             payment.UpdatedAt = DateTime.UtcNow;
@@ -344,7 +431,23 @@ public class CryptoPaymentService : ICryptoPaymentService
                 await ActivatePremiumSubscriptionAsync(payment);
             }
 
-            await _context.SaveChangesAsync();
+            // Update payment status using Dapper
+            using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+            {
+                await conn.ExecuteAsync(@"
+                    UPDATE crypto_payment_requests SET
+                        status = @Status,
+                        completed_at = @CompletedAt,
+                        updated_at = @UpdatedAt
+                    WHERE id = @Id",
+                    new
+                    {
+                        Status = payment.Status,
+                        CompletedAt = payment.CompletedAt,
+                        UpdatedAt = payment.UpdatedAt,
+                        Id = payment.Id
+                    });
+            }
 
             Console.WriteLine($"??? PAYMENT COMPLETED SUCCESSFULLY ???");
             Console.WriteLine($"Payment ID: {payment.Id}");
@@ -358,14 +461,22 @@ public class CryptoPaymentService : ICryptoPaymentService
             Console.WriteLine($"===========================================");
 
             _logger.LogInformation($"[CompletePayment] ? Payment {payment.Id} completed successfully - Status changed from '{previousStatus}' to '{payment.Status}'");
+
+            // Send payment confirmation email
+            await SendPaymentConfirmationEmailAsync(payment);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, $"[CompletePayment] ? Failed to complete payment {payment.Id}");
             Console.WriteLine($"? ERROR: Failed to complete payment {payment.Id}: {ex.Message}");
-            
+
             payment.Status = "failed";
-            await _context.SaveChangesAsync();
+            using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+            {
+                await conn.ExecuteAsync(
+                    "UPDATE crypto_payment_requests SET status = @Status, updated_at = @UpdatedAt WHERE id = @Id",
+                    new { Status = payment.Status, UpdatedAt = DateTime.UtcNow, Id = payment.Id });
+            }
         }
     }
 
@@ -373,62 +484,84 @@ public class CryptoPaymentService : ICryptoPaymentService
     {
         if (payment.BirdId == null) return;
 
-        var existingSub = await _context.BirdPremiumSubscriptions
-            .FirstOrDefaultAsync(s => s.BirdId == payment.BirdId && s.Status == "active");
-
-        if (existingSub != null)
+        BirdPremiumSubscription? existingSub;
+        using (var conn = await _dbFactory.CreateOpenConnectionAsync())
         {
-            // Extend existing subscription
-            var extensionDays = payment.Plan?.ToLower() switch
-            {
-                "monthly" => 30,
-                "yearly" => 365,
-                "lifetime" => 36500, // 100 years
-                _ => 30
-            };
+            existingSub = await conn.QueryFirstOrDefaultAsync<BirdPremiumSubscription>(
+                "SELECT * FROM bird_premium_subscriptions WHERE bird_id = @BirdId AND status = 'active'",
+                new { BirdId = payment.BirdId });
 
-            if (existingSub.CurrentPeriodEnd < DateTime.UtcNow)
+            if (existingSub != null)
             {
-                existingSub.CurrentPeriodEnd = DateTime.UtcNow.AddDays(extensionDays);
+                // Extend existing subscription
+                var extensionDays = payment.Plan?.ToLower() switch
+                {
+                    "monthly" => 30,
+                    "yearly" => 365,
+                    "lifetime" => 36500, // 100 years
+                    _ => 30
+                };
+
+                DateTime newEndDate;
+                if (existingSub.CurrentPeriodEnd < DateTime.UtcNow)
+                {
+                    newEndDate = DateTime.UtcNow.AddDays(extensionDays);
+                }
+                else
+                {
+                    newEndDate = existingSub.CurrentPeriodEnd.AddDays(extensionDays);
+                }
+
+                await conn.ExecuteAsync(@"
+                    UPDATE bird_premium_subscriptions SET
+                        current_period_end = @CurrentPeriodEnd,
+                        updated_at = @UpdatedAt
+                    WHERE id = @Id",
+                    new
+                    {
+                        CurrentPeriodEnd = newEndDate,
+                        UpdatedAt = DateTime.UtcNow,
+                        Id = existingSub.Id
+                    });
             }
             else
             {
-                existingSub.CurrentPeriodEnd = existingSub.CurrentPeriodEnd.AddDays(extensionDays);
+                // Create new subscription
+                var durationDays = payment.Plan?.ToLower() switch
+                {
+                    "monthly" => 30,
+                    "yearly" => 365,
+                    "lifetime" => 36500,
+                    _ => 30
+                };
+
+                var now = DateTime.UtcNow;
+                await conn.ExecuteAsync(@"
+                    INSERT INTO bird_premium_subscriptions (
+                        bird_id, owner_id, status, plan, provider, provider_subscription_id,
+                        price_cents, duration_days, started_at, current_period_end, created_at, updated_at
+                    ) VALUES (
+                        @BirdId, @OwnerId, @Status, @Plan, @Provider, @ProviderSubscriptionId,
+                        @PriceCents, @DurationDays, @StartedAt, @CurrentPeriodEnd, @CreatedAt, @UpdatedAt
+                    )",
+                    new
+                    {
+                        BirdId = payment.BirdId.Value,
+                        OwnerId = payment.UserId,
+                        Status = "active",
+                        Plan = payment.Plan ?? "monthly",
+                        Provider = "crypto",
+                        ProviderSubscriptionId = payment.Id.ToString(),
+                        PriceCents = (long)(payment.AmountUsd * 100),
+                        DurationDays = durationDays,
+                        StartedAt = now,
+                        CurrentPeriodEnd = now.AddDays(durationDays),
+                        CreatedAt = now,
+                        UpdatedAt = now
+                    });
             }
-
-            existingSub.UpdatedAt = DateTime.UtcNow;
-        }
-        else
-        {
-            // Create new subscription
-            var durationDays = payment.Plan?.ToLower() switch
-            {
-                "monthly" => 30,
-                "yearly" => 365,
-                "lifetime" => 36500,
-                _ => 30
-            };
-
-            var subscription = new BirdPremiumSubscription
-            {
-                BirdId = payment.BirdId.Value,
-                OwnerId = payment.UserId,
-                Status = "active",
-                Plan = payment.Plan ?? "monthly",
-                Provider = "crypto",
-                ProviderSubscriptionId = payment.Id.ToString(),
-                PriceCents = (long)(payment.AmountUsd * 100),
-                DurationDays = durationDays,
-                StartedAt = DateTime.UtcNow,
-                CurrentPeriodEnd = DateTime.UtcNow.AddDays(durationDays),
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-
-            _context.BirdPremiumSubscriptions.Add(subscription);
         }
 
-        await _context.SaveChangesAsync();
         _logger.LogInformation($"Premium activated for bird {payment.BirdId}");
     }
 
@@ -488,8 +621,13 @@ public class CryptoPaymentService : ICryptoPaymentService
 
     public async Task<PaymentResponseDto?> CancelPaymentAsync(Guid paymentId, Guid userId)
     {
-        var payment = await _context.CryptoPaymentRequests
-            .FirstOrDefaultAsync(p => p.Id == paymentId && p.UserId == userId);
+        CryptoPaymentRequest? payment;
+        using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+        {
+            payment = await conn.QueryFirstOrDefaultAsync<CryptoPaymentRequest>(
+                "SELECT * FROM crypto_payment_requests WHERE id = @PaymentId AND user_id = @UserId",
+                new { PaymentId = paymentId, UserId = userId });
+        }
 
         if (payment == null)
         {
@@ -504,10 +642,99 @@ public class CryptoPaymentService : ICryptoPaymentService
 
         payment.Status = "cancelled";
         payment.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
+
+        using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+        {
+            await conn.ExecuteAsync(
+                "UPDATE crypto_payment_requests SET status = @Status, updated_at = @UpdatedAt WHERE id = @Id",
+                new { Status = payment.Status, UpdatedAt = payment.UpdatedAt, Id = payment.Id });
+        }
 
         _logger.LogInformation($"Payment {payment.Id} cancelled by user {userId}");
 
         return MapToDto(payment);
+    }
+
+    private async Task SendPaymentConfirmationEmailAsync(CryptoPaymentRequest payment)
+    {
+        if (_invoiceEmailService == null)
+        {
+            _logger.LogWarning("[Email] Invoice email service not available, skipping email for payment {PaymentId}", payment.Id);
+            return;
+        }
+
+        try
+        {
+            // Get user email from database
+            string? userEmail = null;
+            string? userName = null;
+
+            using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+            {
+                var user = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                    "SELECT email, name FROM users WHERE user_id = @UserId",
+                    new { UserId = payment.UserId });
+
+                if (user != null)
+                {
+                    userEmail = user.email;
+                    userName = user.name;
+                }
+            }
+
+            if (string.IsNullOrEmpty(userEmail))
+            {
+                _logger.LogWarning("[Email] User {UserId} has no email address, skipping payment confirmation email", payment.UserId);
+                return;
+            }
+
+            // Generate invoice number
+            var invoiceNumber = $"WIH-{DateTime.UtcNow:yyyyMM}-{payment.Id.ToString()[..8].ToUpper()}";
+
+            // Generate PDF invoice if service is available
+            byte[]? pdfBytes = null;
+            if (_invoicePdfService != null)
+            {
+                try
+                {
+                    pdfBytes = await _invoicePdfService.GenerateCryptoPaymentReceiptAsync(
+                        payment,
+                        invoiceNumber,
+                        userName,
+                        userEmail);
+                    _logger.LogInformation("[Invoice] Generated PDF invoice {InvoiceNumber} for payment {PaymentId}", invoiceNumber, payment.Id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[Invoice] Failed to generate PDF invoice for payment {PaymentId}, sending email without attachment", payment.Id);
+                }
+            }
+
+            // Send invoice email with PDF attachment
+            if (pdfBytes != null && pdfBytes.Length > 0)
+            {
+                await _invoiceEmailService.SendInvoiceEmailAsync(
+                    userEmail,
+                    invoiceNumber,
+                    pdfBytes,
+                    userName);
+                _logger.LogInformation("[Email] Invoice email with PDF sent to {Email} for payment {PaymentId}", userEmail, payment.Id);
+            }
+            else
+            {
+                // Fallback to simple confirmation email without PDF
+                await _invoiceEmailService.SendPaymentConfirmationAsync(
+                    userEmail,
+                    invoiceNumber,
+                    payment.AmountUsd,
+                    payment.Currency);
+                _logger.LogInformation("[Email] Payment confirmation email (without PDF) sent to {Email} for payment {PaymentId}", userEmail, payment.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Email] Failed to send payment confirmation email for payment {PaymentId}", payment.Id);
+            // Don't throw - email failure shouldn't break the payment completion
+        }
     }
 }

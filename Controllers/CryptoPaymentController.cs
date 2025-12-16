@@ -1,8 +1,10 @@
+using Dapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using Wihngo.Data;
 using Wihngo.Dtos;
+using Wihngo.Models.Entities;
 using Wihngo.Services.Interfaces;
 
 namespace Wihngo.Controllers;
@@ -14,15 +16,18 @@ public class CryptoPaymentController : ControllerBase
 {
     private readonly ICryptoPaymentService _paymentService;
     private readonly AppDbContext _context;
+    private readonly IDbConnectionFactory _dbFactory;
     private readonly ILogger<CryptoPaymentController> _logger;
 
     public CryptoPaymentController(
         ICryptoPaymentService paymentService,
         AppDbContext context,
+        IDbConnectionFactory dbFactory,
         ILogger<CryptoPaymentController> logger)
     {
         _paymentService = paymentService;
         _context = context;
+        _dbFactory = dbFactory;
         _logger = logger;
     }
 
@@ -77,8 +82,14 @@ public class CryptoPaymentController : ControllerBase
         try
         {
             var userId = GetUserId();
-            var payment = await _context.CryptoPaymentRequests
-                .FirstOrDefaultAsync(p => p.Id == paymentId && p.UserId == userId);
+
+            CryptoPaymentRequest? payment;
+            using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+            {
+                payment = await conn.QueryFirstOrDefaultAsync<CryptoPaymentRequest>(
+                    "SELECT * FROM crypto_payment_requests WHERE id = @PaymentId AND user_id = @UserId",
+                    new { PaymentId = paymentId, UserId = userId });
+            }
 
             if (payment == null)
             {
@@ -90,12 +101,17 @@ public class CryptoPaymentController : ControllerBase
             {
                 payment.Status = "expired";
                 payment.UpdatedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
+                using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+                {
+                    await conn.ExecuteAsync(
+                        "UPDATE crypto_payment_requests SET status = @Status, updated_at = @UpdatedAt WHERE id = @Id",
+                        new { Status = payment.Status, UpdatedAt = payment.UpdatedAt, Id = payment.Id });
+                }
             }
 
             // If payment has a transaction hash and is pending/confirming, check blockchain immediately
             // This provides real-time updates without requiring a separate check-status endpoint call
-            if (payment.TransactionHash != null && 
+            if (payment.TransactionHash != null &&
                 (payment.Status == "pending" || payment.Status == "confirming" || payment.Status == "confirmed"))
             {
                 try
@@ -119,8 +135,15 @@ public class CryptoPaymentController : ControllerBase
                                 // Already confirmed but not completed - complete it now
                                 _logger.LogInformation($"[GetPayment] Payment {payment.Id} is confirmed, completing now");
                                 await _paymentService.CompletePaymentAsync(payment);
-                                await _context.Entry(payment).ReloadAsync();
-                                
+
+                                // Reload payment
+                                using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+                                {
+                                    payment = await conn.QueryFirstOrDefaultAsync<CryptoPaymentRequest>(
+                                        "SELECT * FROM crypto_payment_requests WHERE id = @Id",
+                                        new { Id = payment.Id }) ?? payment;
+                                }
+
                                 Console.WriteLine($"? Payment {payment.Id} completed via GetPayment endpoint");
                                 _logger.LogInformation($"[GetPayment] Payment {payment.Id} completed - Status: {previousStatus} -> {payment.Status}");
                             }
@@ -131,11 +154,25 @@ public class CryptoPaymentController : ControllerBase
                                 payment.ConfirmedAt = DateTime.UtcNow;
                                 payment.UpdatedAt = DateTime.UtcNow;
 
-                                await _context.SaveChangesAsync();
-                                
+                                using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+                                {
+                                    await conn.ExecuteAsync(@"
+                                        UPDATE crypto_payment_requests SET
+                                            status = @Status, confirmed_at = @ConfirmedAt, updated_at = @UpdatedAt
+                                        WHERE id = @Id",
+                                        new { Status = payment.Status, ConfirmedAt = payment.ConfirmedAt, UpdatedAt = payment.UpdatedAt, Id = payment.Id });
+                                }
+
                                 _logger.LogInformation($"[GetPayment] Payment {payment.Id} confirmed, completing now");
                                 await _paymentService.CompletePaymentAsync(payment);
-                                await _context.Entry(payment).ReloadAsync();
+
+                                // Reload payment
+                                using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+                                {
+                                    payment = await conn.QueryFirstOrDefaultAsync<CryptoPaymentRequest>(
+                                        "SELECT * FROM crypto_payment_requests WHERE id = @Id",
+                                        new { Id = payment.Id }) ?? payment;
+                                }
 
                                 Console.WriteLine($"? Payment {payment.Id} completed via GetPayment endpoint");
                                 _logger.LogInformation($"[GetPayment] Payment {payment.Id} completed - Status: {previousStatus} -> {payment.Status}");
@@ -145,8 +182,13 @@ public class CryptoPaymentController : ControllerBase
                         {
                             payment.Status = "confirming";
                             payment.UpdatedAt = DateTime.UtcNow;
-                            await _context.SaveChangesAsync();
-                            
+                            using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+                            {
+                                await conn.ExecuteAsync(
+                                    "UPDATE crypto_payment_requests SET status = @Status, confirmations = @Confirmations, updated_at = @UpdatedAt WHERE id = @Id",
+                                    new { Status = payment.Status, Confirmations = payment.Confirmations, UpdatedAt = payment.UpdatedAt, Id = payment.Id });
+                            }
+
                             _logger.LogInformation($"[GetPayment] Payment {payment.Id} status changed to 'confirming' ({txInfo.Confirmations}/{payment.RequiredConfirmations} confirmations)");
                         }
                     }
@@ -157,9 +199,6 @@ public class CryptoPaymentController : ControllerBase
                     // Don't fail the request, just return current status
                 }
             }
-
-            // Reload to ensure we have the latest data
-            await _context.Entry(payment).ReloadAsync();
 
             return Ok(new PaymentResponseDto
             {
@@ -258,17 +297,11 @@ public class CryptoPaymentController : ControllerBase
     {
         try
         {
-            var rates = await _context.CryptoExchangeRates
-                .Select(r => new ExchangeRateDto
-                {
-                    Currency = r.Currency,
-                    UsdRate = r.UsdRate,
-                    LastUpdated = r.LastUpdated,
-                    Source = r.Source
-                })
-                .ToListAsync();
+            using var conn = await _dbFactory.CreateOpenConnectionAsync();
+            var rates = await conn.QueryAsync<ExchangeRateDto>(
+                "SELECT currency, usd_rate AS UsdRate, last_updated AS LastUpdated, source FROM crypto_exchange_rates");
 
-            return Ok(rates);
+            return Ok(rates.ToList());
         }
         catch (Exception ex)
         {
@@ -288,16 +321,10 @@ public class CryptoPaymentController : ControllerBase
     {
         try
         {
-            var rate = await _context.CryptoExchangeRates
-                .Where(r => r.Currency == currency.ToUpper())
-                .Select(r => new ExchangeRateDto
-                {
-                    Currency = r.Currency,
-                    UsdRate = r.UsdRate,
-                    LastUpdated = r.LastUpdated,
-                    Source = r.Source
-                })
-                .FirstOrDefaultAsync();
+            using var conn = await _dbFactory.CreateOpenConnectionAsync();
+            var rate = await conn.QueryFirstOrDefaultAsync<ExchangeRateDto>(
+                "SELECT currency, usd_rate AS UsdRate, last_updated AS LastUpdated, source FROM crypto_exchange_rates WHERE currency = @Currency",
+                new { Currency = currency.ToUpper() });
 
             if (rate == null)
             {
@@ -396,8 +423,14 @@ public class CryptoPaymentController : ControllerBase
         try
         {
             var userId = GetUserId();
-            var payment = await _context.CryptoPaymentRequests
-                .FirstOrDefaultAsync(p => p.Id == paymentId && p.UserId == userId);
+
+            CryptoPaymentRequest? payment;
+            using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+            {
+                payment = await conn.QueryFirstOrDefaultAsync<CryptoPaymentRequest>(
+                    "SELECT * FROM crypto_payment_requests WHERE id = @PaymentId AND user_id = @UserId",
+                    new { PaymentId = paymentId, UserId = userId });
+            }
 
             if (payment == null)
             {
@@ -409,11 +442,16 @@ public class CryptoPaymentController : ControllerBase
             {
                 payment.Status = "expired";
                 payment.UpdatedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
+                using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+                {
+                    await conn.ExecuteAsync(
+                        "UPDATE crypto_payment_requests SET status = @Status, updated_at = @UpdatedAt WHERE id = @Id",
+                        new { Status = payment.Status, UpdatedAt = payment.UpdatedAt, Id = payment.Id });
+                }
             }
 
             // If payment has a transaction hash and is pending/confirming, check blockchain immediately
-            if (payment.TransactionHash != null && 
+            if (payment.TransactionHash != null &&
                 (payment.Status == "pending" || payment.Status == "confirming" || payment.Status == "confirmed"))
             {
                 try
@@ -437,8 +475,15 @@ public class CryptoPaymentController : ControllerBase
                                 // Already confirmed but not completed - complete it now
                                 _logger.LogInformation($"[CheckStatus] Payment {payment.Id} is confirmed, completing now");
                                 await _paymentService.CompletePaymentAsync(payment);
-                                await _context.Entry(payment).ReloadAsync();
-                                
+
+                                // Reload payment
+                                using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+                                {
+                                    payment = await conn.QueryFirstOrDefaultAsync<CryptoPaymentRequest>(
+                                        "SELECT * FROM crypto_payment_requests WHERE id = @Id",
+                                        new { Id = payment.Id }) ?? payment;
+                                }
+
                                 Console.WriteLine($"? Payment {payment.Id} completed via CheckStatus endpoint");
                                 _logger.LogInformation($"[CheckStatus] Payment {payment.Id} completed - Status: {previousStatus} -> {payment.Status}");
                             }
@@ -449,11 +494,25 @@ public class CryptoPaymentController : ControllerBase
                                 payment.ConfirmedAt = DateTime.UtcNow;
                                 payment.UpdatedAt = DateTime.UtcNow;
 
-                                await _context.SaveChangesAsync();
-                                
+                                using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+                                {
+                                    await conn.ExecuteAsync(@"
+                                        UPDATE crypto_payment_requests SET
+                                            status = @Status, confirmed_at = @ConfirmedAt, updated_at = @UpdatedAt
+                                        WHERE id = @Id",
+                                        new { Status = payment.Status, ConfirmedAt = payment.ConfirmedAt, UpdatedAt = payment.UpdatedAt, Id = payment.Id });
+                                }
+
                                 _logger.LogInformation($"[CheckStatus] Payment {payment.Id} confirmed, completing now");
                                 await _paymentService.CompletePaymentAsync(payment);
-                                await _context.Entry(payment).ReloadAsync();
+
+                                // Reload payment
+                                using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+                                {
+                                    payment = await conn.QueryFirstOrDefaultAsync<CryptoPaymentRequest>(
+                                        "SELECT * FROM crypto_payment_requests WHERE id = @Id",
+                                        new { Id = payment.Id }) ?? payment;
+                                }
 
                                 Console.WriteLine($"? Payment {payment.Id} completed via CheckStatus endpoint");
                                 _logger.LogInformation($"[CheckStatus] Payment {payment.Id} completed - Status: {previousStatus} -> {payment.Status}");
@@ -463,8 +522,13 @@ public class CryptoPaymentController : ControllerBase
                         {
                             payment.Status = "confirming";
                             payment.UpdatedAt = DateTime.UtcNow;
-                            await _context.SaveChangesAsync();
-                            
+                            using (var conn = await _dbFactory.CreateOpenConnectionAsync())
+                            {
+                                await conn.ExecuteAsync(
+                                    "UPDATE crypto_payment_requests SET status = @Status, confirmations = @Confirmations, updated_at = @UpdatedAt WHERE id = @Id",
+                                    new { Status = payment.Status, Confirmations = payment.Confirmations, UpdatedAt = payment.UpdatedAt, Id = payment.Id });
+                            }
+
                             _logger.LogInformation($"[CheckStatus] Payment {payment.Id} status changed to 'confirming' ({txInfo.Confirmations}/{payment.RequiredConfirmations} confirmations)");
                         }
                     }
@@ -475,9 +539,6 @@ public class CryptoPaymentController : ControllerBase
                     // Don't fail the request, just return current status
                 }
             }
-
-            // Reload to ensure we have the latest data
-            await _context.Entry(payment).ReloadAsync();
 
             return Ok(new PaymentResponseDto
             {
