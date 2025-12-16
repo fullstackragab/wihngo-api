@@ -1,41 +1,25 @@
 -- =====================================================
--- Add Multi-Network USDT Wallet Support
+-- Remove Multi-Network Support - Solana Only
 -- =====================================================
--- This migration adds Ethereum and Binance Smart Chain
--- wallet addresses for USDT payments
+-- This migration deactivates all non-Solana wallets
+-- Only USDC and EURC on Solana network are supported
 -- =====================================================
 
--- Insert Ethereum USDT wallet
-INSERT INTO platform_wallets (id, currency, network, address, is_active, created_at, updated_at)
-VALUES (
-    gen_random_uuid(),
-    'USDT',
-    'ethereum',
-    '0x4cc28f4cea7b440858b903b5c46685cb1478cdc4',
-    TRUE,
-    CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP
-)
-ON CONFLICT (currency, network, address) DO NOTHING;
+-- Deactivate all USDT wallets (USDT is no longer supported)
+UPDATE platform_wallets
+SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+WHERE currency = 'USDT';
 
--- Insert Binance Smart Chain USDT wallet
-INSERT INTO platform_wallets (id, currency, network, address, is_active, created_at, updated_at)
-VALUES (
-    gen_random_uuid(),
-    'USDT',
-    'binance-smart-chain',
-    '0x83675000ac9915614afff618906421a2baea0020',
-    TRUE,
-    CURRENT_TIMESTAMP,
-    CURRENT_TIMESTAMP
-)
-ON CONFLICT (currency, network, address) DO NOTHING;
+-- Deactivate all non-Solana network wallets
+UPDATE platform_wallets
+SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+WHERE network != 'solana';
 
 -- =====================================================
 -- VERIFICATION
 -- =====================================================
 
--- Check all USDT wallets
+-- Check all active wallets (should only be USDC and EURC on Solana)
 SELECT 
     currency,
     network,
@@ -43,7 +27,17 @@ SELECT
     is_active,
     created_at
 FROM platform_wallets
-WHERE currency = 'USDT'
-ORDER BY network;
+WHERE is_active = TRUE
+ORDER BY currency, network;
 
--- Expected result: 3 rows (tron, ethereum, binance-smart-chain)
+-- Expected result: 2 rows (USDC on solana, EURC on solana)
+
+-- Check deactivated wallets
+SELECT 
+    currency,
+    network,
+    COUNT(*) as count
+FROM platform_wallets
+WHERE is_active = FALSE
+GROUP BY currency, network
+ORDER BY currency, network;

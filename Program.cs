@@ -27,9 +27,13 @@ builder.Logging.AddConsole();
 // Suppress all general framework logs
 builder.Logging.AddFilter("Microsoft", LogLevel.None);
 builder.Logging.AddFilter("System", LogLevel.None);
+
+// IMPORTANT: Enable ALL Wihngo errors (this catches any service exceptions)
+builder.Logging.AddFilter("Wihngo", LogLevel.Error);
 // TEMPORARY: Enable Hangfire logs to diagnose dashboard issue
 builder.Logging.AddFilter("Hangfire", LogLevel.Warning);
-builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+// TEMPORARILY enable ALL ASP.NET Core logs to see requests
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Information);
 builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.None);
 builder.Logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Information);
 
@@ -40,19 +44,16 @@ builder.Logging.AddFilter("Wihngo.Controllers.CryptoPaymentsController", LogLeve
 builder.Logging.AddFilter("Wihngo.BackgroundJobs.ExchangeRateUpdateJob", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.BackgroundJobs.PaymentMonitorJob", LogLevel.Information);
 
-// ? Enable on-chain deposit monitoring logs
+// ? Enable on-chain deposit monitoring logs (Solana only)
 builder.Logging.AddFilter("Wihngo.Services.OnChainDepositService", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Services.OnChainDepositBackgroundService", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Services.EvmBlockchainMonitor", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Services.SolanaBlockchainMonitor", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Services.StellarBlockchainMonitor", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Controllers.OnChainDepositController", LogLevel.Information);
 
-// ? Enable invoice/payment system logs
+// ? Enable invoice/payment system logs (Solana only)
 builder.Logging.AddFilter("Wihngo.Services.InvoiceService", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Services.PayPalService", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Services.SolanaListenerService", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Services.EvmListenerService", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Controllers.InvoicesController", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Controllers.PaymentsController", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Controllers.WebhooksController", LogLevel.Information);
@@ -60,9 +61,12 @@ builder.Logging.AddFilter("Wihngo.Controllers.WebhooksController", LogLevel.Info
 // ? Enable auth and security logs
 builder.Logging.AddFilter("Wihngo.Controllers.AuthController", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Controllers.UsersController", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Controllers.StoriesController", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Controllers.StoriesController", LogLevel.Debug);
 builder.Logging.AddFilter("Wihngo.Services.TokenService", LogLevel.Information);
 builder.Logging.AddFilter("Wihngo.Middleware.RateLimitingMiddleware", LogLevel.Information);
+
+// ? Enable AI story generation logs (all levels including debug)
+builder.Logging.AddFilter("Wihngo.Services.AiStoryGenerationService", LogLevel.Debug);
 // Add ASP.NET Core authentication logs
 builder.Logging.AddFilter("Microsoft.AspNetCore.Authentication", LogLevel.Information);
 builder.Logging.AddFilter("Microsoft.AspNetCore.Authorization", LogLevel.Information);
@@ -86,15 +90,21 @@ builder.Services.AddControllers().AddJsonOptions(opts =>
 {
     // Prevent circular reference errors when returning entities with navigation properties
     opts.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
-    
+
     // Make property name matching case-insensitive (accepts both camelCase and PascalCase)
     opts.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+
+    // Allow enums to be serialized/deserialized as strings (e.g., "FunnyMoment" instead of 3)
+    opts.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 
 builder.Services.AddOpenApi();
 
 // Register AutoMapper with explicit profile
 builder.Services.AddAutoMapper(cfg => cfg.AddProfile<AutoMapperProfile>());
+
+// Register Memory Cache for rate limiting and caching
+builder.Services.AddMemoryCache();
 
 // ========================================
 // 🗄️ DATABASE CONNECTION WITH RETRY LOGIC
@@ -341,11 +351,9 @@ builder.Services.AddScoped<IHdWalletService, HdWalletService>();
 builder.Services.AddScoped<ExchangeRateUpdateJob>();
 builder.Services.AddScoped<PaymentMonitorJob>();
 
-// On-Chain Deposit Services
+// On-Chain Deposit Services (Solana only)
 builder.Services.AddScoped<IOnChainDepositService, OnChainDepositService>();
-builder.Services.AddScoped<IEvmBlockchainMonitor, EvmBlockchainMonitor>();
 builder.Services.AddScoped<ISolanaBlockchainMonitor, SolanaBlockchainMonitor>();
-builder.Services.AddScoped<IStellarBlockchainMonitor, StellarBlockchainMonitor>();
 builder.Services.AddHostedService<OnChainDepositBackgroundService>();
 
 // Invoice & Payment System Services
@@ -359,7 +367,6 @@ builder.Services.AddScoped<ReconciliationJob>();
 
 // Blockchain Listener Services
 builder.Services.AddHostedService<SolanaListenerService>();
-builder.Services.AddHostedService<EvmListenerService>();
 
 // Notification Services
 builder.Services.AddScoped<INotificationService, NotificationService>();
@@ -387,6 +394,10 @@ builder.Services.AddScoped<MonthlyPayoutJob>();
 
 // Memorial Services
 builder.Services.AddScoped<IMemorialService, MemorialService>();
+
+// AI Story Generation Services
+builder.Services.AddScoped<IAiStoryGenerationService, AiStoryGenerationService>();
+builder.Services.AddScoped<IWhisperTranscriptionService, WhisperTranscriptionService>();
 
 // 📋 HANGFIRE - CONDITIONAL SETUP
 if (isDatabaseAvailable)
@@ -546,7 +557,7 @@ async Task SeedDatabaseAsync(IDbConnectionFactory dbFactory, ILogger logger)
         
         logger.LogInformation("✅ Invoice sequence created");
         
-        // Seed supported tokens if not exist
+        // Seed supported tokens if not exist (ONLY USDC and EURC on Solana)
         var count = await connection.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM supported_tokens");
         
         if (count == 0)
@@ -554,9 +565,7 @@ async Task SeedDatabaseAsync(IDbConnectionFactory dbFactory, ILogger logger)
             var tokens = new[]
             {
                 new { Id = Guid.NewGuid(), TokenSymbol = "USDC", Chain = "solana", MintAddress = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", Decimals = 6, IsActive = true, TolerancePercent = 0.5m, CreatedAt = DateTime.UtcNow },
-                new { Id = Guid.NewGuid(), TokenSymbol = "EURC", Chain = "solana", MintAddress = "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr", Decimals = 6, IsActive = true, TolerancePercent = 0.5m, CreatedAt = DateTime.UtcNow },
-                new { Id = Guid.NewGuid(), TokenSymbol = "USDC", Chain = "base", MintAddress = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", Decimals = 6, IsActive = true, TolerancePercent = 0.5m, CreatedAt = DateTime.UtcNow },
-                new { Id = Guid.NewGuid(), TokenSymbol = "EURC", Chain = "base", MintAddress = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42", Decimals = 6, IsActive = true, TolerancePercent = 0.5m, CreatedAt = DateTime.UtcNow }
+                new { Id = Guid.NewGuid(), TokenSymbol = "EURC", Chain = "solana", MintAddress = "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr", Decimals = 6, IsActive = true, TolerancePercent = 0.5m, CreatedAt = DateTime.UtcNow }
             };
             
             await connection.ExecuteAsync(@"
@@ -564,7 +573,7 @@ async Task SeedDatabaseAsync(IDbConnectionFactory dbFactory, ILogger logger)
                 VALUES (@Id, @TokenSymbol, @Chain, @MintAddress, @Decimals, @IsActive, @TolerancePercent, @CreatedAt)",
                 tokens);
             
-            logger.LogInformation("✅ Seeded {Count} supported tokens", tokens.Length);
+            logger.LogInformation("✅ Seeded {Count} supported tokens (USDC and EURC on Solana)", tokens.Length);
         }
         
         logger.LogInformation("✅ Database seeding complete");

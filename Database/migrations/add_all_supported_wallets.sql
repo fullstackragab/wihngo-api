@@ -1,38 +1,28 @@
 -- =====================================================
--- Add All Supported Crypto Wallets - WIHNGO PLATFORM
+-- Add Solana Crypto Wallets - WIHNGO PLATFORM
 -- =====================================================
--- This migration adds wallet addresses for all supported
--- currency and network combinations:
--- - USDC: Solana, Ethereum, Polygon, Base, Stellar
--- - EURC: Solana, Ethereum, Polygon, Base, Stellar
--- Total: 10 wallet entries (2 currencies × 5 networks)
+-- This migration adds wallet addresses for:
+-- - USDC on Solana
+-- - EURC on Solana
+-- Total: 2 wallet entries (2 currencies on 1 network)
 -- =====================================================
 
--- First, deactivate old wallets (USDT, ETH, BNB, Tron, BSC, Avalanche)
+-- First, deactivate old wallets (all non-Solana networks)
 UPDATE platform_wallets
 SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
-WHERE currency IN ('USDT', 'ETH', 'BNB')
-   OR network IN ('tron', 'binance-smart-chain', 'avalanche');
+WHERE network != 'solana';
 
--- USDC Wallets (5 networks) - Wihngo Actual Addresses
+-- USDC on Solana - Wihngo Actual Address
 INSERT INTO platform_wallets (id, currency, network, address, is_active, created_at, updated_at)
 VALUES 
-  (gen_random_uuid(), 'USDC', 'solana', 'AE6jndedpjoX2XLt4nFYGp3JEuHTseGh8EMDGRmADacn', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  (gen_random_uuid(), 'USDC', 'ethereum', '0xfcc173a7569492439ec3df467d0ec0c05c0f541c', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  (gen_random_uuid(), 'USDC', 'polygon', '0xfcc173a7569492439ec3df467d0ec0c05c0f541c', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  (gen_random_uuid(), 'USDC', 'base', '0xfcc173a7569492439ec3df467d0ec0c05c0f541c', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  (gen_random_uuid(), 'USDC', 'stellar', 'GDMOOMFEDZJR6UOW6O7FRF4MGKNRVFVK4Q336U5KNXNYH532TFYJC4HG', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  (gen_random_uuid(), 'USDC', 'solana', 'AE6jndedpjoX2XLt4nFYGp3JEuHTseGh8EMDGRmADacn', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT (currency, network, address) DO UPDATE 
   SET is_active = TRUE, updated_at = CURRENT_TIMESTAMP;
 
--- EURC Wallets (5 networks) - Wihngo Actual Addresses
+-- EURC on Solana - Wihngo Actual Address
 INSERT INTO platform_wallets (id, currency, network, address, is_active, created_at, updated_at)
 VALUES 
-  (gen_random_uuid(), 'EURC', 'solana', 'AE6jndedpjoX2XLt4nFYGp3JEuHTseGh8EMDGRmADacn', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  (gen_random_uuid(), 'EURC', 'ethereum', '0xfcc173a7569492439ec3df467d0ec0c05c0f541c', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  (gen_random_uuid(), 'EURC', 'polygon', '0xfcc173a7569492439ec3df467d0ec0c05c0f541c', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  (gen_random_uuid(), 'EURC', 'base', '0xfcc173a7569492439ec3df467d0ec0c05c0f541c', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-  (gen_random_uuid(), 'EURC', 'stellar', 'GDMOOMFEDZJR6UOW6O7FRF4MGKNRVFVK4Q336U5KNXNYH532TFYJC4HG', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  (gen_random_uuid(), 'EURC', 'solana', 'AE6jndedpjoX2XLt4nFYGp3JEuHTseGh8EMDGRmADacn', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT (currency, network, address) DO UPDATE 
   SET is_active = TRUE, updated_at = CURRENT_TIMESTAMP;
 
@@ -40,7 +30,7 @@ ON CONFLICT (currency, network, address) DO UPDATE
 -- VERIFICATION
 -- =====================================================
 
--- Check all active wallets by currency
+-- Check all active wallets
 SELECT 
     currency,
     network,
@@ -51,9 +41,9 @@ FROM platform_wallets
 WHERE is_active = TRUE
 ORDER BY currency, network;
 
--- Expected result: 10 rows total
---   EURC: base, ethereum, polygon, solana, stellar (5)
---   USDC: base, ethereum, polygon, solana, stellar (5)
+-- Expected result: 2 rows total
+--   EURC: solana
+--   USDC: solana
 
 -- Count by currency
 SELECT currency, COUNT(*) as wallet_count
@@ -63,8 +53,8 @@ GROUP BY currency
 ORDER BY currency;
 
 -- Expected:
---   EURC: 5
---   USDC: 5
+--   EURC: 1
+--   USDC: 1
 
 -- Verify the supported combinations match new requirements
 SELECT 
@@ -76,6 +66,6 @@ GROUP BY currency
 ORDER BY currency;
 
 -- Expected output:
---   EURC: base, ethereum, polygon, solana, stellar
---   USDC: base, ethereum, polygon, solana, stellar
+--   EURC: solana
+--   USDC: solana
 

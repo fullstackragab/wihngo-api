@@ -35,5 +35,15 @@ namespace Wihngo.Dtos
         /// Pre-signed download URL for story video (expires in 10 minutes)
         /// </summary>
         public string? VideoUrl { get; set; }
+
+        /// <summary>
+        /// S3 key for story audio
+        /// </summary>
+        public string? AudioS3Key { get; set; }
+
+        /// <summary>
+        /// Pre-signed download URL for story audio (expires in 10 minutes)
+        /// </summary>
+        public string? AudioUrl { get; set; }
     }
 }

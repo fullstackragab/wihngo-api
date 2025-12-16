@@ -40,5 +40,14 @@ namespace Wihngo.Dtos
         /// </summary>
         [MaxLength(1000)]
         public string? VideoS3Key { get; set; }
+
+        /// <summary>
+        /// S3 key for story audio recording (e.g., users/stories/{userId}/{storyId}/{uuid}.m4a)
+        /// Use /api/media/upload-url with mediaType='story-audio' to get pre-signed upload URL
+        /// Optional - can be null
+        /// Can be combined with ImageS3Key and/or VideoS3Key
+        /// </summary>
+        [MaxLength(1000)]
+        public string? AudioS3Key { get; set; }
     }
 }

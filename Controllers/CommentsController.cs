@@ -113,9 +113,9 @@ namespace Wihngo.Controllers
                     CreatedAt = comment.created_at,
                     UpdatedAt = comment.updated_at,
                     ParentCommentId = comment.parent_comment_id,
-                    LikeCount = comment.like_count,
+                    LikeCount = (int)comment.like_count,
                     IsLikedByCurrentUser = comment.is_liked_by_current_user,
-                    ReplyCount = comment.reply_count
+                    ReplyCount = (int)comment.reply_count
                 });
             }
 
@@ -207,9 +207,9 @@ namespace Wihngo.Controllers
                     CreatedAt = reply.created_at,
                     UpdatedAt = reply.updated_at,
                     ParentCommentId = reply.parent_comment_id,
-                    LikeCount = reply.like_count,
+                    LikeCount = (int)reply.like_count,
                     IsLikedByCurrentUser = reply.is_liked_by_current_user,
-                    ReplyCount = reply.reply_count
+                    ReplyCount = (int)reply.reply_count
                 });
             }
 
@@ -224,7 +224,7 @@ namespace Wihngo.Controllers
                 CreatedAt = comment.created_at,
                 UpdatedAt = comment.updated_at,
                 ParentCommentId = comment.parent_comment_id,
-                LikeCount = comment.like_count,
+                LikeCount = (int)comment.like_count,
                 IsLikedByCurrentUser = comment.is_liked_by_current_user,
                 Replies = replyDtos
             };
@@ -306,9 +306,9 @@ namespace Wihngo.Controllers
                     CreatedAt = reply.created_at,
                     UpdatedAt = reply.updated_at,
                     ParentCommentId = reply.parent_comment_id,
-                    LikeCount = reply.like_count,
+                    LikeCount = (int)reply.like_count,
                     IsLikedByCurrentUser = reply.is_liked_by_current_user,
-                    ReplyCount = reply.reply_count
+                    ReplyCount = (int)reply.reply_count
                 });
             }
 
@@ -383,33 +383,42 @@ namespace Wihngo.Controllers
             _logger.LogInformation("Comment created: {CommentId} on story {StoryId} by user {UserId}",
                 commentId, dto.StoryId, userId.Value);
 
+            // Get user info for response (needed for both response and notifications)
+            var userInfoSql = "SELECT name, profile_image FROM users WHERE user_id = @UserId";
+            var userInfo = await connection.QueryFirstOrDefaultAsync<dynamic>(
+                userInfoSql,
+                new { UserId = userId.Value });
+            var userName = userInfo?.name ?? string.Empty;
+
+            // Get parent comment author if replying
+            Guid? parentCommentAuthorId = null;
+            if (dto.ParentCommentId.HasValue)
+            {
+                var parentUserSql = "SELECT user_id FROM comments WHERE comment_id = @CommentId";
+                parentCommentAuthorId = await connection.QueryFirstOrDefaultAsync<Guid?>(
+                    parentUserSql,
+                    new { CommentId = dto.ParentCommentId.Value });
+            }
+
             // Send notification to story author (if not self-comment and not a reply)
-            if (storyAuthorId.Value != userId.Value && !dto.ParentCommentId.HasValue)
+            if (storyAuthorId.Value != userId.Value && !dto.ParentCommentId.HasValue && !string.IsNullOrEmpty(userName))
             {
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        var userSql = "SELECT name FROM users WHERE user_id = @UserId";
-                        var userName = await connection.QueryFirstOrDefaultAsync<string>(
-                            userSql,
-                            new { UserId = userId.Value });
-
-                        if (!string.IsNullOrEmpty(userName))
+                        await _notificationService.CreateNotificationAsync(new CreateNotificationDto
                         {
-                            await _notificationService.CreateNotificationAsync(new CreateNotificationDto
-                            {
-                                UserId = storyAuthorId.Value,
-                                Type = NotificationType.CommentAdded,
-                                Title = "New comment",
-                                Message = $"{userName} commented on your story",
-                                Priority = NotificationPriority.Medium,
-                                Channels = NotificationChannel.InApp | NotificationChannel.Push,
-                                DeepLink = $"/story/{dto.StoryId}",
-                                StoryId = dto.StoryId,
-                                ActorUserId = userId.Value
-                            });
-                        }
+                            UserId = storyAuthorId.Value,
+                            Type = NotificationType.CommentAdded,
+                            Title = "New comment",
+                            Message = $"{userName} commented on your story",
+                            Priority = NotificationPriority.Medium,
+                            Channels = NotificationChannel.InApp | NotificationChannel.Push,
+                            DeepLink = $"/story/{dto.StoryId}",
+                            StoryId = dto.StoryId,
+                            ActorUserId = userId.Value
+                        });
                     }
                     catch (Exception ex)
                     {
@@ -419,41 +428,24 @@ namespace Wihngo.Controllers
             }
 
             // If replying, send notification to parent comment author
-            if (dto.ParentCommentId.HasValue)
+            if (parentCommentAuthorId.HasValue && parentCommentAuthorId.Value != userId.Value && !string.IsNullOrEmpty(userName))
             {
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        var parentUserSql = "SELECT user_id FROM comments WHERE comment_id = @CommentId";
-                        var parentUserId = await connection.QueryFirstOrDefaultAsync<Guid?>(
-                            parentUserSql,
-                            new { CommentId = dto.ParentCommentId.Value });
-
-                        // Only notify if not replying to self
-                        if (parentUserId.HasValue && parentUserId.Value != userId.Value)
+                        await _notificationService.CreateNotificationAsync(new CreateNotificationDto
                         {
-                            var userSql = "SELECT name FROM users WHERE user_id = @UserId";
-                            var userName = await connection.QueryFirstOrDefaultAsync<string>(
-                                userSql,
-                                new { UserId = userId.Value });
-
-                            if (!string.IsNullOrEmpty(userName))
-                            {
-                                await _notificationService.CreateNotificationAsync(new CreateNotificationDto
-                                {
-                                    UserId = parentUserId.Value,
-                                    Type = NotificationType.CommentAdded,
-                                    Title = "New reply",
-                                    Message = $"{userName} replied to your comment",
-                                    Priority = NotificationPriority.Medium,
-                                    Channels = NotificationChannel.InApp | NotificationChannel.Push,
-                                    DeepLink = $"/story/{dto.StoryId}",
-                                    StoryId = dto.StoryId,
-                                    ActorUserId = userId.Value
-                                });
-                            }
-                        }
+                            UserId = parentCommentAuthorId.Value,
+                            Type = NotificationType.CommentAdded,
+                            Title = "New reply",
+                            Message = $"{userName} replied to your comment",
+                            Priority = NotificationPriority.Medium,
+                            Channels = NotificationChannel.InApp | NotificationChannel.Push,
+                            DeepLink = $"/story/{dto.StoryId}",
+                            StoryId = dto.StoryId,
+                            ActorUserId = userId.Value
+                        });
                     }
                     catch (Exception ex)
                     {
@@ -461,12 +453,6 @@ namespace Wihngo.Controllers
                     }
                 });
             }
-
-            // Get user info for response
-            var userInfoSql = "SELECT name, profile_image FROM users WHERE user_id = @UserId";
-            var userInfo = await connection.QueryFirstOrDefaultAsync<dynamic>(
-                userInfoSql,
-                new { UserId = userId.Value });
 
             var result = new CommentDto
             {

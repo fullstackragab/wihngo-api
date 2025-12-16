@@ -192,8 +192,16 @@ namespace Wihngo.Services
             return mediaType.ToLower() switch
             {
                 "profile-image" => $"users/profile-images/{userId}/{uniqueId}{extension}",
-                "story-image" => $"users/stories/{userId}/{relatedId}/{uniqueId}{extension}",
-                "story-video" => $"users/videos/{userId}/{uniqueId}{extension}",
+                // For story media, use relatedId (storyId) if provided, otherwise just userId
+                "story-image" => relatedId.HasValue
+                    ? $"users/stories/{userId}/{relatedId}/{uniqueId}{extension}"
+                    : $"users/stories/{userId}/{uniqueId}{extension}",
+                "story-video" => relatedId.HasValue
+                    ? $"users/videos/{userId}/{relatedId}/{uniqueId}{extension}"
+                    : $"users/videos/{userId}/{uniqueId}{extension}",
+                "story-audio" => relatedId.HasValue
+                    ? $"users/stories/{userId}/{relatedId}/{uniqueId}{extension}"
+                    : $"users/stories/{userId}/{uniqueId}{extension}",
                 // For bird media without relatedId (before bird creation), use userId as folder
                 "bird-profile-image" => $"birds/profile-images/{relatedId ?? userId}/{uniqueId}{extension}",
                 "bird-video" => $"birds/videos/{relatedId ?? userId}/{uniqueId}{extension}",
@@ -213,6 +221,11 @@ namespace Wihngo.Services
                 ".mov" => "video/quicktime",
                 ".avi" => "video/x-msvideo",
                 ".webm" => "video/webm",
+                ".m4a" => "audio/mp4",
+                ".mp3" => "audio/mpeg",
+                ".wav" => "audio/wav",
+                ".aac" => "audio/aac",
+                ".ogg" => "audio/ogg",
                 _ => "application/octet-stream"
             };
         }

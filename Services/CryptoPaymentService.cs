@@ -33,25 +33,20 @@ public class CryptoPaymentService : ICryptoPaymentService
         _hdWalletService = hdWalletService;
     }
 
-    // New helper: allocate a unique index from Postgres sequence (optionally per-network)
+    // New helper: allocate a unique index from Postgres sequence (only for Solana)
     private async Task<long> AllocateHdIndexAsync(string network)
     {
         using var conn = await _dbFactory.CreateOpenConnectionAsync();
         
-        // Map network to a safe sequence name
-        var net = (network ?? string.Empty).ToLower().Trim();
-        string sequenceName = net switch
+        // Only Solana is supported
+        if (!network.Equals("solana", StringComparison.OrdinalIgnoreCase))
         {
-            "solana" => "hd_address_index_seq_solana",
-            "ethereum" => "hd_address_index_seq_ethereum",
-            "polygon" => "hd_address_index_seq_polygon",
-            "base" => "hd_address_index_seq_base",
-            "stellar" => "hd_address_index_seq_stellar",
-            _ => "hd_address_index_seq"
-        };
+            throw new InvalidOperationException($"Network '{network}' is not supported. Only Solana network is accepted.");
+        }
+
+        string sequenceName = "hd_address_index_seq_solana";
 
         using var cmd = conn.CreateCommand();
-        // sequenceName is selected from a whitelist above to avoid injection
         cmd.CommandText = $"SELECT nextval('{sequenceName}')";
         var result = await cmd.ExecuteScalarAsync();
         return Convert.ToInt64(result);
@@ -59,6 +54,19 @@ public class CryptoPaymentService : ICryptoPaymentService
 
     public async Task<PaymentResponseDto> CreatePaymentRequestAsync(Guid userId, CreatePaymentRequestDto dto)
     {
+        // Validate that only Solana network is used
+        if (!dto.Network.Equals("solana", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Only Solana network is supported for crypto payments.");
+        }
+
+        // Validate that only USDC or EURC is used
+        var supportedCurrencies = new[] { "USDC", "EURC" };
+        if (!supportedCurrencies.Contains(dto.Currency.ToUpper()))
+        {
+            throw new InvalidOperationException("Only USDC and EURC are supported currencies on Solana network.");
+        }
+
         // Validate minimum amount
         var minAmount = _configuration.GetValue<decimal>("PaymentSettings:MinPaymentAmountUsd", 5m);
         if (dto.AmountUsd < minAmount)
@@ -426,28 +434,24 @@ public class CryptoPaymentService : ICryptoPaymentService
 
     private int GetRequiredConfirmations(string network)
     {
-        return network.ToLower() switch
+        // Only Solana is supported
+        if (network.Equals("solana", StringComparison.OrdinalIgnoreCase))
         {
-            "solana" => 32,
-            "ethereum" => 12,
-            "polygon" => 128,
-            "base" => 12,
-            "stellar" => 1,
-            _ => 12  // Default to 12 confirmations
-        };
+            return 32;
+        }
+        
+        throw new InvalidOperationException($"Network '{network}' is not supported. Only Solana network is accepted.");
     }
 
     private string GeneratePaymentUri(string currency, string network, string address, decimal amount)
     {
-        return network.ToLower() switch
+        // Only Solana is supported
+        if (!network.Equals("solana", StringComparison.OrdinalIgnoreCase))
         {
-            "solana" => $"solana:{address}",
-            "ethereum" => $"ethereum:{address}",
-            "polygon" => $"ethereum:{address}",  // Polygon uses Ethereum URI scheme
-            "base" => $"ethereum:{address}",  // Base uses Ethereum URI scheme
-            "stellar" => $"web+stellar:pay?destination={address}&amount={amount}&asset_code={currency}",
-            _ => address
-        };
+            throw new InvalidOperationException($"Network '{network}' is not supported. Only Solana network is accepted.");
+        }
+        
+        return $"solana:{address}";
     }
 
     private PaymentResponseDto MapToDto(CryptoPaymentRequest payment)

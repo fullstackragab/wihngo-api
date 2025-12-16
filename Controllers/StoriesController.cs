@@ -25,6 +25,8 @@
         private readonly INotificationService _notificationService;
         private readonly IS3Service _s3Service;
         private readonly ILogger<StoriesController> _logger;
+        private readonly IAiStoryGenerationService _aiStoryService;
+        private readonly IWhisperTranscriptionService _whisperService;
 
         public StoriesController(
             AppDbContext db,
@@ -32,7 +34,9 @@
             IMapper mapper,
             INotificationService notificationService,
             IS3Service s3Service,
-            ILogger<StoriesController> logger)
+            ILogger<StoriesController> logger,
+            IAiStoryGenerationService aiStoryService,
+            IWhisperTranscriptionService whisperService)
         {
             _db = db;
             _dbFactory = dbFactory;
@@ -40,6 +44,8 @@
             _notificationService = notificationService;
             _s3Service = s3Service;
             _logger = logger;
+            _aiStoryService = aiStoryService;
+            _whisperService = whisperService;
         }
 
         private Guid? GetUserIdClaim()
@@ -269,12 +275,13 @@
             {
                 // Get story with bird data - direct join, no junction table
                 var sql = @"
-                    SELECT 
+                    SELECT
                         s.story_id,
                         s.content,
                         s.mode,
                         s.image_url,
                         s.video_url,
+                        s.audio_url,
                         s.created_at,
                         s.author_id,
                         u.user_id as author_user_id,
@@ -304,6 +311,7 @@
                     Mode = (StoryMode?)story.mode,
                     ImageS3Key = story.image_url,
                     VideoS3Key = story.video_url,
+                    AudioS3Key = story.audio_url,
                     CreatedAt = (DateTime)story.created_at,
                     Author = story.author_user_id != null ? new UserSummaryDto
                     {
@@ -354,6 +362,18 @@
                     }
                 }
 
+                if (!string.IsNullOrWhiteSpace(story.audio_url))
+                {
+                    try
+                    {
+                        dto.AudioUrl = await _s3Service.GenerateDownloadUrlAsync(story.audio_url);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to generate audio download URL for story {StoryId}", id);
+                    }
+                }
+
                 // Generate download URL for bird image
                 foreach (var bird in dto.Birds)
                 {
@@ -375,6 +395,167 @@
             }
         }
 
+        /// <summary>
+        /// Generate AI-powered story content based on bird context and mood
+        /// POST /api/stories/generate
+        /// </summary>
+        [HttpPost("generate")]
+        [Authorize]
+        public async Task<ActionResult<GenerateStoryResponseDto>> GenerateStory([FromBody] GenerateStoryRequestDto request)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var userId = GetUserIdClaim();
+            if (userId == null)
+            {
+                return Unauthorized(new { error = "Unauthorized", message = "Invalid or expired token" });
+            }
+
+            try
+            {
+                // Check rate limits
+                var isRateLimited = await _aiStoryService.IsRateLimitExceededAsync(userId.Value, request.BirdId);
+                if (isRateLimited)
+                {
+                    return StatusCode(429, new
+                    {
+                        error = "TooManyRequests",
+                        message = "AI generation limit exceeded. Please try again later.",
+                        retryAfter = 3600
+                    });
+                }
+
+                // Verify bird ownership
+                using var connection = await _dbFactory.CreateOpenConnectionAsync();
+                var birdCheckSql = "SELECT owner_id FROM birds WHERE bird_id = @BirdId";
+                var ownerId = await connection.QueryFirstOrDefaultAsync<Guid?>(birdCheckSql, new { BirdId = request.BirdId });
+
+                if (ownerId == null)
+                {
+                    return NotFound(new { error = "NotFound", message = "Bird not found" });
+                }
+
+                if (ownerId.Value != userId.Value)
+                {
+                    return StatusCode(403, new { error = "Forbidden", message = "You do not own this bird" });
+                }
+
+                // Generate story
+                var response = await _aiStoryService.GenerateStoryAsync(request, userId.Value);
+
+                return Ok(response);
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("limit exceeded"))
+            {
+                return StatusCode(429, new
+                {
+                    error = "TooManyRequests",
+                    message = ex.Message,
+                    retryAfter = 3600
+                });
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("API key"))
+            {
+                _logger.LogError(ex, "OpenAI API key not configured");
+                return StatusCode(503, new
+                {
+                    error = "ServiceUnavailable",
+                    message = "AI service temporarily unavailable"
+                });
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogError(ex, "OpenAI API request failed");
+                return StatusCode(503, new
+                {
+                    error = "ServiceUnavailable",
+                    message = "AI service temporarily unavailable"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate story for user {UserId}, bird {BirdId}", userId, request.BirdId);
+                return StatusCode(500, new
+                {
+                    error = "InternalError",
+                    message = "Failed to generate story content"
+                });
+            }
+        }
+
+        /// <summary>
+        /// Transcribe audio to text using OpenAI Whisper API
+        /// POST /api/stories/transcribe
+        /// </summary>
+        [HttpPost("transcribe")]
+        [Authorize]
+        public async Task<ActionResult<TranscriptionResponseDto>> TranscribeAudio([FromBody] TranscribeAudioRequestDto request)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var userId = GetUserIdClaim();
+            if (userId == null)
+            {
+                return Unauthorized(new { error = "Unauthorized", message = "Invalid or expired token" });
+            }
+
+            try
+            {
+                // Verify audio file exists in S3
+                var audioExists = await _s3Service.FileExistsAsync(request.AudioS3Key);
+                if (!audioExists)
+                {
+                    return NotFound(new { error = "NotFound", message = "Audio file not found in S3" });
+                }
+
+                // Verify the S3 key belongs to the user (basic security check)
+                if (!request.AudioS3Key.Contains(userId.Value.ToString()))
+                {
+                    _logger.LogWarning("User {UserId} attempted to transcribe audio that doesn't belong to them: {S3Key}",
+                        userId, request.AudioS3Key);
+                    return StatusCode(403, new { error = "Forbidden", message = "You do not have permission to transcribe this audio" });
+                }
+
+                // Transcribe the audio (with language hint if provided)
+                var response = await _whisperService.TranscribeAudioAsync(request.AudioS3Key, request.Language);
+
+                return Ok(response);
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("API key"))
+            {
+                _logger.LogError(ex, "OpenAI API key not configured");
+                return StatusCode(503, new
+                {
+                    error = "ServiceUnavailable",
+                    message = "Transcription service temporarily unavailable"
+                });
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogError(ex, "Whisper API request failed for user {UserId}", userId);
+                return StatusCode(503, new
+                {
+                    error = "ServiceUnavailable",
+                    message = "Transcription service temporarily unavailable"
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to transcribe audio for user {UserId}, S3Key {S3Key}", userId, request.AudioS3Key);
+                return StatusCode(500, new
+                {
+                    error = "InternalError",
+                    message = "Failed to transcribe audio"
+                });
+            }
+        }
+
         [HttpPost]
         [Authorize]
         public async Task<ActionResult<StoryReadDto>> Post([FromBody] StoryCreateDto dto)
@@ -384,11 +565,8 @@
             var userId = GetUserIdClaim();
             if (userId == null) return Unauthorized();
 
-            // Validate that only ONE media type is provided (image OR video, not both)
-            if (!string.IsNullOrWhiteSpace(dto.ImageS3Key) && !string.IsNullOrWhiteSpace(dto.VideoS3Key))
-            {
-                return BadRequest(new { message = "Story can have either an image or a video, not both" });
-            }
+            // Note: Audio can be combined with image and/or video
+            // No exclusive validation needed for media types anymore
 
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
 
@@ -421,13 +599,23 @@
                 }
             }
 
+            // Verify audio exists in S3 if provided
+            if (!string.IsNullOrWhiteSpace(dto.AudioS3Key))
+            {
+                var audioExists = await _s3Service.FileExistsAsync(dto.AudioS3Key);
+                if (!audioExists)
+                {
+                    return BadRequest(new { message = "Story audio not found in S3. Please upload the file first." });
+                }
+            }
+
             var storyId = Guid.NewGuid();
             var now = DateTime.UtcNow;
 
             // Insert story using raw SQL with bird_id foreign key
             var insertStorySql = @"
-                INSERT INTO stories (story_id, author_id, bird_id, content, mode, image_url, video_url, created_at)
-                VALUES (@StoryId, @AuthorId, @BirdId, @Content, @Mode, @ImageUrl, @VideoUrl, @CreatedAt)";
+                INSERT INTO stories (story_id, author_id, bird_id, content, mode, image_url, video_url, audio_url, is_highlighted, created_at)
+                VALUES (@StoryId, @AuthorId, @BirdId, @Content, @Mode, @ImageUrl, @VideoUrl, @AudioUrl, @IsHighlighted, @CreatedAt)";
 
             await connection.ExecuteAsync(insertStorySql, new
             {
@@ -438,6 +626,8 @@
                 Mode = dto.Mode,
                 ImageUrl = dto.ImageS3Key,
                 VideoUrl = dto.VideoS3Key,
+                AudioUrl = dto.AudioS3Key,
+                IsHighlighted = false, // Regular stories are not highlighted by default
                 CreatedAt = now
             });
 
@@ -524,7 +714,7 @@
 
             // Get story with raw SQL
             var getStorySql = @"
-                SELECT story_id, author_id, bird_id, content, mode, image_url, video_url, created_at, is_highlighted, highlight_order
+                SELECT story_id, author_id, bird_id, content, mode, image_url, video_url, audio_url, created_at, is_highlighted, highlight_order
                 FROM stories
                 WHERE story_id = @StoryId";
 
@@ -731,6 +921,61 @@
                 }
             }
 
+            // Update audio if provided (audio can coexist with image/video)
+            if (dto.AudioS3Key != null) // Check for null to distinguish between not provided and empty string
+            {
+                if (string.IsNullOrWhiteSpace(dto.AudioS3Key))
+                {
+                    _logger.LogInformation("Removing audio from story {StoryId}", id);
+                    // Remove audio
+                    string? oldAudioUrl = story.audio_url;
+                    if (!string.IsNullOrWhiteSpace(oldAudioUrl))
+                    {
+                        try
+                        {
+                            await _s3Service.DeleteFileAsync(oldAudioUrl);
+                            _logger.LogInformation("Deleted story audio for story {StoryId}", id);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to delete story audio");
+                        }
+                    }
+                    updates.Add("audio_url = NULL");
+                }
+                else if (dto.AudioS3Key != (string?)story.audio_url)
+                {
+                    string? oldAudioUrl = story.audio_url;
+                    _logger.LogInformation("Updating audio for story {StoryId} from {OldKey} to {NewKey}",
+                        id, oldAudioUrl ?? "NULL", dto.AudioS3Key);
+                    // New audio provided
+                    var audioExists = await _s3Service.FileExistsAsync(dto.AudioS3Key);
+                    if (!audioExists)
+                    {
+                        _logger.LogWarning("Audio S3 key not found: {AudioS3Key}", dto.AudioS3Key);
+                        return BadRequest(new { message = "Story audio not found in S3. Please upload the file first." });
+                    }
+
+                    // Delete old audio
+                    if (!string.IsNullOrWhiteSpace(oldAudioUrl))
+                    {
+                        try
+                        {
+                            await _s3Service.DeleteFileAsync(oldAudioUrl);
+                            _logger.LogInformation("Deleted old story audio");
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to delete old story audio");
+                        }
+                    }
+
+                    updates.Add("audio_url = @AudioUrl");
+                    parameters.Add("AudioUrl", dto.AudioS3Key);
+                    // Note: Audio can coexist with image/video, so no cross-deletion needed
+                }
+            }
+
             // Execute update if there are changes
             if (updates.Any())
             {
@@ -753,7 +998,7 @@
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
 
             // Get story using raw SQL
-            var getStorySql = "SELECT author_id, image_url, video_url FROM stories WHERE story_id = @StoryId";
+            var getStorySql = "SELECT author_id, image_url, video_url, audio_url FROM stories WHERE story_id = @StoryId";
             var story = await connection.QueryFirstOrDefaultAsync<dynamic>(getStorySql, new { StoryId = id });
 
             if (story == null) return NotFound();
@@ -786,6 +1031,20 @@
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed to delete story video from S3");
+                }
+            }
+
+            // Delete audio from S3 if exists
+            if (!string.IsNullOrWhiteSpace(story.audio_url))
+            {
+                try
+                {
+                    await _s3Service.DeleteFileAsync(story.audio_url);
+                    _logger.LogInformation("Deleted story audio for story {StoryId}", id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete story audio from S3");
                 }
             }
 

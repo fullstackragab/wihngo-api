@@ -11,11 +11,11 @@ public class CreatePaymentRequestDto
     public decimal AmountUsd { get; set; }
 
     [Required]
-    [RegularExpression("^(BTC|ETH|USDT|USDC|BNB|SOL|DOGE)$")]
+    [RegularExpression("^(USDC|EURC)$", ErrorMessage = "Only USDC and EURC are supported currencies")]
     public string Currency { get; set; } = string.Empty;
 
     [Required]
-    [RegularExpression("^(bitcoin|ethereum|tron|binance-smart-chain|polygon|solana|sepolia)$")]
+    [RegularExpression("^(solana)$", ErrorMessage = "Only Solana network is supported")]
     public string Network { get; set; } = string.Empty;
 
     [Required]

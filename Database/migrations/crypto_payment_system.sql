@@ -137,29 +137,37 @@ CREATE INDEX IF NOT EXISTS idx_crypto_payment_methods_is_default ON crypto_payme
 -- SEED DATA
 -- =====================================================
 
--- Insert platform wallet for TRON USDT
+-- Insert platform wallet for Solana USDC
 INSERT INTO platform_wallets (id, currency, network, address, is_active, created_at, updated_at)
 VALUES (
     gen_random_uuid(),
-    'USDT',
-    'tron',
-    'TGRzhw2kwBW5PzncWfKCnqsvkrBezfsgiA',
+    'USDC',
+    'solana',
+    'PLATFORM_SOLANA_USDC_WALLET_ADDRESS_HERE',
     TRUE,
     CURRENT_TIMESTAMP,
     CURRENT_TIMESTAMP
 )
 ON CONFLICT (currency, network, address) DO NOTHING;
 
--- Insert initial exchange rates
+-- Insert platform wallet for Solana EURC
+INSERT INTO platform_wallets (id, currency, network, address, is_active, created_at, updated_at)
+VALUES (
+    gen_random_uuid(),
+    'EURC',
+    'solana',
+    'PLATFORM_SOLANA_EURC_WALLET_ADDRESS_HERE',
+    TRUE,
+    CURRENT_TIMESTAMP,
+    CURRENT_TIMESTAMP
+)
+ON CONFLICT (currency, network, address) DO NOTHING;
+
+-- Insert initial exchange rates (only USDC and EURC)
 INSERT INTO crypto_exchange_rates (id, currency, usd_rate, source, last_updated)
 VALUES
-    (gen_random_uuid(), 'BTC', 50000.00, 'coingecko', CURRENT_TIMESTAMP),
-    (gen_random_uuid(), 'ETH', 3000.00, 'coingecko', CURRENT_TIMESTAMP),
-    (gen_random_uuid(), 'USDT', 1.00, 'coingecko', CURRENT_TIMESTAMP),
     (gen_random_uuid(), 'USDC', 1.00, 'coingecko', CURRENT_TIMESTAMP),
-    (gen_random_uuid(), 'BNB', 500.00, 'coingecko', CURRENT_TIMESTAMP),
-    (gen_random_uuid(), 'SOL', 100.00, 'coingecko', CURRENT_TIMESTAMP),
-    (gen_random_uuid(), 'DOGE', 0.10, 'coingecko', CURRENT_TIMESTAMP)
+    (gen_random_uuid(), 'EURC', 1.10, 'coingecko', CURRENT_TIMESTAMP)
 ON CONFLICT (currency) DO UPDATE SET
     usd_rate = EXCLUDED.usd_rate,
     last_updated = EXCLUDED.last_updated;
