@@ -18,17 +18,20 @@ namespace Wihngo.Services
         private readonly ILogger<MemorialService> _logger;
         private readonly INotificationService _notificationService;
         private readonly IS3Service _s3Service;
+        private readonly IContentModerationService _moderationService;
 
         public MemorialService(
             IDbConnectionFactory dbFactory,
             ILogger<MemorialService> logger,
             INotificationService notificationService,
-            IS3Service s3Service)
+            IS3Service s3Service,
+            IContentModerationService moderationService)
         {
             _dbFactory = dbFactory;
             _logger = logger;
             _notificationService = notificationService;
             _s3Service = s3Service;
+            _moderationService = moderationService;
         }
 
         public async Task<MarkMemorialResponseDto> MarkBirdAsMemorialAsync(Guid birdId, Guid ownerId, MemorialRequestDto request)
@@ -240,6 +243,15 @@ namespace Wihngo.Services
             if (!isMemorial)
             {
                 throw new InvalidOperationException("Bird is not marked as memorial");
+            }
+
+            // Content moderation check
+            var moderationResult = await _moderationService.ModerateMemorialMessageAsync(message.Message);
+            if (moderationResult.IsBlocked)
+            {
+                _logger.LogWarning("Memorial message blocked by moderation for user {UserId}, bird {BirdId}. Reason: {Reason}",
+                    userId, birdId, moderationResult.BlockReason);
+                throw new InvalidOperationException($"Message blocked by moderation: {moderationResult.BlockReason}");
             }
 
             // Check rate limit

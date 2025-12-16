@@ -21,15 +21,18 @@ namespace Wihngo.Controllers
         private readonly IDbConnectionFactory _dbFactory;
         private readonly INotificationService _notificationService;
         private readonly ILogger<CommentsController> _logger;
+        private readonly IContentModerationService _moderationService;
 
         public CommentsController(
             IDbConnectionFactory dbFactory,
             INotificationService notificationService,
-            ILogger<CommentsController> logger)
+            ILogger<CommentsController> logger,
+            IContentModerationService moderationService)
         {
             _dbFactory = dbFactory;
             _notificationService = notificationService;
             _logger = logger;
+            _moderationService = moderationService;
         }
 
         private Guid? GetUserIdClaim()
@@ -363,6 +366,20 @@ namespace Wihngo.Controllers
                     return BadRequest(new { message = "Parent comment does not belong to this story" });
             }
 
+            // Content moderation check
+            var moderationResult = await _moderationService.ModerateCommentAsync(dto.Content);
+            if (moderationResult.IsBlocked)
+            {
+                _logger.LogWarning("Comment blocked by moderation for user {UserId}. Reason: {Reason}",
+                    userId.Value, moderationResult.BlockReason);
+                return BadRequest(new
+                {
+                    message = "Content blocked by moderation",
+                    reason = moderationResult.BlockReason,
+                    code = "CONTENT_MODERATION_BLOCKED"
+                });
+            }
+
             // Create comment
             var commentId = Guid.NewGuid();
             var createdAt = DateTime.UtcNow;
@@ -501,10 +518,24 @@ namespace Wihngo.Controllers
             if (commentUserId.Value != userId.Value)
                 return Forbid();
 
+            // Content moderation check
+            var moderationResult = await _moderationService.ModerateCommentAsync(dto.Content);
+            if (moderationResult.IsBlocked)
+            {
+                _logger.LogWarning("Comment update blocked by moderation for comment {CommentId}. Reason: {Reason}",
+                    commentId, moderationResult.BlockReason);
+                return BadRequest(new
+                {
+                    message = "Content blocked by moderation",
+                    reason = moderationResult.BlockReason,
+                    code = "CONTENT_MODERATION_BLOCKED"
+                });
+            }
+
             // Update comment
             var updateSql = @"
-                UPDATE comments 
-                SET content = @Content, updated_at = @UpdatedAt 
+                UPDATE comments
+                SET content = @Content, updated_at = @UpdatedAt
                 WHERE comment_id = @CommentId";
 
             await connection.ExecuteAsync(updateSql, new
