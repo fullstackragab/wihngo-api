@@ -23,7 +23,15 @@
       "Bash(netstat:*)",
       "Bash(dotnet clean:*)",
       "Bash(timeout 15 dotnet run:*)",
-      "Bash(# Try the dev endpoint to get test credentials curl -s \"\"http://localhost:5162/api/dev/test-credentials\"\" echo \"\"\"\" echo \"\"=== Try getting all users ===\"\" curl -s \"\"http://localhost:5162/api/dev/users\"\")"
+      "Bash(# Try the dev endpoint to get test credentials curl -s \"\"http://localhost:5162/api/dev/test-credentials\"\" echo \"\"\"\" echo \"\"=== Try getting all users ===\"\" curl -s \"\"http://localhost:5162/api/dev/users\"\")",
+      "Bash(dotnet add package:*)",
+      "Bash(dotnet remove:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(git commit:*)",
+      "Bash(git restore:*)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(npx tsc:*)",
+      "Bash(npx expo-doctor:*)"
     ]
   }
 }

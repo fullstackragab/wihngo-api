@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="AWSSDK.Rekognition" Version="3.7.302.22" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
     <PackageReference Include="Scalar.AspNetCore" Version="1.2.59" />
     <PackageReference Include="Microsoft.Extensions.SecretManager.Tools" Version="2.0.2" />
@@ -62,6 +63,10 @@
     <!-- Exclude Database migrations C# files -->
     <Compile Remove="Database\migrations\**\*.cs" />
     <Compile Remove="Data\Migrations\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="nul" />
   </ItemGroup>
 
   <ItemGroup>
