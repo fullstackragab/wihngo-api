@@ -1,5 +1,6 @@
 using Amazon.S3;
 using Amazon.S3.Model;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using Wihngo.Configuration;
 using Wihngo.Services.Interfaces;
@@ -11,13 +12,16 @@ namespace Wihngo.Services
         private readonly IAmazonS3 _s3Client;
         private readonly AwsConfiguration _config;
         private readonly ILogger<S3Service> _logger;
+        private readonly IMemoryCache _urlCache;
 
         public S3Service(
             IOptions<AwsConfiguration> config,
-            ILogger<S3Service> logger)
+            ILogger<S3Service> logger,
+            IMemoryCache memoryCache)
         {
             _config = config.Value;
             _logger = logger;
+            _urlCache = memoryCache;
 
             // Validate configuration
             if (string.IsNullOrWhiteSpace(_config.AccessKeyId) || 
@@ -93,6 +97,15 @@ namespace Wihngo.Services
 
         public async Task<string> GenerateDownloadUrlAsync(string s3Key)
         {
+            // Use cache to return the same URL for repeated requests
+            // This enables client-side image caching since the URL stays consistent
+            var cacheKey = $"s3_url:{s3Key}";
+
+            if (_urlCache.TryGetValue(cacheKey, out string? cachedUrl) && !string.IsNullOrEmpty(cachedUrl))
+            {
+                return cachedUrl;
+            }
+
             try
             {
                 var request = new GetPreSignedUrlRequest
@@ -105,7 +118,11 @@ namespace Wihngo.Services
 
                 var downloadUrl = await _s3Client.GetPreSignedURLAsync(request);
 
-                _logger.LogInformation("Generated download URL for key {S3Key}", s3Key);
+                // Cache URL for half the expiration time to ensure URLs are still valid when used
+                var cacheExpiration = TimeSpan.FromMinutes(_config.PresignedUrlExpirationMinutes / 2);
+                _urlCache.Set(cacheKey, downloadUrl, cacheExpiration);
+
+                _logger.LogDebug("Generated and cached download URL for key {S3Key}", s3Key);
 
                 return downloadUrl;
             }
