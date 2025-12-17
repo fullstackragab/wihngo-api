@@ -162,7 +162,7 @@ INSERT INTO birds (
  'Anna''s Hummingbird',
  'The fearless little warrior',
  'Ruby is a regular visitor to my backyard feeder. She''s incredibly territorial and will chase away birds twice her size! Her iridescent red gorget is absolutely stunning in the morning sunlight.',
- 'birds/ruby-annas-hummingbird.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Anna%27s_hummingbird.jpg/640px-Anna%27s_hummingbird.jpg',
  NOW() - INTERVAL '85 days',
  23, 8, 3500,
  true, false, 20),
@@ -173,7 +173,7 @@ INSERT INTO birds (
  'Black-chinned Hummingbird',
  'The gentle visitor',
  'Jasper arrived in spring and has become a favorite. Unlike Ruby, he''s very calm and will even feed while I''m nearby. His purple chin stripe is gorgeous!',
- 'birds/jasper-black-chinned.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Black-chinned_Hummingbird.jpg/640px-Black-chinned_Hummingbird.jpg',
  NOW() - INTERVAL '70 days',
  15, 4, 1200,
  false, false, 10),
@@ -185,7 +185,7 @@ INSERT INTO birds (
  'American Goldfinch',
  'Bright as morning light',
  'Sunshine brings joy to my garden every day. Her vibrant yellow feathers are like little rays of sunshine, especially in summer!',
- 'birds/sunshine-goldfinch.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/American_Goldfinch-27527.jpg/640px-American_Goldfinch-27527.jpg',
  NOW() - INTERVAL '55 days',
  31, 12, 5200,
  true, false, 20),
@@ -196,7 +196,7 @@ INSERT INTO birds (
  'House Finch',
  'The melodious singer',
  'Bella serenades us every morning with beautiful songs. She''s raised two broods in our yard this year!',
- 'birds/bella-house-finch.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9a/House_Finch_%28female%29.jpg/640px-House_Finch_%28female%29.jpg',
  NOW() - INTERVAL '50 days',
  18, 7, 2800,
  false, false, 10),
@@ -208,7 +208,7 @@ INSERT INTO birds (
  'House Sparrow',
  'My first backyard friend',
  'I just set up my first bird feeder and Chirpy was the first visitor! I''m learning so much about birds.',
- 'birds/chirpy-sparrow.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/6e/Passer_domesticus_male_%2815%29.jpg/640px-Passer_domesticus_male_%2815%29.jpg',
  NOW() - INTERVAL '10 days',
  5, 1, 250,
  false, false, 10),
@@ -220,7 +220,7 @@ INSERT INTO birds (
  'Red-tailed Hawk',
  'Rise from the ashes',
  'Phoenix was found injured on the roadside. After months of rehabilitation, she''s almost ready to return to the wild. Her recovery has been remarkable.',
- 'birds/phoenix-hawk.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Red-tailed_Hawk.jpg/640px-Red-tailed_Hawk.jpg',
  NOW() - INTERVAL '100 days',
  42, 18, 8500,
  true, false, 20),
@@ -231,7 +231,7 @@ INSERT INTO birds (
  'American Robin',
  'Symbol of resilience',
  'Hope fell from her nest during a storm. We raised her and successfully released her back to her territory. She still visits!',
- 'birds/hope-robin.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b0/Turdus_migratorius.jpg/640px-Turdus_migratorius.jpg',
  NOW() - INTERVAL '80 days',
  28, 11, 4200,
  false, false, 10),
@@ -243,7 +243,7 @@ INSERT INTO birds (
  'Barred Owl',
  'The classroom favorite',
  'Professor Hoot lives in the tree near our school. My students love watching him and learning about owls.',
- 'birds/professor-hoot-owl.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Strix-varia-Barred-Owl-cropped.jpg/640px-Strix-varia-Barred-Owl-cropped.jpg',
  NOW() - INTERVAL '40 days',
  35, 15, 6200,
  true, false, 50),
@@ -254,7 +254,7 @@ INSERT INTO birds (
  'Mourning Dove',
  'Gentle and peaceful',
  'Flutter visits our school garden daily. Kids love her soft cooing sounds.',
- 'birds/flutter-dove.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b7/Mourning_Dove_2006.jpg/640px-Mourning_Dove_2006.jpg',
  NOW() - INTERVAL '35 days',
  12, 5, 1500,
  false, false, 10),
@@ -266,7 +266,7 @@ INSERT INTO birds (
  'Blue Jay',
  'Forever in our hearts',
  'Angel was a rescue we couldn''t save. She taught us so much about compassion and fighting spirit. Gone but never forgotten.',
- 'birds/angel-bluejay.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f4/Blue_jay_in_PP_%2830960%29.jpg/640px-Blue_jay_in_PP_%2830960%29.jpg',
  NOW() - INTERVAL '90 days',
  67, 25, 12500,
  true, true, 20);
@@ -314,7 +314,7 @@ INSERT INTO stories (
  'aaaaaaaa-0001-0001-0001-000000000001',
  'Ruby had an amazing day today! She visited the feeder five times and even let me get within 3 feet while she was feeding. Her iridescent red gorget was absolutely stunning in the morning sunlight. I''m so proud of how far she''s come!',
  1, -- Excited
- 'stories/ruby-feeding-morning.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Ruby-throated_Hummingbird_at_feeder.jpg/640px-Ruby-throated_Hummingbird_at_feeder.jpg',
  NULL,
  NOW() - INTERVAL '2 days'),
 
@@ -333,7 +333,7 @@ INSERT INTO stories (
  'bbbbbbbb-0001-0001-0001-000000000001',
  'Sunshine brought her partner to the feeder today! They''re such a beautiful pair. The male''s summer plumage is incredible - bright yellow with black wings.',
  1, -- Excited
- 'stories/sunshine-pair.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/American_Goldfinches_%28Spinus_tristis%29.jpg/640px-American_Goldfinches_%28Spinus_tristis%29.jpg',
  NULL,
  NOW() - INTERVAL '1 day'),
 
@@ -342,7 +342,7 @@ INSERT INTO stories (
  'bbbbbbbb-0001-0001-0001-000000000001',
  'Spent an hour photographing Sunshine this morning. Managed to capture her with a sunflower seed in her beak. The lighting was perfect!',
  0, -- Happy
- 'stories/sunshine-sunflower.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/95/American_goldfinch_winter_male.jpg/640px-American_goldfinch_winter_male.jpg',
  NULL,
  NOW() - INTERVAL '4 days'),
 
@@ -352,7 +352,7 @@ INSERT INTO stories (
  'dddddddd-0001-0001-0001-000000000001',
  'Major milestone today! Phoenix successfully caught prey during flight training. This is huge progress toward her release. The team is so proud!',
  1, -- Excited
- 'stories/phoenix-flight-training.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/02/Red-tailed_Hawk_Buteo_jamaicensis_Full_Body_1880px.jpg/640px-Red-tailed_Hawk_Buteo_jamaicensis_Full_Body_1880px.jpg',
  NULL,
  NOW() - INTERVAL '3 days'),
 
@@ -361,7 +361,7 @@ INSERT INTO stories (
  'dddddddd-0001-0001-0001-000000000001',
  'Phoenix''s wing is healing beautifully. X-rays show complete bone fusion. We''re starting flight exercises next week. She''s been so patient through this recovery.',
  2, -- Calm
- 'stories/phoenix-wing-check.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/d/d6/Red-tailed_Hawk_closeup.jpg/640px-Red-tailed_Hawk_closeup.jpg',
  NULL,
  NOW() - INTERVAL '10 days'),
 
@@ -371,7 +371,7 @@ INSERT INTO stories (
  'eeeeeeee-0001-0001-0001-000000000001',
  'Professor Hoot gave the kids an amazing show today during recess! He caught a mouse right in front of them. It turned into an impromptu lesson on the food chain. The students were absolutely mesmerized!',
  1, -- Excited
- 'stories/professor-hoot-lesson.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3c/Barred_owl_%28Strix_varia%29.jpg/640px-Barred_owl_%28Strix_varia%29.jpg',
  NULL,
  NOW() - INTERVAL '1 day'),
 
@@ -400,7 +400,7 @@ INSERT INTO stories (
  'bbbbbbbb-0002-0002-0002-000000000002',
  'Bella''s babies fledged today! All three made it successfully. Watching them learn to fly was incredible. Mom is teaching them to use the feeders.',
  1, -- Excited
- 'stories/bella-babies-fledge.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/House_Finch_with_nestlings.jpg/640px-House_Finch_with_nestlings.jpg',
  NULL,
  NOW() - INTERVAL '6 days'),
 
@@ -410,7 +410,7 @@ INSERT INTO stories (
  'dddddddd-0002-0002-0002-000000000002',
  'Hope returned to visit today! It''s been two weeks since her release. She recognized me and came close. This is why we do what we do.',
  0, -- Happy
- 'stories/hope-visit.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Turdus_migratorius_1.jpg/640px-Turdus_migratorius_1.jpg',
  NULL,
  NOW() - INTERVAL '2 days'),
 
@@ -429,7 +429,7 @@ INSERT INTO stories (
  'cccccccc-0001-0001-0001-000000000001',
  'Set up my first bird bath! Chirpy was the first to try it. Watching birds bathe is adorable!',
  0, -- Happy
- 'stories/chirpy-bath.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/House_sparrow_bathing.jpg/640px-House_sparrow_bathing.jpg',
  NULL,
  NOW() - INTERVAL '5 days'),
 
@@ -448,7 +448,7 @@ INSERT INTO stories (
  'dddddddd-0003-0003-0003-000000000003',
  'Today marks one month since we lost Angel. She fought so hard. We learned so much from her about resilience and never giving up. Rest in peace, sweet bird.',
  4, -- Sad
- 'stories/angel-memorial.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e2/Blue_Jay-27527-2.jpg/640px-Blue_Jay-27527-2.jpg',
  NULL,
  NOW() - INTERVAL '30 days'),
 
@@ -467,7 +467,7 @@ INSERT INTO stories (
  'eeeeeeee-0001-0001-0001-000000000001',
  'Professor Hoot visited my yard today! Emma, your famous owl is making rounds. Got some great photos!',
  1, -- Excited
- 'stories/professor-hoot-visit.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Barred_owl_portrait.jpg/640px-Barred_owl_portrait.jpg',
  NULL,
  NOW() - INTERVAL '20 days'),
 
@@ -477,7 +477,7 @@ INSERT INTO stories (
  'aaaaaaaa-0001-0001-0001-000000000001',
  'Ruby defending her territory from a larger hummingbird. She''s fearless!',
  5, -- Playful
- 'stories/ruby-territorial.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/85/Anna%27s_Hummingbird_in_flight.jpg/640px-Anna%27s_Hummingbird_in_flight.jpg',
  NULL,
  NOW() - INTERVAL '12 hours'),
 
@@ -486,7 +486,7 @@ INSERT INTO stories (
  'bbbbbbbb-0001-0001-0001-000000000001',
  'Perfect golden hour light for photographing Sunshine today.',
  0, -- Happy
- 'stories/sunshine-golden-hour.jpg',
+ 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b1/American_Goldfinch_%28Spinus_tristis%29_on_branch.jpg/640px-American_Goldfinch_%28Spinus_tristis%29_on_branch.jpg',
  NULL,
  NOW() - INTERVAL '18 hours'),
 

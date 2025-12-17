@@ -33,7 +33,15 @@
       "Bash(npx tsc:*)",
       "Bash(npx expo-doctor:*)",
       "Bash(where psql:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(powershell:*)",
+      "WebSearch",
+      "WebFetch(domain:commons.wikimedia.org)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "Bash(dotnet restore:*)",
+      "Bash(echo:*)",
+      "Bash(dotnet ef database update:*)",
+      "Bash(cmd /c \"taskkill /F /IM Wihngo.exe\")"
     ]
   }
 }

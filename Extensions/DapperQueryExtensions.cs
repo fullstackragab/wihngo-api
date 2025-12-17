@@ -280,11 +280,17 @@ namespace Wihngo.Extensions
         }
 
         /// <summary>
-        /// Get table name from entity type (converts to snake_case).
+        /// Get table name from entity type (converts to snake_case and pluralizes).
         /// </summary>
         public static string GetTableName<T>()
         {
-            return ToSnakeCase(typeof(T).Name);
+            var name = ToSnakeCase(typeof(T).Name);
+            // Pluralize table name to match database convention
+            if (!name.EndsWith("s"))
+            {
+                name += "s";
+            }
+            return name;
         }
 
         /// <summary>

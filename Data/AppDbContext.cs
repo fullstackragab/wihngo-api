@@ -88,6 +88,11 @@ namespace Wihngo.Data
         public StubDbSet<T> Set<T>() where T : class
         {
             var tableName = ToSnakeCase(typeof(T).Name);
+            // Pluralize table name to match database convention
+            if (!tableName.EndsWith("s"))
+            {
+                tableName += "s";
+            }
             var primaryKey = "id"; // Default
             return new StubDbSet<T>(_dbFactory, tableName, primaryKey, _logger);
         }
