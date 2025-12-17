@@ -592,7 +592,16 @@ namespace Wihngo.Controllers
 
                 _logger.LogInformation("Retrieved {Count} owned birds for user {UserId}", birds.Count, id);
 
-                return Ok(_mapper.Map<IEnumerable<BirdSummaryDto>>(birds));
+                // Map to DTOs and set ImageUrl (AutoMapper ignores ImageUrl, expects controller to set it)
+                var birdDtos = _mapper.Map<List<BirdSummaryDto>>(birds);
+                for (int i = 0; i < birdDtos.Count; i++)
+                {
+                    // ImageUrl was already generated and stored in Bird.ImageUrl
+                    // which AutoMapper mapped to ImageS3Key, so we need to copy it
+                    birdDtos[i].ImageUrl = birds[i].ImageUrl;
+                }
+
+                return Ok(birdDtos);
             }
             catch (Exception ex)
             {
@@ -620,19 +629,36 @@ namespace Wihngo.Controllers
         {
             var birds = new List<Bird>();
             using var cmd = connection.CreateCommand();
-            cmd.CommandText = "SELECT bird_id, owner_id, name, species, created_at FROM birds WHERE owner_id = @owner_id";
+            cmd.CommandText = "SELECT bird_id, owner_id, name, species, image_url, created_at FROM birds WHERE owner_id = @owner_id";
             cmd.Parameters.AddWithValue("owner_id", userId);
-            
+
             using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
+                var imageS3Key = reader.IsDBNull(4) ? null : reader.GetString(4);
+                string? imageUrl = null;
+
+                // Generate presigned URL for image if S3 key exists
+                if (!string.IsNullOrWhiteSpace(imageS3Key))
+                {
+                    try
+                    {
+                        imageUrl = await _s3Service.GenerateDownloadUrlAsync(imageS3Key);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to generate presigned URL for bird image: {S3Key}", imageS3Key);
+                    }
+                }
+
                 birds.Add(new Bird
                 {
                     BirdId = reader.GetGuid(0),
                     OwnerId = reader.GetGuid(1),
                     Name = reader.GetString(2),
                     Species = reader.GetString(3),
-                    CreatedAt = reader.GetDateTime(4)
+                    ImageUrl = imageUrl ?? imageS3Key,
+                    CreatedAt = reader.GetDateTime(5)
                 });
             }
             return birds;
