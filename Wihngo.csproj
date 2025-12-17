@@ -59,6 +59,12 @@
     <Compile Remove="MigrationHelper\**" />
     <EmbeddedResource Remove="MigrationHelper\**" />
     <None Remove="MigrationHelper\**" />
+
+    <!-- Exclude Tools directory (contains separate projects) -->
+    <Compile Remove="Tools\**" />
+    <EmbeddedResource Remove="Tools\**" />
+    <Content Remove="Tools\**" />
+    <None Remove="Tools\**" />
     
     <!-- Exclude Database migrations C# files -->
     <Compile Remove="Database\migrations\**\*.cs" />
