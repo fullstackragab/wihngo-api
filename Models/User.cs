@@ -3,6 +3,8 @@
     using System;
     using System.Collections.Generic;
     using System.ComponentModel.DataAnnotations;
+    using System.ComponentModel.DataAnnotations.Schema;
+    using System.Text.Json;
 
     public class User
     {
@@ -56,6 +58,31 @@
         public DateTime? PasswordResetTokenExpiry { get; set; }
         
         public DateTime? LastPasswordChangeAt { get; set; }
+
+        // Smart feed preferences
+        /// <summary>
+        /// JSON array of preferred content language codes (ISO 639-1)
+        /// </summary>
+        [Column(TypeName = "jsonb")]
+        public string? PreferredLanguagesJson { get; set; }
+
+        /// <summary>
+        /// Helper property to access preferred languages as a list
+        /// </summary>
+        [NotMapped]
+        public List<string> PreferredLanguages
+        {
+            get => string.IsNullOrEmpty(PreferredLanguagesJson)
+                ? new List<string>()
+                : JsonSerializer.Deserialize<List<string>>(PreferredLanguagesJson) ?? new List<string>();
+            set => PreferredLanguagesJson = JsonSerializer.Serialize(value);
+        }
+
+        /// <summary>
+        /// User's country (ISO 3166-1 alpha-2 code)
+        /// </summary>
+        [MaxLength(10)]
+        public string? Country { get; set; }
 
         // Navigation properties
         public List<Bird> Birds { get; set; } = new();

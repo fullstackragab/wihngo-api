@@ -19,17 +19,20 @@ namespace Wihngo.Controllers
         private readonly IMapper _mapper;
         private readonly ILogger<UsersController> _logger;
         private readonly IS3Service _s3Service;
+        private readonly IUserPreferencesService _preferencesService;
 
         public UsersController(
-            IDbConnectionFactory dbFactory, 
-            IMapper mapper, 
+            IDbConnectionFactory dbFactory,
+            IMapper mapper,
             ILogger<UsersController> logger,
-            IS3Service s3Service)
+            IS3Service s3Service,
+            IUserPreferencesService preferencesService)
         {
             _dbFactory = dbFactory;
             _mapper = mapper;
             _logger = logger;
             _s3Service = s3Service;
+            _preferencesService = preferencesService;
         }
 
         [HttpGet]
@@ -609,6 +612,114 @@ namespace Wihngo.Controllers
                 return StatusCode(500, new { message = "Failed to retrieve owned birds. Please try again." });
             }
         }
+
+        #region Feed Preferences
+
+        /// <summary>
+        /// Get user's feed preferences (preferred languages and country).
+        /// GET /api/users/preferences
+        /// </summary>
+        [HttpGet("preferences")]
+        [Authorize]
+        public async Task<ActionResult<UserPreferencesDto>> GetPreferences()
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userIdClaim, out var userId))
+            {
+                return Unauthorized();
+            }
+
+            var preferences = await _preferencesService.GetUserPreferencesAsync(userId);
+            return Ok(preferences);
+        }
+
+        /// <summary>
+        /// Update user's preferred content languages.
+        /// PUT /api/users/preferences/languages
+        /// </summary>
+        [HttpPut("preferences/languages")]
+        [Authorize]
+        public async Task<IActionResult> UpdatePreferredLanguages([FromBody] UpdateLanguagesDto dto)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userIdClaim, out var userId))
+            {
+                return Unauthorized();
+            }
+
+            await _preferencesService.UpdatePreferredLanguagesAsync(userId, dto.Languages);
+            return NoContent();
+        }
+
+        /// <summary>
+        /// Update user's country preference.
+        /// PUT /api/users/preferences/country
+        /// </summary>
+        [HttpPut("preferences/country")]
+        [Authorize]
+        public async Task<IActionResult> UpdateCountry([FromBody] UpdateCountryDto dto)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(userIdClaim, out var userId))
+            {
+                return Unauthorized();
+            }
+
+            try
+            {
+                await _preferencesService.UpdateCountryAsync(userId, dto.CountryCode);
+                return NoContent();
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Get available languages for content preferences.
+        /// GET /api/users/preferences/languages/available
+        /// </summary>
+        [HttpGet("preferences/languages/available")]
+        public ActionResult<AvailableLanguagesDto> GetAvailableLanguages()
+        {
+            var languages = new AvailableLanguagesDto
+            {
+                Languages = new List<LanguageOptionDto>
+                {
+                    new() { Code = "ar", Name = "Arabic", NativeName = "العربية" },
+                    new() { Code = "de", Name = "German", NativeName = "Deutsch" },
+                    new() { Code = "en", Name = "English", NativeName = "English" },
+                    new() { Code = "es", Name = "Spanish", NativeName = "Español" },
+                    new() { Code = "fr", Name = "French", NativeName = "Français" },
+                    new() { Code = "hi", Name = "Hindi", NativeName = "हिन्दी" },
+                    new() { Code = "id", Name = "Indonesian", NativeName = "Bahasa Indonesia" },
+                    new() { Code = "it", Name = "Italian", NativeName = "Italiano" },
+                    new() { Code = "ja", Name = "Japanese", NativeName = "日本語" },
+                    new() { Code = "ko", Name = "Korean", NativeName = "한국어" },
+                    new() { Code = "pl", Name = "Polish", NativeName = "Polski" },
+                    new() { Code = "pt", Name = "Portuguese", NativeName = "Português" },
+                    new() { Code = "th", Name = "Thai", NativeName = "ไทย" },
+                    new() { Code = "tr", Name = "Turkish", NativeName = "Türkçe" },
+                    new() { Code = "vi", Name = "Vietnamese", NativeName = "Tiếng Việt" },
+                    new() { Code = "zh", Name = "Chinese", NativeName = "中文" }
+                }
+            };
+
+            return Ok(languages);
+        }
+
+        #endregion
 
         // Helper methods
         private async Task<User?> GetUserByIdAsync(NpgsqlConnection connection, Guid userId)

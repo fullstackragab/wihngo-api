@@ -71,7 +71,11 @@ namespace Wihngo.Data
         public StubDbSet<StoryLike> StoryLikes => new StubDbSet<StoryLike>(_dbFactory, "story_likes", "like_id", _logger);
         public StubDbSet<Comment> Comments => new StubDbSet<Comment>(_dbFactory, "comments", "comment_id", _logger);
         public StubDbSet<CommentLike> CommentLikes => new StubDbSet<CommentLike>(_dbFactory, "comment_likes", "like_id", _logger);
-        
+
+        // Smart feed DbSets
+        public StubDbSet<UserFeedInteraction> UserFeedInteractions => new StubDbSet<UserFeedInteraction>(_dbFactory, "user_feed_interactions", "interaction_id", _logger);
+        public StubDbSet<UserBirdFollow> UserBirdFollows => new StubDbSet<UserBirdFollow>(_dbFactory, "user_bird_follows", "follow_id", _logger);
+
         // Payout system DbSets
         public StubDbSet<PayoutMethod> PayoutMethods => new StubDbSet<PayoutMethod>(_dbFactory, "payout_methods", "id", _logger);
         public StubDbSet<PayoutTransaction> PayoutTransactions => new StubDbSet<PayoutTransaction>(_dbFactory, "payout_transactions", "id", _logger);

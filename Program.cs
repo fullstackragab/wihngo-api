@@ -409,6 +409,13 @@ builder.Services.AddScoped<IWhisperTranscriptionService, WhisperTranscriptionSer
 builder.Services.Configure<ContentModerationConfiguration>(builder.Configuration.GetSection("ContentModeration"));
 builder.Services.AddScoped<IContentModerationService, ContentModerationService>();
 
+// Smart Feed Services
+builder.Services.AddSingleton<ILanguageDetectionService, LanguageDetectionService>();
+builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();
+builder.Services.AddScoped<IBirdFollowService, BirdFollowService>();
+builder.Services.AddScoped<IFeedRankingService, FeedRankingService>();
+builder.Services.AddScoped<StoryLanguageBackfillService>();
+
 // 📋 HANGFIRE - CONDITIONAL SETUP
 if (isDatabaseAvailable)
 {
