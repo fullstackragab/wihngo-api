@@ -45,5 +45,20 @@ namespace Wihngo.Dtos
         /// Pre-signed download URL for story audio (expires in 10 minutes)
         /// </summary>
         public string? AudioUrl { get; set; }
+
+        /// <summary>
+        /// UTC timestamp when the story was created
+        /// </summary>
+        public DateTime? CreatedAt { get; set; }
+
+        /// <summary>
+        /// Number of likes on the story
+        /// </summary>
+        public int LikeCount { get; set; }
+
+        /// <summary>
+        /// Number of comments on the story
+        /// </summary>
+        public int CommentCount { get; set; }
     }
 }

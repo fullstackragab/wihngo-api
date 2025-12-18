@@ -29,6 +29,7 @@
         private readonly IWhisperTranscriptionService _whisperService;
         private readonly IContentModerationService _moderationService;
         private readonly IBirdActivityService _activityService;
+        private readonly ILanguageDetectionService _languageDetectionService;
 
         public StoriesController(
             AppDbContext db,
@@ -40,7 +41,8 @@
             IAiStoryGenerationService aiStoryService,
             IWhisperTranscriptionService whisperService,
             IContentModerationService moderationService,
-            IBirdActivityService activityService)
+            IBirdActivityService activityService,
+            ILanguageDetectionService languageDetectionService)
         {
             _db = db;
             _dbFactory = dbFactory;
@@ -52,6 +54,7 @@
             _whisperService = whisperService;
             _moderationService = moderationService;
             _activityService = activityService;
+            _languageDetectionService = languageDetectionService;
         }
 
         private Guid? GetUserIdClaim()
@@ -647,10 +650,37 @@
             var storyId = Guid.NewGuid();
             var now = DateTime.UtcNow;
 
+            // Detect language from content
+            string? detectedLanguage = null;
+            try
+            {
+                detectedLanguage = _languageDetectionService.DetectLanguage(dto.Content);
+                if (detectedLanguage != null)
+                {
+                    _logger.LogInformation("Detected language '{Language}' for story {StoryId}", detectedLanguage, storyId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to detect language for story {StoryId}", storyId);
+            }
+
+            // Get author's country from their profile
+            string? authorCountry = null;
+            try
+            {
+                var userCountrySql = "SELECT country FROM users WHERE user_id = @UserId";
+                authorCountry = await connection.QueryFirstOrDefaultAsync<string?>(userCountrySql, new { UserId = userId.Value });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to get author country for story {StoryId}", storyId);
+            }
+
             // Insert story using raw SQL with bird_id foreign key
             var insertStorySql = @"
-                INSERT INTO stories (story_id, author_id, bird_id, content, mode, image_url, video_url, audio_url, is_highlighted, created_at)
-                VALUES (@StoryId, @AuthorId, @BirdId, @Content, @Mode, @ImageUrl, @VideoUrl, @AudioUrl, @IsHighlighted, @CreatedAt)";
+                INSERT INTO stories (story_id, author_id, bird_id, content, mode, image_url, video_url, audio_url, is_highlighted, created_at, language, country)
+                VALUES (@StoryId, @AuthorId, @BirdId, @Content, @Mode, @ImageUrl, @VideoUrl, @AudioUrl, @IsHighlighted, @CreatedAt, @Language, @Country)";
 
             await connection.ExecuteAsync(insertStorySql, new
             {
@@ -663,7 +693,9 @@
                 VideoUrl = dto.VideoS3Key,
                 AudioUrl = dto.AudioS3Key,
                 IsHighlighted = false, // Regular stories are not highlighted by default
-                CreatedAt = now
+                CreatedAt = now,
+                Language = detectedLanguage,
+                Country = authorCountry
             });
 
             _logger.LogInformation("Story created: {StoryId} by user {UserId} for bird {BirdId}",

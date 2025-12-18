@@ -12,6 +12,7 @@
   <ItemGroup>
     <PackageReference Include="AWSSDK.Rekognition" Version="3.7.302.22" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
+    <PackageReference Include="NTextCat" Version="0.3.65" />
     <PackageReference Include="Scalar.AspNetCore" Version="1.2.59" />
     <PackageReference Include="Microsoft.Extensions.SecretManager.Tools" Version="2.0.2" />
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.23.0" />

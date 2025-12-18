@@ -41,7 +41,8 @@
       "Bash(dotnet restore:*)",
       "Bash(echo:*)",
       "Bash(dotnet ef database update:*)",
-      "Bash(cmd /c \"taskkill /F /IM Wihngo.exe\")"
+      "Bash(cmd /c \"taskkill /F /IM Wihngo.exe\")",
+      "Bash(xargs cat:*)"
     ]
   }
 }

@@ -29,6 +29,7 @@ namespace Wihngo.Controllers
         private readonly IMemorialService _memorialService;
         private readonly IContentModerationService _moderationService;
         private readonly IBirdActivityService _activityService;
+        private readonly IBirdFollowService _birdFollowService;
 
         public BirdsController(
             AppDbContext db,
@@ -39,7 +40,8 @@ namespace Wihngo.Controllers
             ILogger<BirdsController> logger,
             IMemorialService memorialService,
             IContentModerationService moderationService,
-            IBirdActivityService activityService)
+            IBirdActivityService activityService,
+            IBirdFollowService birdFollowService)
         {
             _db = db;
             _dbFactory = dbFactory;
@@ -50,6 +52,7 @@ namespace Wihngo.Controllers
             _memorialService = memorialService;
             _moderationService = moderationService;
             _activityService = activityService;
+            _birdFollowService = birdFollowService;
         }
 
         private Guid? GetUserIdClaim()
@@ -1212,6 +1215,168 @@ namespace Wihngo.Controllers
                 _logger.LogError(ex, "Error processing memorial funds for bird {BirdId}", id);
                 return StatusCode(500, new { message = "An error occurred while processing memorial funds" });
             }
+        }
+
+        // ============================================================================
+        // Bird Follow Endpoints (Smart Feed)
+        // ============================================================================
+
+        /// <summary>
+        /// Follow a bird to see their stories in your feed.
+        /// POST /api/birds/{id}/follow
+        /// </summary>
+        [Authorize]
+        [HttpPost("{id}/follow")]
+        public async Task<IActionResult> FollowBird(Guid id)
+        {
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
+            // Check if bird exists
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+            var birdExists = await connection.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM birds WHERE bird_id = @BirdId)",
+                new { BirdId = id });
+
+            if (!birdExists) return NotFound("Bird not found");
+
+            var result = await _birdFollowService.FollowBirdAsync(userId.Value, id);
+
+            if (!result)
+            {
+                return BadRequest(new { message = "Already following this bird" });
+            }
+
+            _logger.LogInformation("User {UserId} followed bird {BirdId}", userId.Value, id);
+            return Ok(new { message = "Now following this bird", isFollowing = true });
+        }
+
+        /// <summary>
+        /// Unfollow a bird.
+        /// DELETE /api/birds/{id}/follow
+        /// </summary>
+        [Authorize]
+        [HttpDelete("{id}/follow")]
+        public async Task<IActionResult> UnfollowBird(Guid id)
+        {
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
+            var result = await _birdFollowService.UnfollowBirdAsync(userId.Value, id);
+
+            if (!result)
+            {
+                return NotFound(new { message = "Not following this bird" });
+            }
+
+            _logger.LogInformation("User {UserId} unfollowed bird {BirdId}", userId.Value, id);
+            return Ok(new { message = "Unfollowed this bird", isFollowing = false });
+        }
+
+        /// <summary>
+        /// Get all birds the current user is following.
+        /// GET /api/birds/following
+        /// </summary>
+        [Authorize]
+        [HttpGet("following")]
+        public async Task<ActionResult<List<BirdSummaryDto>>> GetFollowingBirds()
+        {
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
+            var followedBirdIds = await _birdFollowService.GetFollowedBirdIdsAsync(userId.Value);
+
+            if (!followedBirdIds.Any())
+            {
+                return Ok(new List<BirdSummaryDto>());
+            }
+
+            // Get followed birds with details
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+            var sql = @"
+                SELECT
+                    bird_id,
+                    name,
+                    species,
+                    image_url,
+                    tagline,
+                    COALESCE(loved_count, 0) loved_count,
+                    COALESCE(supported_count, 0) supported_count,
+                    owner_id,
+                    last_activity_at,
+                    is_memorial
+                FROM birds
+                WHERE bird_id = ANY(@BirdIds)";
+
+            var birds = await connection.QueryAsync<dynamic>(sql, new { BirdIds = followedBirdIds.ToArray() });
+
+            // Get loved birds for this user
+            var lovedSql = "SELECT bird_id FROM loves WHERE user_id = @UserId";
+            var lovedIds = await connection.QueryAsync<Guid>(lovedSql, new { UserId = userId.Value });
+            var lovedBirdIds = new HashSet<Guid>(lovedIds);
+
+            var birdDtos = new List<BirdSummaryDto>();
+            foreach (var bird in birds)
+            {
+                if (bird.bird_id == null || bird.owner_id == null) continue;
+
+                Guid birdId = (Guid)bird.bird_id;
+                Guid ownerId = (Guid)bird.owner_id;
+                DateTime? lastActivityAt = bird.last_activity_at as DateTime?;
+                bool isMemorial = bird.is_memorial ?? false;
+
+                string? imageUrl = null;
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(bird.image_url))
+                    {
+                        imageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.image_url);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to generate download URL for bird {BirdId}", birdId);
+                }
+
+                var activityStatus = _activityService.GetActivityStatus(lastActivityAt, isMemorial);
+                var canSupport = _activityService.CanReceiveSupport(activityStatus);
+                var lastSeenText = _activityService.GetLastSeenText(lastActivityAt, isMemorial);
+
+                birdDtos.Add(new BirdSummaryDto
+                {
+                    BirdId = birdId,
+                    Name = bird.name ?? string.Empty,
+                    Species = bird.species,
+                    ImageS3Key = bird.image_url,
+                    ImageUrl = imageUrl,
+                    Tagline = bird.tagline,
+                    LovedBy = bird.loved_count ?? 0,
+                    SupportedBy = bird.supported_count ?? 0,
+                    OwnerId = ownerId,
+                    IsLoved = lovedBirdIds.Contains(birdId),
+                    ActivityStatus = activityStatus,
+                    LastSeenText = lastSeenText,
+                    CanSupport = canSupport,
+                    IsMemorial = isMemorial
+                });
+            }
+
+            return Ok(birdDtos);
+        }
+
+        /// <summary>
+        /// Check if the current user is following a specific bird.
+        /// GET /api/birds/{id}/follow
+        /// </summary>
+        [Authorize]
+        [HttpGet("{id}/follow")]
+        public async Task<ActionResult<object>> IsFollowingBird(Guid id)
+        {
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
+            var isFollowing = await _birdFollowService.IsFollowingAsync(userId.Value, id);
+            return Ok(new { isFollowing });
         }
     }
 }

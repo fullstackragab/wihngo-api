@@ -50,6 +50,19 @@ namespace Wihngo.Models
         public int LikeCount { get; set; } = 0;
         public int CommentCount { get; set; } = 0;
 
+        // Smart feed fields
+        /// <summary>
+        /// ISO 639-1 language code detected from content (e.g., "en", "ar", "es")
+        /// </summary>
+        [MaxLength(10)]
+        public string? Language { get; set; }
+
+        /// <summary>
+        /// ISO 3166-1 alpha-2 country code from author's profile (e.g., "US", "SA", "MX")
+        /// </summary>
+        [MaxLength(10)]
+        public string? Country { get; set; }
+
         // Navigation properties
         public List<StoryLike> Likes { get; set; } = new();
         public List<Comment> Comments { get; set; } = new();
