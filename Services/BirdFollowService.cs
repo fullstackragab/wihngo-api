@@ -20,7 +20,7 @@ namespace Wihngo.Services
             _logger = logger;
         }
 
-        public async Task FollowBirdAsync(Guid userId, Guid birdId)
+        public async Task<bool> FollowBirdAsync(Guid userId, Guid birdId)
         {
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
 
@@ -31,7 +31,7 @@ namespace Wihngo.Services
             if (exists.HasValue)
             {
                 _logger.LogDebug("User {UserId} is already following bird {BirdId}", userId, birdId);
-                return;
+                return false;
             }
 
             // Insert follow
@@ -48,9 +48,10 @@ namespace Wihngo.Services
             });
 
             _logger.LogInformation("User {UserId} followed bird {BirdId}", userId, birdId);
+            return true;
         }
 
-        public async Task UnfollowBirdAsync(Guid userId, Guid birdId)
+        public async Task<bool> UnfollowBirdAsync(Guid userId, Guid birdId)
         {
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
 
@@ -60,7 +61,9 @@ namespace Wihngo.Services
             if (deleted > 0)
             {
                 _logger.LogInformation("User {UserId} unfollowed bird {BirdId}", userId, birdId);
+                return true;
             }
+            return false;
         }
 
         public async Task<bool> IsFollowingAsync(Guid userId, Guid birdId)
