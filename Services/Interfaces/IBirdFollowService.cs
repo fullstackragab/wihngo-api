@@ -8,13 +8,15 @@ namespace Wihngo.Services.Interfaces
     {
         /// <summary>
         /// Follow a bird to see its stories in the feed.
+        /// Returns true if successfully followed, false if already following.
         /// </summary>
-        Task FollowBirdAsync(Guid userId, Guid birdId);
+        Task<bool> FollowBirdAsync(Guid userId, Guid birdId);
 
         /// <summary>
         /// Unfollow a bird to stop seeing its stories prominently.
+        /// Returns true if successfully unfollowed, false if not following.
         /// </summary>
-        Task UnfollowBirdAsync(Guid userId, Guid birdId);
+        Task<bool> UnfollowBirdAsync(Guid userId, Guid birdId);
 
         /// <summary>
         /// Check if a user is following a specific bird.
