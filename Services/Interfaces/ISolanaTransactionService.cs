@@ -9,17 +9,21 @@ public interface ISolanaTransactionService
     /// Builds an unsigned USDC SPL token transfer transaction
     /// </summary>
     /// <param name="senderPubkey">Sender's wallet public key</param>
-    /// <param name="recipientPubkey">Recipient's wallet public key</param>
-    /// <param name="amountUsdc">Amount of USDC to transfer</param>
-    /// <param name="feePayer">Optional fee payer (platform wallet if sponsoring)</param>
+    /// <param name="recipientPubkey">Recipient's wallet public key (bird owner)</param>
+    /// <param name="amountUsdc">Amount of USDC to transfer to recipient</param>
+    /// <param name="feePayer">Optional fee payer (platform wallet if sponsoring gas)</param>
     /// <param name="createRecipientAta">Whether to include ATA creation for recipient</param>
+    /// <param name="platformWalletPubkey">Optional platform wallet for fee transfer</param>
+    /// <param name="platformFeeUsdc">Optional platform fee amount in USDC</param>
     /// <returns>Base64 encoded unsigned transaction</returns>
     Task<string> BuildUsdcTransferTransactionAsync(
         string senderPubkey,
         string recipientPubkey,
         decimal amountUsdc,
         string? feePayer = null,
-        bool createRecipientAta = false);
+        bool createRecipientAta = false,
+        string? platformWalletPubkey = null,
+        decimal platformFeeUsdc = 0);
 
     /// <summary>
     /// Submits a signed transaction to Solana

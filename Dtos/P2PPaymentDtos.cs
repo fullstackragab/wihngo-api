@@ -123,6 +123,7 @@ public class RecipientInfo
     public string Name { get; set; } = string.Empty;
     public string? Username { get; set; }
     public string? ProfileImage { get; set; }
+    public string? WalletAddress { get; set; }
 }
 
 // =============================================

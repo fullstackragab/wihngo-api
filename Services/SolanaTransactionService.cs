@@ -44,7 +44,9 @@ public class SolanaTransactionService : ISolanaTransactionService
         string recipientPubkey,
         decimal amountUsdc,
         string? feePayer = null,
-        bool createRecipientAta = false)
+        bool createRecipientAta = false,
+        string? platformWalletPubkey = null,
+        decimal platformFeeUsdc = 0)
     {
         try
         {
@@ -57,8 +59,9 @@ public class SolanaTransactionService : ISolanaTransactionService
             var senderAta = AssociatedTokenAccountProgram.DeriveAssociatedTokenAccount(sender, usdcMint);
             var recipientAta = AssociatedTokenAccountProgram.DeriveAssociatedTokenAccount(recipient, usdcMint);
 
-            // Convert amount to lamports (USDC has 6 decimals)
+            // Convert amounts to lamports (USDC has 6 decimals)
             var amountLamports = (ulong)(amountUsdc * (decimal)Math.Pow(10, USDC_DECIMALS));
+            var platformFeeLamports = (ulong)(platformFeeUsdc * (decimal)Math.Pow(10, USDC_DECIMALS));
 
             // Get recent blockhash
             var blockHashResult = await _rpcClient.GetLatestBlockHashAsync();
@@ -82,14 +85,29 @@ public class SolanaTransactionService : ISolanaTransactionService
                 transactionBuilder.AddInstruction(createAtaIx);
             }
 
-            // Add SPL Token transfer instruction
+            // Add SPL Token transfer to bird owner
             var transferIx = TokenProgram.Transfer(
                 senderAta,      // Source ATA
                 recipientAta,   // Destination ATA
-                amountLamports, // Amount
+                amountLamports, // Amount to bird owner
                 sender);        // Owner/Authority
 
             transactionBuilder.AddInstruction(transferIx);
+
+            // Add platform fee transfer if applicable
+            if (!string.IsNullOrEmpty(platformWalletPubkey) && platformFeeLamports > 0)
+            {
+                var platformWallet = new PublicKey(platformWalletPubkey);
+                var platformAta = AssociatedTokenAccountProgram.DeriveAssociatedTokenAccount(platformWallet, usdcMint);
+
+                var platformTransferIx = TokenProgram.Transfer(
+                    senderAta,           // Source ATA
+                    platformAta,         // Platform ATA
+                    platformFeeLamports, // Platform fee
+                    sender);             // Owner/Authority
+
+                transactionBuilder.AddInstruction(platformTransferIx);
+            }
 
             // Build the transaction (unsigned)
             var transaction = transactionBuilder.Build(new List<Account>());
@@ -98,8 +116,8 @@ public class SolanaTransactionService : ISolanaTransactionService
             var serialized = Convert.ToBase64String(transaction);
 
             _logger.LogInformation(
-                "Built USDC transfer transaction: {Amount} USDC from {Sender} to {Recipient}, FeePayer: {FeePayer}, CreateATA: {CreateAta}",
-                amountUsdc, senderPubkey, recipientPubkey, feePayer ?? senderPubkey, createRecipientAta);
+                "Built USDC transfer transaction: {Amount} USDC to {Recipient}, PlatformFee: {Fee} USDC to {Platform}, FeePayer: {FeePayer}",
+                amountUsdc, recipientPubkey, platformFeeUsdc, platformWalletPubkey ?? "none", feePayer ?? senderPubkey);
 
             return serialized;
         }

@@ -306,6 +306,105 @@ namespace Wihngo.Controllers
             return await Get(id);
         }
 
+        /// <summary>
+        /// Get paginated stories for a specific bird
+        /// </summary>
+        [HttpGet("{id}/stories")]
+        public async Task<ActionResult<PagedResult<StorySummaryDto>>> GetBirdStories(
+            Guid id,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 10)
+        {
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 10;
+            if (pageSize > 50) pageSize = 50;
+
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+            // Check if bird exists
+            var birdExists = await connection.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM birds WHERE bird_id = @BirdId",
+                new { BirdId = id });
+
+            if (birdExists == 0)
+            {
+                return NotFound(new { message = "Bird not found" });
+            }
+
+            // Get total count for this bird
+            var total = await connection.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM stories WHERE bird_id = @BirdId",
+                new { BirdId = id });
+
+            // Get stories for this bird
+            var offset = (page - 1) * pageSize;
+            var sql = @"
+                SELECT s.story_id, s.content, s.mode, s.image_url, s.video_url, s.created_at,
+                       b.name as bird_name
+                FROM stories s
+                JOIN birds b ON s.bird_id = b.bird_id
+                WHERE s.bird_id = @BirdId
+                ORDER BY s.created_at DESC
+                LIMIT @PageSize OFFSET @Offset";
+
+            var stories = await connection.QueryAsync<dynamic>(sql, new
+            {
+                BirdId = id,
+                PageSize = pageSize,
+                Offset = offset
+            });
+
+            var items = new List<StorySummaryDto>();
+            foreach (var story in stories)
+            {
+                string content = story.content ?? string.Empty;
+                string birdName = story.bird_name ?? string.Empty;
+
+                var dto = new StorySummaryDto
+                {
+                    StoryId = (Guid)story.story_id,
+                    Birds = string.IsNullOrWhiteSpace(birdName)
+                        ? new List<string>()
+                        : new List<string> { birdName },
+                    Mode = (StoryMode?)story.mode,
+                    Date = ((DateTime)story.created_at).ToString("MMMM d, yyyy"),
+                    Preview = content.Length > 140 ? content.Substring(0, 140) + "..." : content,
+                    ImageS3Key = story.image_url,
+                    VideoS3Key = story.video_url,
+                    CreatedAt = story.created_at
+                };
+
+                // Generate download URLs
+                if (!string.IsNullOrWhiteSpace(story.image_url))
+                {
+                    try
+                    {
+                        dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.image_url);
+                    }
+                    catch { }
+                }
+
+                if (!string.IsNullOrWhiteSpace(story.video_url))
+                {
+                    try
+                    {
+                        dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(story.video_url);
+                    }
+                    catch { }
+                }
+
+                items.Add(dto);
+            }
+
+            return Ok(new PagedResult<StorySummaryDto>
+            {
+                Items = items,
+                TotalCount = total,
+                Page = page,
+                PageSize = pageSize
+            });
+        }
+
         [Authorize]
         [HttpPost]
         public async Task<ActionResult<BirdSummaryDto>> Post([FromBody] BirdCreateDto dto)

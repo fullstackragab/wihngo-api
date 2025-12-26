@@ -56,7 +56,15 @@
       "Bash(find:*)",
       "Bash(dotnet add:*)",
       "Bash(grep:*)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy93cy8yMDA1LzA1L2lkZW50aXR5L2NsYWltcy9uYW1laWRlbnRpZmllciI6ImQ3MzRlNWNhLTU2OTAtNDcwZi04M2MxLTg2OGRmYjUxNzVhOCIsImh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3dzLzIwMDUvMDUvaWRlbnRpdHkvY2xhaW1zL25hbWUiOiJBYmRlbGZhdHRhaCBSYWdhYiIsImh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3dzLzIwMDUvMDUvaWRlbnRpdHkvY2xhaW1zL2VtYWlsYWRkcmVzcyI6ImFsaWNlQGV4YW1wbGUuY29tIiwiZW1haWxfY29uZmlybWVkIjoidHJ1ZSIsImp0aSI6ImI1MjdlODJhLWE5MjUtNDQzNC05NGE0LWM0Njk0N2U2NmVhYyIsImlhdCI6MTc2Njc2NDE4MCwiZXhwIjoxNzY2ODUwNTgwLCJpc3MiOiJodHRwczovL3dpaG5nby5jb20iLCJhdWQiOiJodHRwczovL3dpaG5nby5jb20ifQ.bH5I1RGNsc4me08cwS8gyFuSgDd0M6SoNIXJfDtmPA4\")",
+      "Bash(__NEW_LINE__ echo \"=== Test 1: Missing birdId ===\")",
+      "Bash(__NEW_LINE__ echo -e \"\\\\n\\\\n=== Test 2: Supporting own bird ===\")",
+      "Bash(__NEW_LINE__ echo -e \"\\\\n\\\\n=== Test 3: Invalid bird ===\")",
+      "Bash(ping:*)",
+      "Bash(printf:*)",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy93cy8yMDA1LzA1L2lkZW50aXR5L2NsYWltcy9uYW1laWRlbnRpZmllciI6ImQ3MzRlNWNhLTU2OTAtNDcwZi04M2MxLTg2OGRmYjUxNzVhOCIsImh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3dzLzIwMDUvMDUvaWRlbnRpdHkvY2xhaW1zL25hbWUiOiJBYmRlbGZhdHRhaCBSYWdhYiIsImh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3dzLzIwMDUvMDUvaWRlbnRpdHkvY2xhaW1zL2VtYWlsYWRkcmVzcyI6ImFsaWNlQGV4YW1wbGUuY29tIiwiZW1haWxfY29uZmlybWVkIjoidHJ1ZSIsImp0aSI6IjRhY2RlNDc2LTRkYTktNGM5Ny1iNjQ4LTFmNzBjNGM5ZjdmNCIsImlhdCI6MTc2Njc2NTY4MiwiZXhwIjoxNzY2ODUyMDgyLCJpc3MiOiJodHRwczovL3dpaG5nby5jb20iLCJhdWQiOiJodHRwczovL3dpaG5nby5jb20ifQ.tNXBqx2r_5BdqxmyWdrbz2qGzygxfXvreapbzDSoAyA\")",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJodHRwOi8vc2NoZW1hcy54bWxzb2FwLm9yZy93cy8yMDA1LzA1L2lkZW50aXR5L2NsYWltcy9uYW1laWRlbnRpZmllciI6ImQ3MzRlNWNhLTU2OTAtNDcwZi04M2MxLTg2OGRmYjUxNzVhOCIsImh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3dzLzIwMDUvMDUvaWRlbnRpdHkvY2xhaW1zL25hbWUiOiJBYmRlbGZhdHRhaCBSYWdhYiIsImh0dHA6Ly9zY2hlbWFzLnhtbHNvYXAub3JnL3dzLzIwMDUvMDUvaWRlbnRpdHkvY2xhaW1zL2VtYWlsYWRkcmVzcyI6ImFsaWNlQGV4YW1wbGUuY29tIiwiZW1haWxfY29uZmlybWVkIjoidHJ1ZSIsImp0aSI6IjRhY2RlNDc2LTRkYTktNGM5Ny1iNjQ4LTFmNzBjNGM5ZjdmNCIsImlhdCI6MTc2Njc2NTY4MiwiZXhwIjoxNzY2ODUyMDgyLCJpc3MiOiJodHRwczovL3dpaG5nby5jb20iLCJhdWQiOiJodHRwczovL3dpaG5nby5jb20ifQ.tNXBqx2r_5BdqxmyWdrbz2qGzygxfXvreapbzDSoAyA\" echo \"=== Test: Preflight with 5% platform fee ===\" curl -s -X POST \"http://localhost:5162/api/payments/support/preflight\" -H \"Authorization: Bearer $TOKEN\" -H \"Content-Type: application/json\" -d \"{\"\"birdId\"\":\"\"aaaa1111-0002-0002-0002-000000000002\"\",\"\"supportAmount\"\":10.00,\"\"includePlatformFee\"\":true}\")"
     ]
   }
 }
