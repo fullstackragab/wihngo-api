@@ -95,6 +95,8 @@ public class PaymentsController : ControllerBase
                 Token = request.Token,
                 Chain = request.Chain,
                 AmountCrypto = request.AmountCrypto,
+                PaymentSource = request.PaymentSource,
+                Memo = request.Memo,
                 Confirmations = 0,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
@@ -119,12 +121,14 @@ public class PaymentsController : ControllerBase
                 invoice.State,
                 nameof(InvoicePaymentState.ONCHAIN_CONFIRMING),
                 userId.ToString(),
-                "Payment submitted by user, awaiting blockchain confirmation",
+                $"Payment submitted by user via {request.PaymentSource ?? "unknown"}, awaiting blockchain confirmation",
                 new Dictionary<string, object>
                 {
                     ["txHash"] = request.TxHash,
                     ["chain"] = request.Chain ?? "unknown",
-                    ["payerAddress"] = request.PayerWalletAddress ?? "unknown"
+                    ["payerAddress"] = request.PayerWalletAddress ?? "unknown",
+                    ["paymentSource"] = request.PaymentSource ?? "unknown",
+                    ["memo"] = request.Memo ?? ""
                 });
 
             _logger.LogInformation("Payment submitted for invoice {InvoiceId} with tx hash {TxHash}",
@@ -222,4 +226,12 @@ public class SubmitPaymentRequest
     public string? Token { get; set; }
     public string? Chain { get; set; }
     public decimal? AmountCrypto { get; set; }
+    /// <summary>
+    /// Indicates how the payment was initiated: "manual" or "phantom"
+    /// </summary>
+    public string? PaymentSource { get; set; }
+    /// <summary>
+    /// Memo attached to the transaction for reconciliation (e.g., "WIHNGO:{invoice_id}")
+    /// </summary>
+    public string? Memo { get; set; }
 }
