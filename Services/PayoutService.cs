@@ -20,8 +20,6 @@ namespace Wihngo.Services
         private readonly IPayoutCalculationService _calculationService;
         private readonly IWisePayoutService _wiseService;
         private readonly IPayPalPayoutService _paypalService;
-        private readonly ISolanaPayoutService _solanaService;
-        private readonly IBasePayoutService _baseService;
 
         public PayoutService(
             IDbConnectionFactory dbFactory,
@@ -29,9 +27,7 @@ namespace Wihngo.Services
             IPayoutValidationService validationService,
             IPayoutCalculationService calculationService,
             IWisePayoutService wiseService,
-            IPayPalPayoutService paypalService,
-            ISolanaPayoutService solanaService,
-            IBasePayoutService baseService)
+            IPayPalPayoutService paypalService)
         {
             _dbFactory = dbFactory;
             _logger = logger;
@@ -39,8 +35,6 @@ namespace Wihngo.Services
             _calculationService = calculationService;
             _wiseService = wiseService;
             _paypalService = paypalService;
-            _solanaService = solanaService;
-            _baseService = baseService;
         }
 
         public async Task<PayoutBalanceDto?> GetBalanceAsync(Guid userId)
@@ -551,25 +545,11 @@ namespace Wihngo.Services
                     amount,
                     $"Wihngo earnings payout"),
 
-                PayoutMethodType.UsdcSolana => await _solanaService.ProcessPayoutAsync(
-                    method.WalletAddress!,
-                    amount,
-                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
-
-                PayoutMethodType.EurcSolana => await _solanaService.ProcessPayoutAsync(
-                    method.WalletAddress!,
-                    amount,
-                    "HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr"),
-
-                PayoutMethodType.UsdcBase => await _baseService.ProcessPayoutAsync(
-                    method.WalletAddress!,
-                    amount,
-                    "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
-
-                PayoutMethodType.EurcBase => await _baseService.ProcessPayoutAsync(
-                    method.WalletAddress!,
-                    amount,
-                    "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42"),
+                // Crypto payouts temporarily disabled - use P2P payment system instead
+                PayoutMethodType.UsdcSolana => (false, null, "USDC Solana payouts are temporarily unavailable"),
+                PayoutMethodType.EurcSolana => (false, null, "EURC Solana payouts are temporarily unavailable"),
+                PayoutMethodType.UsdcBase => (false, null, "USDC Base payouts are temporarily unavailable"),
+                PayoutMethodType.EurcBase => (false, null, "EURC Base payouts are temporarily unavailable"),
 
                 _ => (false, null, "Unsupported payment method")
             };

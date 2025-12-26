@@ -15,6 +15,10 @@ using Wihngo.Middleware;
 using Scalar.AspNetCore;
 using Dapper;
 
+// Configure Dapper to map snake_case database columns to PascalCase C# properties
+// This MUST be set before any Dapper queries are executed
+DefaultTypeMap.MatchNamesWithUnderscores = true;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Load local secrets file (not committed to git)

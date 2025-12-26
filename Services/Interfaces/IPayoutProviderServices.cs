@@ -26,26 +26,4 @@ namespace Wihngo.Services.Interfaces
             decimal amount,
             string note);
     }
-
-    /// <summary>
-    /// Solana USDC/EURC payout service
-    /// </summary>
-    public interface ISolanaPayoutService
-    {
-        Task<(bool Success, string? TransactionId, string? Error)> ProcessPayoutAsync(
-            string walletAddress,
-            decimal amount,
-            string tokenMint); // USDC or EURC mint address
-    }
-
-    /// <summary>
-    /// Base USDC/EURC payout service
-    /// </summary>
-    public interface IBasePayoutService
-    {
-        Task<(bool Success, string? TransactionId, string? Error)> ProcessPayoutAsync(
-            string walletAddress,
-            decimal amount,
-            string tokenAddress); // USDC or EURC contract address
-    }
 }
