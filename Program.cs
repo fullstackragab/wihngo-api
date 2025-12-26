@@ -397,6 +397,9 @@ builder.Services.AddScoped<IBirdFollowService, BirdFollowService>();
 builder.Services.AddScoped<IFeedRankingService, FeedRankingService>();
 builder.Services.AddScoped<StoryLanguageBackfillService>();
 
+// Kind Words (Comments) Services
+builder.Services.AddScoped<IKindWordsService, KindWordsService>();
+
 // 📋 HANGFIRE - CONDITIONAL SETUP
 if (isDatabaseAvailable)
 {
