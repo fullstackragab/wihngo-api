@@ -596,13 +596,21 @@ if (app.Environment.IsDevelopment())
 // Map controllers
 app.MapControllers();
 
-// Configure Hangfire Dashboard (if database is available)
+// Configure Hangfire Dashboard and Recurring Jobs (if database is available)
 if (isDatabaseAvailable)
 {
     app.MapHangfireDashboard("/hangfire", new DashboardOptions
     {
         Authorization = new[] { new HangfireAuthorizationFilter() }
     });
+
+    // Register recurring jobs
+    RecurringJob.AddOrUpdate<PaymentConfirmationJob>(
+        "check-pending-payments",
+        job => job.CheckPendingPaymentsAsync(),
+        "*/10 * * * * *"); // Every 10 seconds for payment confirmations
+
+    Console.WriteLine("✅ PaymentConfirmationJob scheduled (every 10 seconds)");
 }
 
 Console.WriteLine("");
