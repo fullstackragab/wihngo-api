@@ -370,3 +370,5 @@ appsettings.*.json
 !appsettings.CryptoLogging.json
 /nul
 nul
+replacements.txt
+appsettings.Secrets.json
