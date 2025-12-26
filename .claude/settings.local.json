@@ -42,7 +42,14 @@
       "Bash(echo:*)",
       "Bash(dotnet ef database update:*)",
       "Bash(cmd /c \"taskkill /F /IM Wihngo.exe\")",
-      "Bash(xargs cat:*)"
+      "Bash(xargs cat:*)",
+      "Bash(npm install:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(npx expo start:*)",
+      "Bash(dir /b \"C:\\\\.net\\\\wihngo-api\\\\*.md\")",
+      "Bash(for file in *.md)",
+      "Bash(do mv \"$file\" docs/)",
+      "Bash(done)"
     ]
   }
 }

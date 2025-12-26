@@ -42,6 +42,14 @@ public class Payment
     [Column("amount_crypto", TypeName = "decimal(20,10)")]
     public decimal? AmountCrypto { get; set; }
 
+    [Column("payment_source")]
+    [MaxLength(20)]
+    public string? PaymentSource { get; set; } // manual, phantom
+
+    [Column("memo")]
+    [MaxLength(255)]
+    public string? Memo { get; set; } // WIHNGO:{invoice_id}
+
     [Column("fiat_value_at_payment", TypeName = "decimal(18,6)")]
     public decimal? FiatValueAtPayment { get; set; }
 
