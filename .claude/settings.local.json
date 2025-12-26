@@ -52,7 +52,10 @@
       "Bash(done)",
       "Bash(git push:*)",
       "Bash(git remote add:*)",
-      "Bash(git commit -m \"$\\(cat <<''EOF''\nMove docs, add secrets file support, update gitignore\n\n- Move .md files to docs folder\n- Add appsettings.Secrets.json support for local development\n- Update .gitignore to exclude secrets and nul file\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nMove docs, add secrets file support, update gitignore\n\n- Move .md files to docs folder\n- Add appsettings.Secrets.json support for local development\n- Update .gitignore to exclude secrets and nul file\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(find:*)",
+      "Bash(dotnet add:*)",
+      "Bash(grep:*)"
     ]
   }
 }

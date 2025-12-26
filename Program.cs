@@ -40,26 +40,15 @@ builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Information);
 builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.None);
 builder.Logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Information);
 
-// ✅ Enable ONLY crypto payment logs
-builder.Logging.AddFilter("Wihngo.Services.CryptoPaymentService", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Services.BlockchainVerificationService", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Controllers.CryptoPaymentsController", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.BackgroundJobs.ExchangeRateUpdateJob", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.BackgroundJobs.PaymentMonitorJob", LogLevel.Information);
-
-// ? Enable on-chain deposit monitoring logs (Solana only)
-builder.Logging.AddFilter("Wihngo.Services.OnChainDepositService", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Services.OnChainDepositBackgroundService", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Services.SolanaBlockchainMonitor", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Controllers.OnChainDepositController", LogLevel.Information);
-
-// ? Enable invoice/payment system logs (Solana only)
-builder.Logging.AddFilter("Wihngo.Services.InvoiceService", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Services.PayPalService", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Services.SolanaListenerService", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Controllers.InvoicesController", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Controllers.PaymentsController", LogLevel.Information);
-builder.Logging.AddFilter("Wihngo.Controllers.WebhooksController", LogLevel.Information);
+// ✅ Enable P2P payment logs (USDC on Solana)
+builder.Logging.AddFilter("Wihngo.Services.P2PPaymentService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.SolanaTransactionService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.WalletService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.LedgerService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.GasSponsorshipService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Controllers.P2PPaymentsController", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Controllers.WalletsController", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.BackgroundJobs.PaymentConfirmationJob", LogLevel.Information);
 
 // ? Enable auth and security logs
 builder.Logging.AddFilter("Wihngo.Controllers.AuthController", LogLevel.Information);
@@ -350,29 +339,17 @@ builder.Services.AddScoped<IAuthEmailService, AuthEmailService>();
 // AWS S3 Media Services
 builder.Services.AddScoped<IS3Service, S3Service>();
 
-// Crypto Payment Services
-builder.Services.AddScoped<ICryptoPaymentService, CryptoPaymentService>();
-builder.Services.AddScoped<IBlockchainService, BlockchainVerificationService>();
-builder.Services.AddScoped<IHdWalletService, HdWalletService>();
-builder.Services.AddScoped<ExchangeRateUpdateJob>();
-builder.Services.AddScoped<PaymentMonitorJob>();
+// P2P Payment Configuration
+builder.Services.Configure<P2PPaymentConfiguration>(builder.Configuration.GetSection("P2PPayment"));
+builder.Services.Configure<SolanaConfig>(builder.Configuration.GetSection("Solana"));
 
-// On-Chain Deposit Services (Solana only)
-builder.Services.AddScoped<IOnChainDepositService, OnChainDepositService>();
-builder.Services.AddScoped<ISolanaBlockchainMonitor, SolanaBlockchainMonitor>();
-builder.Services.AddHostedService<OnChainDepositBackgroundService>();
-
-// Invoice & Payment System Services
-builder.Services.AddScoped<IInvoiceService, InvoiceService>();
-builder.Services.AddScoped<IInvoicePdfService, InvoicePdfService>();
-builder.Services.AddScoped<IInvoiceEmailService, InvoiceEmailService>();
-builder.Services.AddScoped<IPayPalService, PayPalService>();
-builder.Services.AddScoped<IPaymentAuditService, PaymentAuditService>();
-builder.Services.AddScoped<IRefundService, RefundService>();
-builder.Services.AddScoped<ReconciliationJob>();
-
-// Blockchain Listener Services
-builder.Services.AddHostedService<SolanaListenerService>();
+// P2P Payment Services (NEW - USDC on Solana)
+builder.Services.AddScoped<ISolanaTransactionService, SolanaTransactionService>();
+builder.Services.AddScoped<IWalletService, WalletService>();
+builder.Services.AddScoped<ILedgerService, LedgerService>();
+builder.Services.AddScoped<IGasSponsorshipService, GasSponsorshipService>();
+builder.Services.AddScoped<IP2PPaymentService, P2PPaymentService>();
+builder.Services.AddScoped<PaymentConfirmationJob>();
 
 // Notification Services
 builder.Services.AddScoped<INotificationService, NotificationService>();
@@ -383,7 +360,6 @@ builder.Services.AddScoped<DailyDigestJob>();
 builder.Services.AddScoped<PremiumExpiryNotificationJob>();
 
 // Premium Subscription Services
-builder.Services.AddScoped<IPaymentService, PaymentService>();
 builder.Services.AddScoped<IPremiumSubscriptionService, PremiumSubscriptionService>();
 builder.Services.AddScoped<ICharityService, CharityService>();
 builder.Services.AddScoped<CharityAllocationJob>();
@@ -394,8 +370,6 @@ builder.Services.AddScoped<IPayoutValidationService, PayoutValidationService>();
 builder.Services.AddScoped<IPayoutCalculationService, PayoutCalculationService>();
 builder.Services.AddScoped<IWisePayoutService, WisePayoutService>();
 builder.Services.AddScoped<IPayPalPayoutService, PayPalPayoutService>();
-builder.Services.AddScoped<ISolanaPayoutService, SolanaPayoutService>();
-builder.Services.AddScoped<IBasePayoutService, BasePayoutService>();
 builder.Services.AddScoped<MonthlyPayoutJob>();
 
 // Memorial Services

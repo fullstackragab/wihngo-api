@@ -10,18 +10,15 @@ namespace Wihngo.Services
     public class PremiumSubscriptionService : IPremiumSubscriptionService
     {
         private readonly AppDbContext _context;
-        private readonly IPaymentService _paymentService;
         private readonly ICharityService _charityService;
         private readonly ILogger<PremiumSubscriptionService> _logger;
 
         public PremiumSubscriptionService(
             AppDbContext context,
-            IPaymentService paymentService,
             ICharityService charityService,
             ILogger<PremiumSubscriptionService> logger)
         {
             _context = context;
-            _paymentService = paymentService;
             _charityService = charityService;
             _logger = logger;
         }
@@ -42,11 +39,8 @@ namespace Wihngo.Services
             if (existing != null)
                 throw new ArgumentException("Bird already has an active subscription");
 
-            var paymentResult = await _paymentService.ProcessPaymentAsync(request);
-
-            if (!paymentResult.Success)
-                throw new InvalidOperationException($"Payment failed: {paymentResult.ErrorMessage}");
-
+            // TODO: Integrate with new P2P payment system
+            // For now, premium subscriptions are created after payment is confirmed externally
             var startDate = DateTime.UtcNow;
             var periodEnd = request.Plan switch
             {
@@ -64,7 +58,7 @@ namespace Wihngo.Services
                 Status = "active",
                 Plan = request.Plan,
                 Provider = request.Provider,
-                ProviderSubscriptionId = paymentResult.SubscriptionId,
+                ProviderSubscriptionId = null, // Set when payment is confirmed
                 StartedAt = startDate,
                 CurrentPeriodEnd = periodEnd,
                 PriceCents = GetPlanPriceCents(request.Plan),
@@ -126,12 +120,8 @@ namespace Wihngo.Services
             if (subscription.OwnerId != userId)
                 throw new UnauthorizedAccessException("You don't own this subscription");
 
-            if (subscription.Plan != "lifetime" && !string.IsNullOrEmpty(subscription.ProviderSubscriptionId))
-            {
-                await _paymentService.CancelSubscriptionAsync(
-                    subscription.Provider ?? "unknown", 
-                    subscription.ProviderSubscriptionId);
-            }
+            // TODO: Handle external payment provider cancellation if needed
+            // For now, subscription cancellation only updates local state
 
             subscription.Status = "canceled";
             subscription.CanceledAt = DateTime.UtcNow;

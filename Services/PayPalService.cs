@@ -84,16 +84,7 @@ public class PayPalService : IPayPalService
             var response = await _client.Execute(request);
             var result = response.Result<Order>();
 
-            // Update invoice with PayPal order ID
-            var invoice = await _context.Invoices.FirstOrDefaultAsync(i => i.Id == invoiceId);
-            if (invoice != null)
-            {
-                invoice.PayPalOrderId = result.Id;
-                invoice.UpdatedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
-            }
-
-            _logger.LogInformation("Created PayPal order {OrderId} for invoice {InvoiceId}", 
+            _logger.LogInformation("Created PayPal order {OrderId} for reference {ReferenceId}",
                 result.Id, invoiceId);
 
             return result.Id;

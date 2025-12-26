@@ -46,13 +46,7 @@ public static class DatabaseSeeder
             // 7. Seed Notifications
             await SeedNotificationsAsync(context, logger, users);
 
-            // 8. Seed Invoices
-            await SeedInvoicesAsync(context, logger, users);
-
-            // 9. Seed Crypto Payment Requests
-            await SeedCryptoPaymentRequestsAsync(context, logger, users);
-
-            // 10. Seed Payout System Data
+            // 8. Seed Payout System Data
             await SeedPayoutDataAsync(context, logger);
 
             logger.LogInformation("? Database seeding completed successfully!");
@@ -423,118 +417,6 @@ public static class DatabaseSeeder
         logger.LogInformation($"? Seeded {notifications.Count} notifications");
     }
 
-    private static async Task SeedInvoicesAsync(AppDbContext context, ILogger logger, List<User> users)
-    {
-        // Create invoice sequence if it doesn't exist
-        await context.Database.ExecuteSqlRawAsync(@"
-            DO $$ 
-            BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_sequences WHERE schemaname = 'public' AND sequencename = 'wihngo_invoice_seq') THEN
-                    CREATE SEQUENCE wihngo_invoice_seq START 1;
-                END IF;
-            END $$;
-        ");
-
-        if (await context.Invoices.AnyAsync())
-        {
-            logger.LogInformation("??  Invoices already exist, skipping...");
-            return;
-        }
-
-        var invoices = new List<Invoice>();
-        var random = new Random(42);
-
-        for (int i = 0; i < 5; i++)
-        {
-            var user = users[random.Next(users.Count)];
-            var amount = random.Next(10, 201); // $10 to $200
-
-            invoices.Add(new Invoice
-            {
-                Id = Guid.NewGuid(),
-                InvoiceNumber = $"WIH-{1000 + i}",
-                UserId = user.UserId,
-                AmountFiat = amount,
-                FiatCurrency = "USD",
-                State = random.Next(100) < 70 ? "PAID" : "CREATED",
-                ExpiresAt = DateTime.UtcNow.AddDays(random.Next(-10, 10)),
-                IssuedAt = random.Next(100) < 70 ? DateTime.UtcNow.AddDays(-random.Next(0, 5)) : null,
-                CreatedAt = DateTime.UtcNow.AddDays(-random.Next(0, 15)),
-                UpdatedAt = DateTime.UtcNow.AddDays(-random.Next(0, 15))
-            });
-        }
-
-        await context.Invoices.AddRangeAsync(invoices);
-        await context.SaveChangesAsync();
-        logger.LogInformation($"? Seeded {invoices.Count} invoices");
-    }
-
-    private static async Task SeedCryptoPaymentRequestsAsync(AppDbContext context, ILogger logger, List<User> users)
-    {
-        if (await context.CryptoPaymentRequests.AnyAsync())
-        {
-            logger.LogInformation("??  Crypto payment requests already exist, skipping...");
-            return;
-        }
-
-        var requests = new List<CryptoPaymentRequest>();
-        var random = new Random(42);
-        var tokens = await context.SupportedTokens.ToListAsync();
-
-        if (!tokens.Any())
-        {
-            logger.LogWarning("??  No supported tokens found, skipping crypto payment requests");
-            return;
-        }
-
-        for (int i = 0; i < 8; i++)
-        {
-            var user = users[random.Next(users.Count)];
-            var token = tokens[random.Next(tokens.Count)];
-            var amountUsd = random.Next(10, 101);
-            var status = random.Next(100) < 60 ? "completed" : random.Next(100) < 70 ? "pending" : "expired";
-
-            // Generate proper wallet address based on chain
-            string walletAddress;
-            if (token.Chain == "solana")
-            {
-                // Solana addresses are base58 encoded, roughly 44 characters
-                walletAddress = $"{Guid.NewGuid():N}{Guid.NewGuid():N}".Substring(0, 44);
-            }
-            else
-            {
-                // EVM addresses are 42 characters (0x + 40 hex chars)
-                walletAddress = $"0x{Guid.NewGuid():N}{Guid.NewGuid():N}".Substring(0, 42);
-            }
-
-            requests.Add(new CryptoPaymentRequest
-            {
-                Id = Guid.NewGuid(),
-                UserId = user.UserId,
-                AmountUsd = amountUsd,
-                AmountCrypto = amountUsd, // Simplified - would be calculated based on exchange rate
-                Currency = token.TokenSymbol,
-                Network = token.Chain,
-                ExchangeRate = 1.0m,
-                WalletAddress = walletAddress,
-                QrCodeData = $"data:image/png;base64,example{i}",
-                PaymentUri = $"{token.Chain}:{walletAddress}?amount={amountUsd}",
-                RequiredConfirmations = 12,
-                Status = status,
-                Purpose = "support",
-                ExpiresAt = DateTime.UtcNow.AddMinutes(random.Next(-10, 30)),
-                CompletedAt = status == "completed" ? DateTime.UtcNow.AddMinutes(-random.Next(0, 20)) : null,
-                CreatedAt = DateTime.UtcNow.AddHours(-random.Next(0, 48)),
-                UpdatedAt = DateTime.UtcNow.AddHours(-random.Next(0, 48)),
-                Confirmations = status == "completed" ? random.Next(12, 100) : 0
-            });
-        }
-
-        await context.CryptoPaymentRequests.AddRangeAsync(requests);
-        await context.SaveChangesAsync();
-        logger.LogInformation($"? Seeded {requests.Count} crypto payment requests");
-    }
-
     private static async Task SeedPayoutDataAsync(AppDbContext context, ILogger logger)
     {
         if (await context.PayoutMethods.AnyAsync())
@@ -646,7 +528,7 @@ public static class DatabaseSeeder
                     var txCount = random.Next(0, 3);
                     for (int j = 0; j < txCount; j++)
                     {
-                        var amount = random.Next(20, 101); // €20-€100
+                        var amount = random.Next(20, 101); // ï¿½20-ï¿½100
                         var platformFee = amount * 0.05m;
                         var providerFee = methodType == "iban" ? 1.00m : amount * 0.02m;
                         var netAmount = amount - platformFee - providerFee;
