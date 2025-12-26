@@ -17,6 +17,9 @@ using Dapper;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Load local secrets file (not committed to git)
+builder.Configuration.AddJsonFile("appsettings.Secrets.json", optional: true, reloadOnChange: true);
+
 // ========================================
 // 🔧 CRYPTO-ONLY LOGGING CONFIGURATION
 // ========================================
