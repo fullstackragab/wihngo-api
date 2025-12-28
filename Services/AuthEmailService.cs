@@ -1,10 +1,7 @@
 namespace Wihngo.Services
 {
     using System;
-    using System.Net;
-    using System.Net.Mail;
     using System.Threading.Tasks;
-    using Microsoft.Extensions.Configuration;
     using Microsoft.Extensions.Logging;
     using Microsoft.Extensions.Options;
     using SendGrid;
@@ -13,25 +10,40 @@ namespace Wihngo.Services
     using Wihngo.Services.Interfaces;
 
     /// <summary>
-    /// Service for sending authentication-related emails
-    /// Supports both SMTP and SendGrid providers
+    /// Service for sending authentication-related emails via SendGrid
     /// </summary>
     public class AuthEmailService : IAuthEmailService
     {
-        private readonly IConfiguration _configuration;
-        private readonly SmtpConfiguration _smtpConfig;
+        private readonly EmailSettings _emailSettings;
         private readonly ILogger<AuthEmailService> _logger;
+        private readonly SendGridClient? _client;
         private readonly string _frontendUrl;
 
         public AuthEmailService(
-            IConfiguration configuration,
-            IOptions<SmtpConfiguration> smtpConfig,
+            IOptions<EmailSettings> emailSettings,
             ILogger<AuthEmailService> logger)
         {
-            _configuration = configuration;
-            _smtpConfig = smtpConfig.Value;
+            _emailSettings = emailSettings.Value;
             _logger = logger;
-            _frontendUrl = configuration["FrontendUrl"] ?? "https://wihngo.com";
+            _frontendUrl = !string.IsNullOrEmpty(_emailSettings.FrontendUrl)
+                ? _emailSettings.FrontendUrl
+                : "https://wihngo.com";
+
+            _logger.LogInformation("AuthEmailService initialized: FrontendUrl={FrontendUrl}, FromEmail={FromEmail}, HasApiKey={HasApiKey}",
+                _frontendUrl, _emailSettings.FromEmail, !string.IsNullOrEmpty(_emailSettings.ApiKey));
+
+            if (!string.IsNullOrEmpty(_emailSettings.ApiKey))
+            {
+                var options = new SendGridClientOptions { ApiKey = _emailSettings.ApiKey };
+
+                // Set EU data residency if configured
+                if (_emailSettings.DataResidency?.ToLower() == "eu")
+                {
+                    options.SetDataResidency("eu");
+                }
+
+                _client = new SendGridClient(options);
+            }
         }
 
         public async Task SendEmailConfirmationAsync(string email, string name, string confirmationToken)
@@ -60,6 +72,7 @@ The Wihngo Team
 
         public async Task SendPasswordResetAsync(string email, string name, string resetToken)
         {
+            _logger.LogInformation("SendPasswordResetAsync called for {Email}", email);
             var resetUrl = $"{_frontendUrl}/auth/reset-password?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(resetToken)}";
             
             var subject = "Reset Your Wihngo Password";
@@ -146,85 +159,37 @@ The Wihngo Team
 
         private async Task SendEmailAsync(string toEmail, string subject, string htmlBody, string plainTextBody)
         {
+            _logger.LogInformation("SendEmailAsync called: To={Email}, Subject={Subject}, HasClient={HasClient}, HasApiKey={HasApiKey}",
+                toEmail, subject, _client != null, !string.IsNullOrEmpty(_emailSettings.ApiKey));
+
             try
             {
-                // Check if email is configured
-                if (string.IsNullOrEmpty(_smtpConfig.Host) || 
-                    _smtpConfig.Host == "smtp.gmail.com" && _smtpConfig.Username == "your-email@gmail.com")
+                if (_client == null || string.IsNullOrEmpty(_emailSettings.ApiKey))
                 {
-                    _logger.LogWarning("Email service not configured. Email would be sent to {Email}: {Subject}", toEmail, subject);
-                    _logger.LogInformation("Email content: {Body}", plainTextBody);
+                    _logger.LogWarning("Email not configured. Would send to {Email}: {Subject}", toEmail, subject);
                     return;
                 }
 
-                // Use SendGrid if configured
-                if (_smtpConfig.Provider?.Equals("SendGrid", StringComparison.OrdinalIgnoreCase) == true 
-                    && !string.IsNullOrEmpty(_smtpConfig.SendGridApiKey))
+                var from = new EmailAddress(_emailSettings.FromEmail, _emailSettings.FromName);
+                var to = new EmailAddress(toEmail);
+
+                var msg = MailHelper.CreateSingleEmail(from, to, subject, plainTextBody, htmlBody);
+
+                var response = await _client.SendEmailAsync(msg);
+
+                if (response.IsSuccessStatusCode)
                 {
-                    await SendViaSendGridAsync(toEmail, subject, htmlBody, plainTextBody);
+                    _logger.LogInformation("Email sent to {Email}: {Subject}", toEmail, subject);
                 }
                 else
                 {
-                    // Use SMTP
-                    await SendViaSmtpAsync(toEmail, subject, htmlBody, plainTextBody);
+                    var body = await response.Body.ReadAsStringAsync();
+                    _logger.LogError("SendGrid email failed: {StatusCode} - {Body}", response.StatusCode, body);
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to send email to {Email}: {Subject}", toEmail, subject);
-                // Don't throw - we don't want email failures to break the auth flow
-            }
-        }
-
-        private async Task SendViaSmtpAsync(string toEmail, string subject, string htmlBody, string plainTextBody)
-        {
-            using var client = new SmtpClient(_smtpConfig.Host, _smtpConfig.Port)
-            {
-                EnableSsl = _smtpConfig.UseSsl,
-                Credentials = new NetworkCredential(_smtpConfig.Username, _smtpConfig.Password)
-            };
-
-            var message = new MailMessage
-            {
-                From = new MailAddress(_smtpConfig.FromEmail, _smtpConfig.FromName),
-                Subject = subject,
-                Body = htmlBody,
-                IsBodyHtml = true
-            };
-
-            message.To.Add(toEmail);
-
-            // Add plain text alternative
-            var plainView = AlternateView.CreateAlternateViewFromString(plainTextBody, null, "text/plain");
-            var htmlView = AlternateView.CreateAlternateViewFromString(htmlBody, null, "text/html");
-            message.AlternateViews.Add(plainView);
-            message.AlternateViews.Add(htmlView);
-
-            await client.SendMailAsync(message);
-            
-            _logger.LogInformation("Email sent via SMTP to {Email}: {Subject}", toEmail, subject);
-        }
-
-        private async Task SendViaSendGridAsync(string toEmail, string subject, string htmlBody, string plainTextBody)
-        {
-            var client = new SendGridClient(_smtpConfig.SendGridApiKey);
-            
-            var from = new EmailAddress(_smtpConfig.FromEmail, _smtpConfig.FromName);
-            var to = new EmailAddress(toEmail);
-            
-            var msg = MailHelper.CreateSingleEmail(from, to, subject, plainTextBody, htmlBody);
-            
-            var response = await client.SendEmailAsync(msg);
-            
-            if (response.IsSuccessStatusCode)
-            {
-                _logger.LogInformation("Email sent via SendGrid to {Email}: {Subject}", toEmail, subject);
-            }
-            else
-            {
-                var body = await response.Body.ReadAsStringAsync();
-                _logger.LogError("SendGrid email failed: {StatusCode} - {Body}", response.StatusCode, body);
-                throw new Exception($"SendGrid email failed: {response.StatusCode}");
             }
         }
 
@@ -273,7 +238,7 @@ The Wihngo Team
         <div class='footer'>
             <p>If you didn't create a Wihngo account, please ignore this email.</p>
             <p style='margin-top: 15px;'>
-                <a href='{_frontendUrl}'>Visit Wihngo</a> • 
+                <a href='{_frontendUrl}'>Visit Wihngo</a> ï¿½ 
                 <a href='mailto:support@wihngo.com'>Contact Support</a>
             </p>
         </div>
@@ -388,7 +353,7 @@ The Wihngo Team
         <div class='footer'>
             <p>Need help getting started? Check out our <a href='{_frontendUrl}/help'>Help Center</a></p>
             <p style='margin-top: 15px;'>
-                <a href='{_frontendUrl}'>Explore Wihngo</a> • 
+                <a href='{_frontendUrl}'>Explore Wihngo</a> ï¿½ 
                 <a href='mailto:support@wihngo.com'>Contact Support</a>
             </p>
         </div>

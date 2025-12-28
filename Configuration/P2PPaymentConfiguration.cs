@@ -13,6 +13,16 @@ public class P2PPaymentConfiguration
     public string UsdcMintAddress { get; set; } = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
     /// <summary>
+    /// Wihngo treasury wallet public key for receiving optional platform support
+    /// </summary>
+    public string WihngoTreasuryWallet { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Minimum Wihngo support amount in USDC (if user chooses to support)
+    /// </summary>
+    public decimal MinWihngoSupportUsdc { get; set; } = 0.05m;
+
+    /// <summary>
     /// Minutes until a payment intent expires
     /// </summary>
     public int PaymentExpirationMinutes { get; set; } = 15;

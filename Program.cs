@@ -298,6 +298,9 @@ builder.Services.Configure<SmtpConfiguration>(config =>
     logger.LogInformation("  From Email: {FromEmail}", fromEmail);
 });
 
+// Email Settings (SendGrid) - Used by AuthEmailService
+builder.Services.Configure<EmailSettings>(builder.Configuration.GetSection("Email"));
+
 // AWS Configuration - Read from environment variables or appsettings.json
 builder.Services.Configure<AwsConfiguration>(config =>
 {
@@ -338,7 +341,7 @@ builder.Services.AddHttpClient();
 // Auth & Security Services
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IPasswordValidationService, PasswordValidationService>();
-builder.Services.AddScoped<IAuthEmailService, AuthEmailService>();
+builder.Services.AddSingleton<IAuthEmailService, AuthEmailService>();
 
 // AWS S3 Media Services
 builder.Services.AddScoped<IS3Service, S3Service>();

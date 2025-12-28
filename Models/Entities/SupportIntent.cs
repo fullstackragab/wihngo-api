@@ -4,8 +4,13 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace Wihngo.Models.Entities;
 
 /// <summary>
-/// Represents an intent to support (donate to) a bird
-/// Supports both wallet-based and custodial payments
+/// Represents an intent to support (donate to) a bird.
+///
+/// Bird-First Payment Model:
+/// - 100% of bird_amount goes to bird owner (never deducted)
+/// - wihngo_support_amount is optional and additive (minimum $0.05 if > 0)
+/// - Total = bird_amount + wihngo_support_amount
+/// - Two separate on-chain transfers
 /// </summary>
 [Table("support_intents")]
 public class SupportIntent
@@ -23,21 +28,22 @@ public class SupportIntent
     [Column("recipient_user_id")]
     public Guid RecipientUserId { get; set; }
 
-    [Column("support_amount")]
-    public decimal SupportAmount { get; set; }
+    /// <summary>
+    /// Amount going to bird owner (100%, never deducted from)
+    /// </summary>
+    [Column("bird_amount")]
+    public decimal BirdAmount { get; set; }
 
     /// <summary>
-    /// Platform fee (5% of support amount)
+    /// Optional support for Wihngo platform (additive, not deducted from bird amount).
+    /// Minimum $0.05 if provided, can be $0.
     /// </summary>
-    [Column("platform_support_amount")]
-    public decimal PlatformFee { get; set; }
+    [Column("wihngo_support_amount")]
+    public decimal WihngoSupportAmount { get; set; }
 
     /// <summary>
-    /// Platform fee percentage (e.g., 5 for 5%)
+    /// Total amount paid = bird_amount + wihngo_support_amount
     /// </summary>
-    [Column("platform_fee_percent")]
-    public decimal PlatformFeePercent { get; set; } = 5m;
-
     [Column("total_amount")]
     public decimal TotalAmount { get; set; }
 
@@ -53,11 +59,26 @@ public class SupportIntent
     [Column("recipient_wallet_pubkey")]
     public string? RecipientWalletPubkey { get; set; }
 
+    /// <summary>
+    /// Wihngo treasury wallet for receiving optional platform support
+    /// </summary>
+    [Column("wihngo_wallet_pubkey")]
+    public string? WihngoWalletPubkey { get; set; }
+
     [Column("payment_method")]
     public string PaymentMethod { get; set; } = SupportPaymentMethod.Pending;
 
+    /// <summary>
+    /// Solana signature for bird transfer
+    /// </summary>
     [Column("solana_signature")]
     public string? SolanaSignature { get; set; }
+
+    /// <summary>
+    /// Solana signature for Wihngo support transfer (if applicable)
+    /// </summary>
+    [Column("wihngo_solana_signature")]
+    public string? WihngoSolanaSignature { get; set; }
 
     [Column("confirmations")]
     public int Confirmations { get; set; }

@@ -3,12 +3,19 @@ using System.ComponentModel.DataAnnotations;
 namespace Wihngo.Dtos;
 
 // =============================================
-// SUPPORT INTENT - For bird donations (USDC on Solana)
+// SUPPORT INTENT - Bird-First Payment Model
+// =============================================
+//
+// Core Principles:
+// 1. 100% of bird amount goes to bird owner (NEVER deducted)
+// 2. Wihngo support is OPTIONAL and ADDITIVE (not a percentage)
+// 3. Minimum Wihngo support: $0.05 (if > 0)
+// 4. Two separate on-chain transfers
 // =============================================
 
 /// <summary>
 /// Request to create a support intent for a bird.
-/// MVP: Requires connected wallet with sufficient USDC + SOL.
+/// Bird money is sacred - 100% goes to bird owner.
 /// </summary>
 public class CreateSupportIntentRequest
 {
@@ -19,23 +26,25 @@ public class CreateSupportIntentRequest
     public Guid BirdId { get; set; }
 
     /// <summary>
-    /// Amount in USDC to give to the bird owner
+    /// Amount in USDC to give to the bird owner (100% - never deducted from)
     /// </summary>
-    [Required(ErrorMessage = "Support amount is required")]
-    [Range(0.01, 10000, ErrorMessage = "Support amount must be between $0.01 and $10,000")]
-    public decimal SupportAmount { get; set; }
+    [Required(ErrorMessage = "Bird amount is required")]
+    [Range(0.01, 10000, ErrorMessage = "Bird amount must be between $0.01 and $10,000")]
+    public decimal BirdAmount { get; set; }
 
     /// <summary>
-    /// Whether to include platform fee (5% of support amount).
-    /// Default: true. Set to false to send 100% to bird owner.
+    /// Optional support for Wihngo (additive, not deducted from bird amount).
+    /// Default: $0.05 (suggested). Minimum: $0.05 if provided.
+    /// Set to 0 to skip Wihngo support entirely.
     /// </summary>
-    public bool IncludePlatformFee { get; set; } = true;
+    [Range(0, 10000, ErrorMessage = "Wihngo support must be between $0 and $10,000")]
+    public decimal WihngoSupportAmount { get; set; } = 0.05m;
 
     /// <summary>
-    /// Currency - MVP supports USDC only
+    /// Currency - only USDC on Solana supported
     /// </summary>
     [Required(ErrorMessage = "Currency is required")]
-    [RegularExpression("^(USDC)$", ErrorMessage = "MVP only supports USDC")]
+    [RegularExpression("^(USDC)$", ErrorMessage = "Only USDC is supported")]
     public string Currency { get; set; } = "USDC";
 }
 
@@ -49,29 +58,38 @@ public class SupportIntentResponse
     public string BirdName { get; set; } = string.Empty;
     public Guid RecipientUserId { get; set; }
     public string RecipientName { get; set; } = string.Empty;
-    public string? RecipientWalletAddress { get; set; }
 
     /// <summary>
-    /// Amount going to bird owner (USDC)
+    /// Bird owner's wallet address (receives 100% of bird amount)
     /// </summary>
-    public decimal SupportAmount { get; set; }
+    public string? BirdWalletAddress { get; set; }
 
     /// <summary>
-    /// Platform fee (5% of support amount, USDC)
+    /// Wihngo treasury wallet (receives optional support)
     /// </summary>
-    public decimal PlatformFee { get; set; }
+    public string? WihngoWalletAddress { get; set; }
 
     /// <summary>
-    /// Platform fee percentage (e.g., 5 for 5%)
+    /// Amount going to bird owner (100% - never deducted from)
     /// </summary>
-    public decimal PlatformFeePercent { get; set; }
+    public decimal BirdAmount { get; set; }
 
     /// <summary>
-    /// Total USDC user will pay (supportAmount + platformFee + gasFeeUsdc)
+    /// Optional support for Wihngo (additive)
+    /// </summary>
+    public decimal WihngoSupportAmount { get; set; }
+
+    /// <summary>
+    /// Total USDC user will pay (birdAmount + wihngoSupportAmount)
     /// </summary>
     public decimal TotalAmount { get; set; }
 
     public string Currency { get; set; } = "USDC";
+
+    /// <summary>
+    /// USDC mint address on Solana
+    /// </summary>
+    public string UsdcMintAddress { get; set; } = string.Empty;
 
     /// <summary>
     /// Status: pending, awaiting_signature, submitted, confirming, completed, expired, cancelled, failed
@@ -79,19 +97,10 @@ public class SupportIntentResponse
     public string Status { get; set; } = "pending";
 
     /// <summary>
-    /// Base64 encoded unsigned Solana transaction for the user to sign
+    /// Base64 encoded unsigned Solana transaction for the user to sign.
+    /// Contains both transfers (bird + wihngo if applicable).
     /// </summary>
     public string? SerializedTransaction { get; set; }
-
-    /// <summary>
-    /// Whether gas fees are sponsored by platform
-    /// </summary>
-    public bool GasSponsored { get; set; }
-
-    /// <summary>
-    /// Gas sponsorship fee in USDC (if sponsored)
-    /// </summary>
-    public decimal GasFeeUsdc { get; set; }
 
     /// <summary>
     /// When this intent expires
@@ -102,31 +111,35 @@ public class SupportIntentResponse
 }
 
 // =============================================
-// BALANCE CHECK - Before creating intent
+// PREFLIGHT CHECK - Before creating intent
 // =============================================
 
 /// <summary>
-/// Request to check if user can support with given amount
+/// Request to check if user can support a bird with given amounts
 /// </summary>
-public class CheckSupportBalanceRequest
+public class SupportPreflightRequest
 {
     [Required]
     public Guid BirdId { get; set; }
 
+    /// <summary>
+    /// Amount going to bird owner (100%)
+    /// </summary>
     [Required]
     [Range(0.01, 10000)]
-    public decimal SupportAmount { get; set; }
+    public decimal BirdAmount { get; set; }
 
     /// <summary>
-    /// Whether to include platform fee (5% of support amount)
+    /// Optional support for Wihngo. Minimum $0.05 if > 0.
     /// </summary>
-    public bool IncludePlatformFee { get; set; } = true;
+    [Range(0, 10000)]
+    public decimal WihngoSupportAmount { get; set; } = 0.05m;
 }
 
 /// <summary>
-/// Response from balance check
+/// Response from preflight check
 /// </summary>
-public class CheckSupportBalanceResponse
+public class SupportPreflightResponse
 {
     /// <summary>
     /// Whether user can proceed with support
@@ -144,44 +157,29 @@ public class CheckSupportBalanceResponse
     public decimal UsdcBalance { get; set; }
 
     /// <summary>
-    /// User's current SOL balance
+    /// User's current SOL balance (for gas)
     /// </summary>
     public decimal SolBalance { get; set; }
 
     /// <summary>
-    /// Amount going to bird owner
+    /// Amount going to bird owner (100%)
     /// </summary>
-    public decimal SupportAmount { get; set; }
+    public decimal BirdAmount { get; set; }
 
     /// <summary>
-    /// Platform fee (5% of support amount)
+    /// Optional support for Wihngo
     /// </summary>
-    public decimal PlatformFee { get; set; }
+    public decimal WihngoSupportAmount { get; set; }
 
     /// <summary>
-    /// Platform fee percentage (e.g., 5 for 5%)
+    /// Total USDC required (birdAmount + wihngoSupportAmount)
     /// </summary>
-    public decimal PlatformFeePercent { get; set; }
+    public decimal TotalUsdcRequired { get; set; }
 
     /// <summary>
-    /// Total USDC required (support + platformFee + gasFee)
-    /// </summary>
-    public decimal UsdcRequired { get; set; }
-
-    /// <summary>
-    /// Minimum SOL required for gas (if not sponsored)
+    /// Minimum SOL required for gas
     /// </summary>
     public decimal SolRequired { get; set; }
-
-    /// <summary>
-    /// Whether platform will sponsor gas fees
-    /// </summary>
-    public bool GasSponsored { get; set; }
-
-    /// <summary>
-    /// Gas sponsorship fee in USDC
-    /// </summary>
-    public decimal GasFeeUsdc { get; set; }
 
     /// <summary>
     /// Error code if cannot support
@@ -194,7 +192,7 @@ public class CheckSupportBalanceResponse
     public string? Message { get; set; }
 
     /// <summary>
-    /// Recipient info
+    /// Recipient (bird owner) info
     /// </summary>
     public RecipientInfo? Recipient { get; set; }
 
@@ -202,6 +200,16 @@ public class CheckSupportBalanceResponse
     /// Bird info
     /// </summary>
     public BirdSupportInfo? Bird { get; set; }
+
+    /// <summary>
+    /// USDC mint address on Solana
+    /// </summary>
+    public string UsdcMintAddress { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Wihngo treasury wallet address
+    /// </summary>
+    public string WihngoWalletAddress { get; set; } = string.Empty;
 }
 
 public class BirdSupportInfo
@@ -209,6 +217,81 @@ public class BirdSupportInfo
     public Guid BirdId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? ImageUrl { get; set; }
+}
+
+// Note: RecipientInfo is defined in P2PPaymentDtos.cs
+
+// =============================================
+// INDEPENDENT WIHNGO SUPPORT
+// =============================================
+
+/// <summary>
+/// Request to support Wihngo independently (no bird involved)
+/// </summary>
+public class SupportWihngoRequest
+{
+    /// <summary>
+    /// Amount in USDC to support Wihngo
+    /// </summary>
+    [Required(ErrorMessage = "Amount is required")]
+    [Range(0.05, 10000, ErrorMessage = "Support amount must be between $0.05 and $10,000")]
+    public decimal Amount { get; set; }
+}
+
+/// <summary>
+/// Response from creating Wihngo support intent
+/// </summary>
+public class SupportWihngoResponse
+{
+    public Guid IntentId { get; set; }
+    public decimal Amount { get; set; }
+    public string WihngoWalletAddress { get; set; } = string.Empty;
+    public string UsdcMintAddress { get; set; } = string.Empty;
+    public string? SerializedTransaction { get; set; }
+    public string Status { get; set; } = "pending";
+    public DateTime ExpiresAt { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+// =============================================
+// TRANSACTION CONFIRMATION
+// =============================================
+
+/// <summary>
+/// Request to confirm a support transaction
+/// </summary>
+public class ConfirmSupportTransactionRequest
+{
+    /// <summary>
+    /// Support intent ID
+    /// </summary>
+    [Required]
+    public Guid IntentId { get; set; }
+
+    /// <summary>
+    /// Signed transactions from Phantom wallet
+    /// </summary>
+    [Required]
+    public List<TransactionSignature> Transactions { get; set; } = new();
+}
+
+/// <summary>
+/// A transaction signature with its type
+/// </summary>
+public class TransactionSignature
+{
+    /// <summary>
+    /// Type: BIRD or WIHNGO
+    /// </summary>
+    [Required]
+    [RegularExpression("^(BIRD|WIHNGO)$", ErrorMessage = "Type must be BIRD or WIHNGO")]
+    public string Type { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Solana transaction signature
+    /// </summary>
+    [Required]
+    public string Signature { get; set; } = string.Empty;
 }
 
 // =============================================
@@ -236,6 +319,7 @@ public static class SupportIntentErrorCodes
     public const string CannotSupportOwnBird = "CANNOT_SUPPORT_OWN_BIRD";
     public const string InvalidAmount = "INVALID_AMOUNT";
     public const string InvalidCurrency = "INVALID_CURRENCY";
+    public const string WihngoSupportTooLow = "WIHNGO_SUPPORT_TOO_LOW";
 
     // Wallet errors
     public const string WalletRequired = "WALLET_REQUIRED";
@@ -251,3 +335,17 @@ public static class SupportIntentErrorCodes
     public const string TransactionFailed = "TRANSACTION_FAILED";
     public const string InternalError = "INTERNAL_ERROR";
 }
+
+// =============================================
+// TYPE ALIASES FOR BACKWARDS COMPATIBILITY
+// =============================================
+
+/// <summary>
+/// Alias for SupportPreflightRequest (used by P2PPaymentsController)
+/// </summary>
+public class CheckSupportBalanceRequest : SupportPreflightRequest { }
+
+/// <summary>
+/// Alias for SupportPreflightResponse (used by P2PPaymentsController)
+/// </summary>
+public class CheckSupportBalanceResponse : SupportPreflightResponse { }
