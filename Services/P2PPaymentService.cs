@@ -19,6 +19,7 @@ public class P2PPaymentService : IP2PPaymentService
     private readonly IGasSponsorshipService _gasSponsorshipService;
     private readonly ILedgerService _ledgerService;
     private readonly IWalletService _walletService;
+    private readonly IInvoiceEmailService _invoiceEmailService;
     private readonly P2PPaymentConfiguration _config;
     private readonly ILogger<P2PPaymentService> _logger;
 
@@ -28,6 +29,7 @@ public class P2PPaymentService : IP2PPaymentService
         IGasSponsorshipService gasSponsorshipService,
         ILedgerService ledgerService,
         IWalletService walletService,
+        IInvoiceEmailService invoiceEmailService,
         IOptions<P2PPaymentConfiguration> config,
         ILogger<P2PPaymentService> logger)
     {
@@ -36,6 +38,7 @@ public class P2PPaymentService : IP2PPaymentService
         _gasSponsorshipService = gasSponsorshipService;
         _ledgerService = ledgerService;
         _walletService = walletService;
+        _invoiceEmailService = invoiceEmailService;
         _config = config.Value;
         _logger = logger;
     }
@@ -601,22 +604,52 @@ public class P2PPaymentService : IP2PPaymentService
             payment!.Status = PaymentStatus.Completed;
             await _ledgerService.RecordPaymentAsync(payment);
 
-            // Mark as completed
+            // Generate invoice number for compliance records
+            var invoiceNumber = $"WIH-P2P-{DateTime.UtcNow:yyyyMMdd}-{paymentId.ToString()[..8].ToUpper()}";
+
+            // Mark as completed with invoice number
             await conn.ExecuteAsync(
                 @"UPDATE p2p_payments
-                  SET status = @Status, completed_at = @CompletedAt, updated_at = @UpdatedAt
+                  SET status = @Status, completed_at = @CompletedAt, updated_at = @UpdatedAt, invoice_number = @InvoiceNumber
                   WHERE id = @PaymentId",
                 new
                 {
                     Status = PaymentStatus.Completed,
                     CompletedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
+                    InvoiceNumber = invoiceNumber,
                     PaymentId = paymentId
                 });
 
             _logger.LogInformation(
-                "Payment {PaymentId} completed: {Amount} USDC from {Sender} to {Recipient}",
-                paymentId, payment.AmountUsdc, payment.SenderUserId, payment.RecipientUserId);
+                "Payment {PaymentId} completed: {Amount} USDC from {Sender} to {Recipient}, Invoice: {Invoice}",
+                paymentId, payment.AmountUsdc, payment.SenderUserId, payment.RecipientUserId, invoiceNumber);
+
+            // Send invoice email to sender (payer) for compliance
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var sender = await conn.QueryFirstOrDefaultAsync<User>(
+                        "SELECT * FROM users WHERE user_id = @UserId",
+                        new { UserId = payment.SenderUserId });
+
+                    if (sender?.Email != null)
+                    {
+                        await _invoiceEmailService.SendPaymentConfirmationAsync(
+                            sender.Email,
+                            invoiceNumber,
+                            payment.AmountUsdc,
+                            "USDC");
+
+                        _logger.LogInformation("Invoice email sent to {Email} for payment {PaymentId}", sender.Email, paymentId);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to send invoice email for payment {PaymentId}", paymentId);
+                }
+            });
 
             return true;
         }

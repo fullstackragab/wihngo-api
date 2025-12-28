@@ -71,3 +71,18 @@ public class UserWalletsResponse
     public List<WalletResponse> Wallets { get; set; } = new();
     public int Count { get; set; }
 }
+
+// =============================================
+// ON-CHAIN BALANCE (PUBLIC)
+// =============================================
+
+/// <summary>
+/// On-chain balance response for any wallet address
+/// </summary>
+public class OnChainBalanceResponse
+{
+    public string WalletAddress { get; set; } = string.Empty;
+    public decimal SolBalance { get; set; }
+    public decimal UsdcBalance { get; set; }
+    public decimal MinimumSolRequired { get; set; }
+}

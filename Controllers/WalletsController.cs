@@ -16,15 +16,18 @@ public class WalletsController : ControllerBase
 {
     private readonly IWalletService _walletService;
     private readonly ILedgerService _ledgerService;
+    private readonly ISolanaTransactionService _solanaService;
     private readonly ILogger<WalletsController> _logger;
 
     public WalletsController(
         IWalletService walletService,
         ILedgerService ledgerService,
+        ISolanaTransactionService solanaService,
         ILogger<WalletsController> logger)
     {
         _walletService = walletService;
         _ledgerService = ledgerService;
+        _solanaService = solanaService;
         _logger = logger;
     }
 
@@ -168,6 +171,41 @@ public class WalletsController : ControllerBase
         {
             _logger.LogError(ex, "Error getting balance");
             return StatusCode(500, new { error = "An error occurred" });
+        }
+    }
+
+    /// <summary>
+    /// Get on-chain balance for any wallet address (public, no auth required)
+    /// </summary>
+    [HttpGet("{walletAddress}/on-chain-balance")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(OnChainBalanceResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<OnChainBalanceResponse>> GetOnChainBalance(string walletAddress)
+    {
+        try
+        {
+            // Validate wallet address format (Solana base58, 32-44 chars)
+            if (string.IsNullOrEmpty(walletAddress) || walletAddress.Length < 32 || walletAddress.Length > 44)
+            {
+                return BadRequest(new { error = "Invalid wallet address format" });
+            }
+
+            var solBalance = await _solanaService.GetSolBalanceAsync(walletAddress);
+            var usdcBalance = await _solanaService.GetUsdcBalanceAsync(walletAddress);
+
+            return Ok(new OnChainBalanceResponse
+            {
+                WalletAddress = walletAddress,
+                SolBalance = solBalance,
+                UsdcBalance = usdcBalance,
+                MinimumSolRequired = 0.005m
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting on-chain balance for {WalletAddress}", walletAddress);
+            return StatusCode(500, new { error = "Failed to fetch on-chain balance" });
         }
     }
 }

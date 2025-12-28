@@ -78,8 +78,13 @@ namespace Wihngo.Controllers
         }
 
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<BirdSummaryDto>>> Get()
+        public async Task<ActionResult> Get([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
+            // Clamp page size to reasonable limits
+            pageSize = Math.Clamp(pageSize, 1, 100);
+            page = Math.Max(1, page);
+            var offset = (page - 1) * pageSize;
+
             var userId = GetUserIdClaim();
 
             // Get all bird IDs this user has loved (if authenticated)
@@ -91,7 +96,13 @@ namespace Wihngo.Controllers
                 lovedBirdIds = new HashSet<Guid>(lovedIds);
             }
 
-            // Get all birds with activity tracking fields - PostgreSQL returns lowercase column names
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+            // Get total count for pagination
+            var countSql = "SELECT COUNT(*) FROM birds WHERE owner_id IS NOT NULL AND bird_id IS NOT NULL";
+            var totalCount = await connection.ExecuteScalarAsync<int>(countSql);
+
+            // Get paginated birds with activity tracking fields - ordered by most recent activity
             var birdsSql = @"
                 SELECT
                     bird_id,
@@ -105,9 +116,11 @@ namespace Wihngo.Controllers
                     last_activity_at,
                     is_memorial
                 FROM birds
-                WHERE owner_id IS NOT NULL AND bird_id IS NOT NULL";
+                WHERE owner_id IS NOT NULL AND bird_id IS NOT NULL
+                ORDER BY COALESCE(last_activity_at, created_at) DESC
+                LIMIT @PageSize OFFSET @Offset";
 
-            var birds = await _dbFactory.QueryListAsync<dynamic>(birdsSql);
+            var birds = await connection.QueryAsync<dynamic>(birdsSql, new { PageSize = pageSize, Offset = offset });
 
             // Generate download URLs and map to DTOs
             var birdDtos = new List<BirdSummaryDto>();
@@ -164,7 +177,14 @@ namespace Wihngo.Controllers
                 });
             }
 
-            return Ok(birdDtos);
+            // Return paginated response
+            return Ok(new
+            {
+                items = birdDtos,
+                page,
+                pageSize,
+                totalCount
+            });
         }
 
         [HttpGet("{id}")]
