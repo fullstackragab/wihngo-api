@@ -365,10 +365,8 @@ builder.Services.AddScoped<IPushNotificationService, PushNotificationService>();
 builder.Services.AddScoped<IEmailNotificationService, EmailNotificationService>();
 builder.Services.AddScoped<NotificationCleanupJob>();
 builder.Services.AddScoped<DailyDigestJob>();
-builder.Services.AddScoped<PremiumExpiryNotificationJob>();
 
-// Premium Subscription Services
-builder.Services.AddScoped<IPremiumSubscriptionService, PremiumSubscriptionService>();
+// Charity Services (donations to bird charities - separate from premium)
 builder.Services.AddScoped<ICharityService, CharityService>();
 builder.Services.AddScoped<CharityAllocationJob>();
 

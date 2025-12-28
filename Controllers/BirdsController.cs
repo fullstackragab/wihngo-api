@@ -460,18 +460,18 @@ namespace Wihngo.Controllers
                 CreatedAt = DateTime.UtcNow
             };
 
-            // Use Dapper with all required columns
+            // Use Dapper with all required columns (all birds are equal - same media limit)
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
             await connection.ExecuteAsync(@"
                 INSERT INTO birds (
                     bird_id, owner_id, name, species, tagline, description, image_url, created_at,
                     loved_count, supported_count, donation_cents,
-                    is_premium, is_memorial, max_media_count, last_activity_at
+                    is_memorial, max_media_count, last_activity_at
                 )
                 VALUES (
                     @BirdId, @OwnerId, @Name, @Species, @Tagline, @Description, @ImageUrl, @CreatedAt,
                     0, 0, 0,
-                    false, false, 10, @CreatedAt
+                    false, 10, @CreatedAt
                 )",
                 new
                 {
@@ -873,133 +873,12 @@ namespace Wihngo.Controllers
             return CreatedAtAction(nameof(ReportSupportUsage), new { id = id, usageId = usage.UsageId }, dto);
         }
 
+        /// <summary>
+        /// Update QR code URL for a bird (all birds are equal - QR available to all)
+        /// </summary>
         [Authorize]
-        [HttpPost("{id}/premium/subscribe")]
-        public async Task<IActionResult> Subscribe(Guid id)
-        {
-            if (!await EnsureOwner(id)) return Forbid();
-
-            using var connection = await _dbFactory.CreateOpenConnectionAsync();
-
-            // Check for existing active subscription
-            var existingCount = await connection.ExecuteScalarAsync<int>(
-                "SELECT COUNT(*) FROM bird_premium_subscriptions WHERE bird_id = @BirdId AND status = 'active'",
-                new { BirdId = id });
-            
-            if (existingCount > 0) return BadRequest("Already subscribed");
-
-            var userId = GetUserIdClaim().Value;
-            var subscriptionId = Guid.NewGuid();
-            var now = DateTime.UtcNow;
-            var periodEnd = now.AddMonths(1);
-
-            // Insert subscription
-            await connection.ExecuteAsync(@"
-                INSERT INTO bird_premium_subscriptions 
-                    (id, bird_id, owner_id, status, plan, provider, provider_subscription_id, 
-                     price_cents, duration_days, started_at, current_period_end, created_at, updated_at)
-                VALUES (@Id, @BirdId, @OwnerId, @Status, @Plan, @Provider, @ProviderSubscriptionId, 
-                        @PriceCents, @DurationDays, @StartedAt, @CurrentPeriodEnd, @CreatedAt, @UpdatedAt)",
-                new
-                {
-                    Id = subscriptionId,
-                    BirdId = id,
-                    OwnerId = userId,
-                    Status = "active",
-                    Plan = "monthly",
-                    Provider = "local",
-                    ProviderSubscriptionId = Guid.NewGuid().ToString(),
-                    PriceCents = 300,
-                    DurationDays = 30,
-                    StartedAt = now,
-                    CurrentPeriodEnd = periodEnd,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                });
-
-            // Update bird
-            await connection.ExecuteAsync(@"
-                UPDATE birds 
-                SET is_premium = true, 
-                    premium_plan = @Plan, 
-                    premium_expires_at = @ExpiresAt, 
-                    max_media_count = @MaxMediaCount
-                WHERE bird_id = @BirdId",
-                new
-                {
-                    Plan = "monthly",
-                    ExpiresAt = periodEnd,
-                    MaxMediaCount = 20,
-                    BirdId = id
-                });
-
-            return Ok(new { subscriptionId, expiry = periodEnd });
-        }
-
-        [Authorize]
-        [HttpPost("{id}/premium/subscribe/lifetime")]
-        public async Task<IActionResult> PurchaseLifetime(Guid id)
-        {
-            if (!await EnsureOwner(id)) return Forbid();
-
-            using var connection = await _dbFactory.CreateOpenConnectionAsync();
-
-            // Check for existing active subscription
-            var existingCount = await connection.ExecuteScalarAsync<int>(
-                "SELECT COUNT(*) FROM bird_premium_subscriptions WHERE bird_id = @BirdId AND status = 'active'",
-                new { BirdId = id });
-            
-            if (existingCount > 0) return BadRequest("Already subscribed");
-
-            var userId = GetUserIdClaim().Value;
-            var subscriptionId = Guid.NewGuid();
-            var now = DateTime.UtcNow;
-
-            // Insert subscription
-            await connection.ExecuteAsync(@"
-                INSERT INTO bird_premium_subscriptions 
-                    (id, bird_id, owner_id, status, plan, provider, provider_subscription_id, 
-                     price_cents, duration_days, started_at, current_period_end, created_at, updated_at)
-                VALUES (@Id, @BirdId, @OwnerId, @Status, @Plan, @Provider, @ProviderSubscriptionId, 
-                        @PriceCents, @DurationDays, @StartedAt, @CurrentPeriodEnd, @CreatedAt, @UpdatedAt)",
-                new
-                {
-                    Id = subscriptionId,
-                    BirdId = id,
-                    OwnerId = userId,
-                    Status = "active",
-                    Plan = "lifetime",
-                    Provider = "local",
-                    ProviderSubscriptionId = Guid.NewGuid().ToString(),
-                    PriceCents = 7000,
-                    DurationDays = int.MaxValue,
-                    StartedAt = now,
-                    CurrentPeriodEnd = DateTime.MaxValue,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                });
-
-            // Update bird
-            await connection.ExecuteAsync(@"
-                UPDATE birds 
-                SET is_premium = true, 
-                    premium_plan = @Plan, 
-                    premium_expires_at = NULL, 
-                    max_media_count = @MaxMediaCount
-                WHERE bird_id = @BirdId",
-                new
-                {
-                    Plan = "lifetime",
-                    MaxMediaCount = 50,
-                    BirdId = id
-                });
-
-            return Ok(new { subscriptionId, plan = "lifetime" });
-        }
-
-        [Authorize]
-        [HttpPatch("{id}/premium/style")]
-        public async Task<IActionResult> UpdateStyle(Guid id, [FromBody] PremiumStyleDto dto)
+        [HttpPatch("{id}/qr")]
+        public async Task<IActionResult> UpdateQr(Guid id, [FromBody] string qrUrl)
         {
             if (!await EnsureOwner(id)) return Forbid();
 
@@ -1009,49 +888,12 @@ namespace Wihngo.Controllers
             var birdExists = await connection.ExecuteScalarAsync<bool>(
                 "SELECT EXISTS(SELECT 1 FROM birds WHERE bird_id = @BirdId)",
                 new { BirdId = id });
-                
+
             if (!birdExists) return NotFound();
 
-            // Check for active subscription
-            var activeCount = await connection.ExecuteScalarAsync<int>(
-                "SELECT COUNT(*) FROM bird_premium_subscriptions WHERE bird_id = @BirdId AND status = 'active'",
-                new { BirdId = id });
-            
-            if (activeCount == 0) return Forbid("No active subscription");
-
-            var json = JsonSerializer.Serialize(dto);
-            
-            // Update premium style
+            // Update QR code - all birds can have QR codes
             await connection.ExecuteAsync(@"
-                UPDATE birds 
-                SET premium_style_json = @StyleJson
-                WHERE bird_id = @BirdId",
-                new { StyleJson = json, BirdId = id });
-
-            return Ok();
-        }
-
-        [Authorize]
-        [HttpPatch("{id}/premium/qr")]
-        public async Task<IActionResult> UpdateQr(Guid id, [FromBody] string qrUrl)
-        {
-            if (!await EnsureOwner(id)) return Forbid();
-
-            using var connection = await _dbFactory.CreateOpenConnectionAsync();
-
-            // Get bird to check premium status
-            var bird = await connection.QueryFirstOrDefaultAsync<Bird>(
-                "SELECT * FROM birds WHERE bird_id = @BirdId",
-                new { BirdId = id });
-                
-            if (bird == null) return NotFound();
-
-            // Allow qr to be set only if premium
-            if (!bird.IsPremium) return Forbid("Only premium birds can have QR codes");
-
-            // Update QR code
-            await connection.ExecuteAsync(@"
-                UPDATE birds 
+                UPDATE birds
                 SET qr_code_url = @QrUrl
                 WHERE bird_id = @BirdId",
                 new { QrUrl = qrUrl, BirdId = id });

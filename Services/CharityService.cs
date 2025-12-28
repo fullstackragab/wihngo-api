@@ -20,22 +20,18 @@ namespace Wihngo.Services
 
         public async Task<CharityImpactDto> GetBirdCharityImpactAsync(Guid birdId)
         {
-            var allocations = await _context.Set<CharityAllocation>()
-                .Include(a => a.Subscription)
-                .Where(a => a.Subscription != null && a.Subscription.BirdId == birdId)
-                .ToListAsync();
-
-            var totalContributed = allocations.Sum(a => a.Amount);
-            var birdsHelped = allocations.Any() ? 1 : 0;
-            var sheltersSupported = allocations.Count > 0 ? 3 : 0;
-            var conservationProjects = allocations.Count > 0 ? 2 : 0;
+            // With "All birds are equal", charity impact is tracked globally, not per bird
+            // Return platform-wide charity impact
+            var stats = await _context.Set<CharityImpactStats>()
+                .OrderByDescending(s => s.LastUpdated)
+                .FirstOrDefaultAsync();
 
             return new CharityImpactDto
             {
-                TotalContributed = totalContributed,
-                BirdsHelped = birdsHelped,
-                SheltersSupported = sheltersSupported,
-                ConservationProjects = conservationProjects
+                TotalContributed = stats?.TotalContributed ?? 0,
+                BirdsHelped = stats?.BirdsHelped ?? 0,
+                SheltersSupported = stats?.SheltersSupported ?? 0,
+                ConservationProjects = stats?.ConservationProjects ?? 0
             };
         }
 
@@ -65,26 +61,25 @@ namespace Wihngo.Services
                 };
             }
 
-            var totalSubscribers = await _context.BirdPremiumSubscriptions
-                .Where(s => s.Status == "active")
-                .CountAsync();
+            // Count all birds as supporters now (all birds are equal)
+            var totalBirds = await _context.Birds.CountAsync();
 
             return new GlobalCharityImpactDto
             {
                 TotalContributed = stats.TotalContributed,
-                TotalSubscribers = totalSubscribers,
+                TotalSubscribers = totalBirds,
                 BirdsHelped = stats.BirdsHelped,
                 SheltersSupported = stats.SheltersSupported,
                 ConservationProjects = stats.ConservationProjects
             };
         }
 
-        public async Task RecordCharityAllocationAsync(Guid subscriptionId, decimal amount, decimal percentage)
+        public async Task RecordCharityAllocationAsync(Guid sourceId, decimal amount, decimal percentage)
         {
             var allocation = new CharityAllocation
             {
                 Id = Guid.NewGuid(),
-                SubscriptionId = subscriptionId,
+                SourceId = sourceId,
                 CharityName = "Local Bird Shelter Network",
                 Percentage = percentage,
                 Amount = amount,
@@ -94,7 +89,7 @@ namespace Wihngo.Services
             _context.Set<CharityAllocation>().Add(allocation);
             await _context.SaveChangesAsync();
 
-            _logger.LogInformation("Charity allocation recorded: {Amount} for subscription {SubscriptionId}", amount, subscriptionId);
+            _logger.LogInformation("Charity allocation recorded: {Amount} from source {SourceId}", amount, sourceId);
 
             await UpdateGlobalCharityStatsAsync();
         }
@@ -103,9 +98,9 @@ namespace Wihngo.Services
         {
             var totalAllocations = await _context.Set<CharityAllocation>().ToListAsync();
             var totalContributed = totalAllocations.Sum(a => a.Amount);
-            var activeBirds = await _context.BirdPremiumSubscriptions
-                .Where(s => s.Status == "active")
-                .CountAsync();
+
+            // Count all birds (all birds are equal)
+            var totalBirds = await _context.Birds.CountAsync();
 
             var stats = await _context.Set<CharityImpactStats>()
                 .OrderByDescending(s => s.LastUpdated)
@@ -121,7 +116,7 @@ namespace Wihngo.Services
             }
 
             stats.TotalContributed = totalContributed;
-            stats.BirdsHelped = activeBirds;
+            stats.BirdsHelped = totalBirds;
             stats.SheltersSupported = Math.Min(3, (int)(totalContributed / 100));
             stats.ConservationProjects = Math.Min(5, (int)(totalContributed / 200));
             stats.LastUpdated = DateTime.UtcNow;

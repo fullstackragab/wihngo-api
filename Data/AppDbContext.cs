@@ -45,8 +45,6 @@ namespace Wihngo.Data
         public StubDbSet<SupportTransaction> SupportTransactions => new StubDbSet<SupportTransaction>(_dbFactory, "support_transactions", "transaction_id", _logger);
         public StubDbSet<Love> Loves => new StubDbSet<Love>(_dbFactory, "loves", "love_id", _logger);
         public StubDbSet<SupportUsage> SupportUsages => new StubDbSet<SupportUsage>(_dbFactory, "support_usages", "usage_id", _logger);
-        public StubDbSet<BirdPremiumSubscription> BirdPremiumSubscriptions => new StubDbSet<BirdPremiumSubscription>(_dbFactory, "bird_premium_subscriptions", "subscription_id", _logger);
-        public StubDbSet<PremiumStyle> PremiumStyles => new StubDbSet<PremiumStyle>(_dbFactory, "premium_styles", "id", _logger);
         public StubDbSet<CharityAllocation> CharityAllocations => new StubDbSet<CharityAllocation>(_dbFactory, "charity_allocations", "allocation_id", _logger);
         public StubDbSet<CharityImpactStats> CharityImpactStats => new StubDbSet<CharityImpactStats>(_dbFactory, "charity_impact_stats", "id", _logger);
         public StubDbSet<OnChainDeposit> OnChainDeposits => new StubDbSet<OnChainDeposit>(_dbFactory, "onchain_deposits", "id", _logger);

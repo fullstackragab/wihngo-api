@@ -42,10 +42,6 @@ namespace Wihngo.Models
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-        // Premium highlight fields
-        public bool IsHighlighted { get; set; } = false;
-        public int? HighlightOrder { get; set; }
-
         // Like and comment tracking
         public int LikeCount { get; set; } = 0;
         public int CommentCount { get; set; } = 0;

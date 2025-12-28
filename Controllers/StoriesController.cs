@@ -679,8 +679,8 @@
 
             // Insert story using raw SQL with bird_id foreign key
             var insertStorySql = @"
-                INSERT INTO stories (story_id, author_id, bird_id, content, mode, image_url, video_url, audio_url, is_highlighted, created_at, language, country)
-                VALUES (@StoryId, @AuthorId, @BirdId, @Content, @Mode, @ImageUrl, @VideoUrl, @AudioUrl, @IsHighlighted, @CreatedAt, @Language, @Country)";
+                INSERT INTO stories (story_id, author_id, bird_id, content, mode, image_url, video_url, audio_url, created_at, language, country)
+                VALUES (@StoryId, @AuthorId, @BirdId, @Content, @Mode, @ImageUrl, @VideoUrl, @AudioUrl, @CreatedAt, @Language, @Country)";
 
             await connection.ExecuteAsync(insertStorySql, new
             {
@@ -692,7 +692,6 @@
                 ImageUrl = dto.ImageS3Key,
                 VideoUrl = dto.VideoS3Key,
                 AudioUrl = dto.AudioS3Key,
-                IsHighlighted = false, // Regular stories are not highlighted by default
                 CreatedAt = now,
                 Language = detectedLanguage,
                 Country = authorCountry
@@ -784,7 +783,7 @@
 
             // Get story with raw SQL
             var getStorySql = @"
-                SELECT story_id, author_id, bird_id, content, mode, image_url, video_url, audio_url, created_at, is_highlighted, highlight_order
+                SELECT story_id, author_id, bird_id, content, mode, image_url, video_url, audio_url, created_at
                 FROM stories
                 WHERE story_id = @StoryId";
 
@@ -1147,123 +1146,6 @@
             _logger.LogInformation("Story deleted: {StoryId}", id);
 
             return NoContent();
-        }
-
-        [Authorize]
-        [HttpPatch("{id}/highlight")]
-        public async Task<IActionResult> ToggleHighlight(Guid id, [FromBody] StoryHighlightDto dto)
-        {
-            var userId = GetUserIdClaim();
-            if (userId == null) return Unauthorized();
-
-            using var connection = await _dbFactory.CreateOpenConnectionAsync();
-
-            // Get story with bird info using raw SQL - direct relationship
-            var getStoryBirdSql = @"
-                SELECT s.story_id, s.bird_id, s.is_highlighted, s.highlight_order, b.owner_id
-                FROM stories s
-                LEFT JOIN birds b ON s.bird_id = b.bird_id
-                WHERE s.story_id = @StoryId";
-
-            var story = await connection.QueryFirstOrDefaultAsync<dynamic>(getStoryBirdSql, new { StoryId = id });
-
-            if (story == null) return NotFound();
-
-            // Verify story has a bird
-            if (story.bird_id == null)
-            {
-                return BadRequest("Story must have a bird");
-            }
-
-            Guid birdId = (Guid)story.bird_id;
-
-            // Verify user owns the bird
-            if (story.owner_id == null || (Guid)story.owner_id != userId.Value)
-            {
-                return Forbid("You must own the bird in this story");
-            }
-
-            // Check if bird is premium
-            var premiumCheckSql = @"
-                SELECT COUNT(*) 
-                FROM bird_premium_subscriptions 
-                WHERE bird_id = @BirdId AND status = 'active'";
-            var hasPremiumBird = await connection.ExecuteScalarAsync<int>(premiumCheckSql, new { BirdId = birdId }) > 0;
-
-            if (!hasPremiumBird)
-            {
-                return Forbid("The bird in this story must be premium");
-            }
-
-            // When highlighting, enforce a max of 3 highlights per bird
-            if (dto.IsHighlighted)
-            {
-                var countSql = @"
-                    SELECT COUNT(*)
-                    FROM stories
-                    WHERE bird_id = @BirdId AND is_highlighted = true";
-                var count = await connection.ExecuteScalarAsync<int>(countSql, new { BirdId = birdId });
-
-                if (count >= 3)
-                {
-                    return BadRequest($"Maximum of 3 highlights allowed per bird");
-                }
-
-                // If pin requested, set highlight order to 1 and bump others
-                if (dto.PinToProfile)
-                {
-                    var bumpSql = @"
-                        UPDATE stories
-                        SET highlight_order = COALESCE(highlight_order, 1) + 1
-                        WHERE bird_id = @BirdId 
-                          AND is_highlighted = true";
-                    await connection.ExecuteAsync(bumpSql, new { BirdId = birdId });
-
-                    await connection.ExecuteAsync(
-                        "UPDATE stories SET is_highlighted = true, highlight_order = 1 WHERE story_id = @StoryId",
-                        new { StoryId = id });
-                }
-                else
-                {
-                    // set next order - get max for this bird
-                    var ordersSql = @"
-                        SELECT highlight_order
-                        FROM stories
-                        WHERE bird_id = @BirdId 
-                          AND is_highlighted = true 
-                          AND highlight_order IS NOT NULL";
-
-                    var highlightOrders = await connection.QueryAsync<int>(ordersSql, new { BirdId = birdId });
-
-                    int maxOrder = highlightOrders.Any() ? highlightOrders.Max() : 0;
-
-                    await connection.ExecuteAsync(
-                        "UPDATE stories SET is_highlighted = true, highlight_order = @Order WHERE story_id = @StoryId",
-                        new { Order = maxOrder + 1, StoryId = id });
-                }
-            }
-            else
-            {
-                // Clearing highlight, compact orders for this bird
-                if (story.is_highlighted && story.highlight_order != null)
-                {
-                    var currentOrder = (int)story.highlight_order;
-
-                    var compactSql = @"
-                        UPDATE stories
-                        SET highlight_order = highlight_order - 1
-                        WHERE bird_id = @BirdId 
-                          AND is_highlighted = true 
-                          AND highlight_order > @CurrentOrder";
-                    await connection.ExecuteAsync(compactSql, new { BirdId = birdId, CurrentOrder = currentOrder });
-                }
-
-                await connection.ExecuteAsync(
-                    "UPDATE stories SET is_highlighted = false, highlight_order = NULL WHERE story_id = @StoryId",
-                    new { StoryId = id });
-            }
-
-            return Ok();
         }
     }
 }

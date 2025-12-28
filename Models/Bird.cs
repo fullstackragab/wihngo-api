@@ -47,21 +47,7 @@ namespace Wihngo.Models
 
         public List<SupportUsage> SupportUsages { get; set; } = new();
 
-        // Premium fields
-        public bool IsPremium { get; set; } = false;
-
-        // Stored as a simple JSON blob via EF core owned type or string
-        // For simplicity keep as nullable JSON string to avoid additional migration complexity
-        public string? PremiumStyleJson { get; set; }
-
-        // When premium expires (nullable for lifetime)
-        public DateTime? PremiumExpiresAt { get; set; }
-
-        // Plan name such as "monthly", "yearly", "lifetime"
-        [MaxLength(50)]
-        public string? PremiumPlan { get; set; }
-
-        // Allow premium users more media uploads
+        // Maximum media uploads per bird (all birds get same limit now - "All birds are equal")
         public int MaxMediaCount { get; set; } = 5;
 
         // Track donations in cents to avoid floating point issues

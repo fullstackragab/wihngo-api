@@ -4,16 +4,19 @@ namespace Wihngo.Models
     using System.ComponentModel.DataAnnotations;
     using System.ComponentModel.DataAnnotations.Schema;
 
+    /// <summary>
+    /// Tracks charity donations from the platform (e.g., portion of support transactions)
+    /// No longer tied to premium subscriptions - "All birds are equal"
+    /// </summary>
     public class CharityAllocation
     {
         [Key]
         public Guid Id { get; set; } = Guid.NewGuid();
 
-        [Required]
-        public Guid SubscriptionId { get; set; }
-
-        [ForeignKey(nameof(SubscriptionId))]
-        public BirdPremiumSubscription? Subscription { get; set; }
+        /// <summary>
+        /// Optional reference to a support transaction or other source
+        /// </summary>
+        public Guid? SourceId { get; set; }
 
         [Required]
         [MaxLength(255)]
