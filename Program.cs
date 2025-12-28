@@ -355,6 +355,7 @@ builder.Services.AddScoped<ISolanaTransactionService, SolanaTransactionService>(
 builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<ILedgerService, LedgerService>();
 builder.Services.AddScoped<IGasSponsorshipService, GasSponsorshipService>();
+builder.Services.AddScoped<IInvoiceEmailService, InvoiceEmailService>();
 builder.Services.AddScoped<IP2PPaymentService, P2PPaymentService>();
 builder.Services.AddScoped<ISupportIntentService, SupportIntentService>();
 builder.Services.AddScoped<PaymentConfirmationJob>();
