@@ -74,6 +74,18 @@ The Wihngo Team
         {
             _logger.LogInformation("SendPasswordResetAsync called for {Email}", email);
             var resetUrl = $"{_frontendUrl}/auth/reset-password?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(resetToken)}";
+
+            // Debug logging
+            Console.WriteLine("========== PASSWORD RESET EMAIL DEBUG ==========");
+            Console.WriteLine($"To: {email}");
+            Console.WriteLine($"Name: {name}");
+            Console.WriteLine($"Reset Token: {resetToken}");
+            Console.WriteLine($"Reset URL: {resetUrl}");
+            Console.WriteLine($"Frontend URL: {_frontendUrl}");
+            Console.WriteLine($"From Email: {_emailSettings.FromEmail}");
+            Console.WriteLine($"Has API Key: {!string.IsNullOrEmpty(_emailSettings.ApiKey)}");
+            Console.WriteLine($"Has Client: {_client != null}");
+            Console.WriteLine("================================================");
             
             var subject = "Reset Your Wihngo Password";
             var htmlBody = BuildPasswordResetHtml(name, resetUrl);
@@ -167,6 +179,7 @@ The Wihngo Team
                 if (_client == null || string.IsNullOrEmpty(_emailSettings.ApiKey))
                 {
                     _logger.LogWarning("Email not configured. Would send to {Email}: {Subject}", toEmail, subject);
+                    Console.WriteLine($"WARNING: Email not configured! Client null: {_client == null}, API key empty: {string.IsNullOrEmpty(_emailSettings.ApiKey)}");
                     return;
                 }
 
@@ -175,21 +188,35 @@ The Wihngo Team
 
                 var msg = MailHelper.CreateSingleEmail(from, to, subject, plainTextBody, htmlBody);
 
+                // Disable all tracking to preserve original URLs (important for localhost in development)
+                msg.SetClickTracking(false, false);
+                msg.SetOpenTracking(false);
+                msg.SetGoogleAnalytics(false);
+                msg.SetSubscriptionTracking(false);
+
+                Console.WriteLine($"Sending email via SendGrid to: {toEmail}");
                 var response = await _client.SendEmailAsync(msg);
+
+                Console.WriteLine($"SendGrid Response Status: {response.StatusCode}");
+                var responseBody = await response.Body.ReadAsStringAsync();
+                Console.WriteLine($"SendGrid Response Body: {responseBody}");
 
                 if (response.IsSuccessStatusCode)
                 {
                     _logger.LogInformation("Email sent to {Email}: {Subject}", toEmail, subject);
+                    Console.WriteLine($"SUCCESS: Email sent to {toEmail}");
                 }
                 else
                 {
-                    var body = await response.Body.ReadAsStringAsync();
-                    _logger.LogError("SendGrid email failed: {StatusCode} - {Body}", response.StatusCode, body);
+                    _logger.LogError("SendGrid email failed: {StatusCode} - {responseBody}", response.StatusCode, responseBody);
+                    Console.WriteLine($"FAILED: SendGrid returned {response.StatusCode} - {responseBody}");
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to send email to {Email}: {Subject}", toEmail, subject);
+                Console.WriteLine($"EXCEPTION: Failed to send email - {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
             }
         }
 
@@ -274,7 +301,6 @@ The Wihngo Team
 <body>
     <div class='container'>
         <div class='header'>
-            <div class='icon'>??</div>
             <h1>Reset Your Password</h1>
         </div>
         <div class='content'>
@@ -285,10 +311,10 @@ The Wihngo Team
                 <a href='{resetUrl}' class='button'>Reset Password</a>
             </div>
             <div class='warning'>
-                ?? This link will expire in 1 hour for security reasons.
+                <strong>Note:</strong> This link will expire in 1 hour for security reasons.
             </div>
             <div class='security'>
-                ??? <strong>Security Notice:</strong> If you didn't request this password reset, please ignore this email. Your password will remain unchanged.
+                <strong>Security Notice:</strong> If you didn't request this password reset, please ignore this email. Your password will remain unchanged.
             </div>
             <p style='font-size: 14px; color: #666; margin-top: 30px;'>If the button doesn't work, copy and paste this link into your browser:</p>
             <p style='font-size: 12px; word-break: break-all; color: #999;'>{resetUrl}</p>
