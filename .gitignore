@@ -372,3 +372,4 @@ appsettings.*.json
 nul
 replacements.txt
 appsettings.Secrets.json
+.env.production
