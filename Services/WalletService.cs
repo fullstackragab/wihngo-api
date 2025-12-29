@@ -1,4 +1,7 @@
+using System.Text;
 using Dapper;
+using NSec.Cryptography;
+using Solnet.Wallet.Utilities;
 using Wihngo.Data;
 using Wihngo.Dtos;
 using Wihngo.Models.Entities;
@@ -218,9 +221,94 @@ public class WalletService : IWalletService
     /// <inheritdoc />
     public Task<bool> VerifyWalletOwnershipAsync(string publicKey, string signature, string message)
     {
-        // TODO: Implement signature verification using Solnet
-        // For now, we trust the client (Phantom has already verified)
-        _logger.LogWarning("Wallet ownership verification not implemented - trusting client");
-        return Task.FromResult(true);
+        try
+        {
+            // Validate inputs
+            if (string.IsNullOrEmpty(publicKey) || string.IsNullOrEmpty(message) || string.IsNullOrEmpty(signature))
+            {
+                _logger.LogWarning("Wallet ownership verification failed: missing required parameters");
+                return Task.FromResult(false);
+            }
+
+            // Validate public key length (Solana public keys are 32-44 chars in Base58)
+            if (publicKey.Length < 32 || publicKey.Length > 44)
+            {
+                _logger.LogWarning("Wallet ownership verification failed: invalid public key length {Length}", publicKey.Length);
+                return Task.FromResult(false);
+            }
+
+            // Validate signature length (Ed25519 signatures are 64 bytes, ~87-88 chars in Base58)
+            if (signature.Length < 64 || signature.Length > 100)
+            {
+                _logger.LogWarning("Wallet ownership verification failed: invalid signature length {Length}", signature.Length);
+                return Task.FromResult(false);
+            }
+
+            // Decode Base58 public key (32 bytes for Ed25519)
+            byte[] publicKeyBytes;
+            try
+            {
+                publicKeyBytes = Encoders.Base58.DecodeData(publicKey);
+                if (publicKeyBytes.Length != 32)
+                {
+                    _logger.LogWarning("Wallet ownership verification failed: decoded public key is {Length} bytes, expected 32", publicKeyBytes.Length);
+                    return Task.FromResult(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Wallet ownership verification failed: invalid Base58 public key");
+                return Task.FromResult(false);
+            }
+
+            // Decode Base58 signature (64 bytes for Ed25519)
+            byte[] signatureBytes;
+            try
+            {
+                signatureBytes = Encoders.Base58.DecodeData(signature);
+                if (signatureBytes.Length != 64)
+                {
+                    _logger.LogWarning("Wallet ownership verification failed: decoded signature is {Length} bytes, expected 64", signatureBytes.Length);
+                    return Task.FromResult(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Wallet ownership verification failed: invalid Base58 signature");
+                return Task.FromResult(false);
+            }
+
+            // Encode message as UTF-8 bytes
+            var messageBytes = Encoding.UTF8.GetBytes(message);
+
+            // Verify Ed25519 signature using NSec
+            var algorithm = SignatureAlgorithm.Ed25519;
+
+            // Import the public key
+            if (!NSec.Cryptography.PublicKey.TryImport(algorithm, publicKeyBytes, KeyBlobFormat.RawPublicKey, out var nsecPublicKey))
+            {
+                _logger.LogWarning("Wallet ownership verification failed: could not import public key");
+                return Task.FromResult(false);
+            }
+
+            // Verify the signature
+            var isValid = algorithm.Verify(nsecPublicKey, messageBytes, signatureBytes);
+
+            if (isValid)
+            {
+                _logger.LogInformation("Wallet ownership verification successful for public key: {PublicKey}", publicKey);
+            }
+            else
+            {
+                _logger.LogWarning("Wallet ownership verification failed: signature does not match for public key: {PublicKey}", publicKey);
+            }
+
+            return Task.FromResult(isValid);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Wallet ownership verification failed with unexpected error for public key: {PublicKey}", publicKey);
+            return Task.FromResult(false);
+        }
     }
 }

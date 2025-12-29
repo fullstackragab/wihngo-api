@@ -72,7 +72,8 @@
       "Bash(del \"C:\\\\.net\\\\wihngo-api\\\\Controllers\\\\P2PPaymentsController.cs\")",
       "WebFetch(domain:amzn-s3-wihngo-bucket.s3.us-west-2.amazonaws.com)",
       "Bash(PGPASSWORD=***REMOVED*** psql:*)",
-      "Bash(del \"C:\\\\.net\\\\wihngo-api\\\\Services\\\\InvoiceEmailService.cs\")"
+      "Bash(del \"C:\\\\.net\\\\wihngo-api\\\\Services\\\\InvoiceEmailService.cs\")",
+      "Bash(where:*)"
     ]
   }
 }

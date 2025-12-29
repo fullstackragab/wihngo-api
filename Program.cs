@@ -359,7 +359,12 @@ builder.Services.AddScoped<ILedgerService, LedgerService>();
 builder.Services.AddScoped<IGasSponsorshipService, GasSponsorshipService>();
 builder.Services.AddScoped<IP2PPaymentService, P2PPaymentService>();
 builder.Services.AddScoped<ISupportIntentService, SupportIntentService>();
+builder.Services.AddScoped<IWalletConnectIntentService, WalletConnectIntentService>();
 builder.Services.AddScoped<PaymentConfirmationJob>();
+
+// Add logging for wallet connect service
+builder.Logging.AddFilter("Wihngo.Services.WalletConnectIntentService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Controllers.WalletConnectController", LogLevel.Information);
 
 // Notification Services
 builder.Services.AddScoped<INotificationService, NotificationService>();
