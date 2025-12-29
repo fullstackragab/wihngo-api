@@ -19,19 +19,22 @@ namespace Wihngo.Services
         private readonly INotificationService _notificationService;
         private readonly IS3Service _s3Service;
         private readonly IContentModerationService _moderationService;
+        private readonly IMemorialEmailService _memorialEmailService;
 
         public MemorialService(
             IDbConnectionFactory dbFactory,
             ILogger<MemorialService> logger,
             INotificationService notificationService,
             IS3Service s3Service,
-            IContentModerationService moderationService)
+            IContentModerationService moderationService,
+            IMemorialEmailService memorialEmailService)
         {
             _dbFactory = dbFactory;
             _logger = logger;
             _notificationService = notificationService;
             _s3Service = s3Service;
             _moderationService = moderationService;
+            _memorialEmailService = memorialEmailService;
         }
 
         public async Task<MarkMemorialResponseDto> MarkBirdAsMemorialAsync(Guid birdId, Guid ownerId, MemorialRequestDto request)
@@ -526,32 +529,81 @@ namespace Wihngo.Services
         {
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
 
-            // Get all supporters (users who donated or loved the bird)
-            var supporters = await connection.QueryAsync<Guid>(@"
-                SELECT DISTINCT user_id FROM (
-                    SELECT supporter_id as user_id FROM support_transactions WHERE bird_id = @BirdId
-                    UNION
-                    SELECT user_id FROM loves WHERE bird_id = @BirdId
-                ) AS supporters
-                WHERE user_id != @OwnerId",
-                new { BirdId = birdId, OwnerId = ownerId });
+            // Get bird details for email
+            var bird = await connection.QueryFirstOrDefaultAsync<dynamic>(@"
+                SELECT bird_id, name, image_url, memorial_date, memorial_reason
+                FROM birds WHERE bird_id = @BirdId",
+                new { BirdId = birdId });
 
-            // Send notification to each supporter
-            foreach (var supporterId in supporters)
+            string? birdImageUrl = null;
+            if (bird != null && !string.IsNullOrWhiteSpace(bird.image_url as string))
             {
                 try
                 {
+                    birdImageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.image_url);
+                }
+                catch { }
+            }
+
+            // Get all supporters with their details (users who donated or loved the bird)
+            var supporters = await connection.QueryAsync<dynamic>(@"
+                SELECT DISTINCT u.user_id, u.email, u.name, u.language_code,
+                    COALESCE(st.total_supported, 0) as total_supported
+                FROM (
+                    SELECT supporter_id as user_id FROM support_transactions WHERE bird_id = @BirdId
+                    UNION
+                    SELECT user_id FROM loves WHERE bird_id = @BirdId
+                ) AS s
+                JOIN users u ON s.user_id = u.user_id
+                LEFT JOIN (
+                    SELECT supporter_id, SUM(amount) as total_supported
+                    FROM support_transactions
+                    WHERE bird_id = @BirdId
+                    GROUP BY supporter_id
+                ) st ON st.supporter_id = u.user_id
+                WHERE u.user_id != @OwnerId",
+                new { BirdId = birdId, OwnerId = ownerId });
+
+            // Send notification and email to each supporter
+            foreach (var supporter in supporters)
+            {
+                var supporterId = (Guid)supporter.user_id;
+                var supporterEmail = supporter.email as string;
+                var supporterName = supporter.name as string ?? "Supporter";
+                var languageCode = supporter.language_code as string;
+                var totalSupported = (decimal)(supporter.total_supported ?? 0m);
+
+                try
+                {
+                    // In-app notification
                     await _notificationService.CreateNotificationAsync(new CreateNotificationDto
                     {
                         UserId = supporterId,
                         Type = Models.Enums.NotificationType.BirdMemorial,
-                        Title = $"??? Remembering {birdName}",
+                        Title = $"In Loving Memory: {birdName}",
                         Message = $"We're writing to let you know that {birdName}, a bird you supported, has passed away. You can visit their memorial page to share memories.",
                         Priority = Models.Enums.NotificationPriority.High,
-                        Channels = Models.Enums.NotificationChannel.InApp | Models.Enums.NotificationChannel.Email,
+                        Channels = Models.Enums.NotificationChannel.InApp,
                         DeepLink = $"/birds/{birdId}/memorial",
                         BirdId = birdId
                     });
+
+                    // Send gentle memorial email
+                    if (!string.IsNullOrWhiteSpace(supporterEmail))
+                    {
+                        await _memorialEmailService.SendMemorialNotificationAsync(new MemorialNotificationDto
+                        {
+                            SupporterEmail = supporterEmail,
+                            SupporterName = supporterName,
+                            BirdName = birdName,
+                            BirdImageUrl = birdImageUrl,
+                            MemorialDate = bird?.memorial_date as DateTime?,
+                            MemorialReason = bird?.memorial_reason as string,
+                            BirdId = birdId,
+                            TotalSupportGiven = totalSupported,
+                            Language = languageCode
+                        });
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -559,7 +611,7 @@ namespace Wihngo.Services
                 }
             }
 
-            _logger.LogInformation("Memorial notifications sent for bird {BirdId} to {Count} supporters",
+            _logger.LogInformation("Memorial notifications and emails sent for bird {BirdId} to {Count} supporters",
                 birdId, supporters.Count());
         }
     }
