@@ -342,6 +342,7 @@ builder.Services.AddHttpClient();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IPasswordValidationService, PasswordValidationService>();
 builder.Services.AddSingleton<IAuthEmailService, AuthEmailService>();
+builder.Services.AddSingleton<ISupportConfirmationEmailService, SupportConfirmationEmailService>();
 
 // AWS S3 Media Services
 builder.Services.AddScoped<IS3Service, S3Service>();

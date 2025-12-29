@@ -539,25 +539,36 @@ namespace Wihngo.Controllers
             return CreatedAtAction(nameof(Get), new { id = bird.BirdId }, summary);
         }
 
+        /// <summary>
+        /// Update a bird's profile
+        /// </summary>
+        /// <remarks>
+        /// Upload image first using POST /api/birds/{id}/image, then include the S3 key here.
+        /// </remarks>
         [HttpPut("{id}")]
         [Authorize]
-        public async Task<IActionResult> Put(Guid id, [FromBody] BirdCreateDto dto)
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> Put(Guid id, [FromBody] BirdUpdateDto dto)
         {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
             if (!await EnsureOwner(id)) return Forbid();
 
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
-            
+
             // Get current bird data
             var bird = await connection.QueryFirstOrDefaultAsync<Bird>(
                 "SELECT * FROM birds WHERE bird_id = @BirdId",
                 new { BirdId = id });
-                
+
             if (bird == null) return NotFound();
 
             // Update image if provided and different
             string? imageToDelete = null;
             var newImageUrl = bird.ImageUrl;
-            
+
             if (!string.IsNullOrWhiteSpace(dto.ImageS3Key) && dto.ImageS3Key != bird.ImageUrl)
             {
                 var imageExists = await _s3Service.FileExistsAsync(dto.ImageS3Key);
@@ -579,7 +590,7 @@ namespace Wihngo.Controllers
             var moderationResult = await _moderationService.ModerateBirdProfileAsync(
                 dto.Name,
                 dto.Species,
-                dto.Tagline,
+                null, // tagline not editable in update
                 dto.Description,
                 newImageUrl != bird.ImageUrl ? newImageUrl : null);
 
@@ -595,13 +606,14 @@ namespace Wihngo.Controllers
                 });
             }
 
-            // Update bird with Dapper
+            // Update bird with Dapper (including location and age)
             await connection.ExecuteAsync(@"
                 UPDATE birds
                 SET name = @Name,
                     species = @Species,
                     description = @Description,
-                    tagline = @Tagline,
+                    location = @Location,
+                    age = @Age,
                     image_url = @ImageUrl
                 WHERE bird_id = @BirdId",
                 new
@@ -609,7 +621,8 @@ namespace Wihngo.Controllers
                     Name = dto.Name,
                     Species = dto.Species,
                     Description = dto.Description,
-                    Tagline = dto.Tagline,
+                    Location = dto.Location,
+                    Age = dto.Age,
                     ImageUrl = newImageUrl,
                     BirdId = id
                 });
@@ -626,7 +639,7 @@ namespace Wihngo.Controllers
                     _logger.LogWarning(ex, "Failed to delete old bird image");
                 }
             }
-            
+
             _logger.LogInformation("Bird updated: {BirdId}", id);
 
             // Update bird's last activity timestamp
@@ -965,6 +978,90 @@ namespace Wihngo.Controllers
                     ? "This bird can now receive support"
                     : "Support has been disabled for this bird"
             });
+        }
+
+        /// <summary>
+        /// Upload a profile image for a bird (multipart/form-data)
+        /// </summary>
+        /// <remarks>
+        /// Returns the S3 key and URL for the uploaded image.
+        /// Use the S3 key in PUT /api/birds/{id} to update the bird's profile.
+        /// </remarks>
+        [Authorize]
+        [HttpPost("{id}/image")]
+        [ProducesResponseType(typeof(BirdImageUploadResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<ActionResult<BirdImageUploadResponse>> UploadBirdImage(Guid id, IFormFile file)
+        {
+            if (!await EnsureOwner(id)) return Forbid();
+
+            if (file == null || file.Length == 0)
+            {
+                return BadRequest(new { message = "No file provided" });
+            }
+
+            // Validate file type
+            var allowedTypes = new[] { "image/jpeg", "image/png", "image/gif", "image/webp" };
+            if (!allowedTypes.Contains(file.ContentType.ToLower()))
+            {
+                return BadRequest(new { message = "Invalid file type. Allowed: jpeg, png, gif, webp" });
+            }
+
+            // Validate file size (max 10MB)
+            const long maxSize = 10 * 1024 * 1024;
+            if (file.Length > maxSize)
+            {
+                return BadRequest(new { message = "File too large. Maximum size is 10MB" });
+            }
+
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
+            // Get file extension
+            var extension = Path.GetExtension(file.FileName);
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                extension = file.ContentType switch
+                {
+                    "image/jpeg" => ".jpg",
+                    "image/png" => ".png",
+                    "image/gif" => ".gif",
+                    "image/webp" => ".webp",
+                    _ => ".jpg"
+                };
+            }
+
+            try
+            {
+                // Generate S3 key for bird profile image
+                var (_, s3Key) = await _s3Service.GenerateUploadUrlAsync(
+                    userId.Value,
+                    "bird-profile-image",
+                    extension,
+                    id);
+
+                // Upload file directly to S3
+                using var stream = file.OpenReadStream();
+                await _s3Service.UploadFileAsync(s3Key, stream, file.ContentType);
+
+                // Generate download URL for immediate use
+                var downloadUrl = await _s3Service.GenerateDownloadUrlAsync(s3Key);
+
+                _logger.LogInformation("Bird image uploaded: {S3Key} for bird {BirdId}", s3Key, id);
+
+                return Ok(new BirdImageUploadResponse
+                {
+                    S3Key = s3Key,
+                    Url = downloadUrl
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error uploading bird image for bird {BirdId}", id);
+                return StatusCode(500, new { message = "Failed to upload image" });
+            }
         }
 
         [Authorize]

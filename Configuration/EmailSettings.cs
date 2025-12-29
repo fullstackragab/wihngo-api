@@ -14,4 +14,7 @@ public class EmailSettings
 
     /// <summary>Frontend URL for generating deep links in emails</summary>
     public string FrontendUrl { get; set; } = "https://wihngo.com";
+
+    /// <summary>URL to Wihngo logo for email templates (should be hosted on S3/CDN)</summary>
+    public string LogoUrl { get; set; } = string.Empty;
 }

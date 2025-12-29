@@ -373,13 +373,13 @@ public class SupportIntentService : ISupportIntentService
             UpdatedAt = DateTime.UtcNow
         };
 
-        // Insert intent
+        // Insert intent (support_amount = bird_amount for compatibility with legacy column)
         await conn.ExecuteAsync(
             @"INSERT INTO support_intents
-              (id, supporter_user_id, bird_id, recipient_user_id, bird_amount, wihngo_support_amount,
+              (id, supporter_user_id, bird_id, recipient_user_id, support_amount, bird_amount, wihngo_support_amount,
                total_amount, currency, status, payment_method, sender_wallet_pubkey,
                recipient_wallet_pubkey, wihngo_wallet_pubkey, serialized_transaction, expires_at, created_at, updated_at)
-              VALUES (@Id, @SupporterUserId, @BirdId, @RecipientUserId, @BirdAmount, @WihngoSupportAmount,
+              VALUES (@Id, @SupporterUserId, @BirdId, @RecipientUserId, @BirdAmount, @BirdAmount, @WihngoSupportAmount,
                @TotalAmount, @Currency, @Status, @PaymentMethod, @SenderWalletPubkey,
                @RecipientWalletPubkey, @WihngoWalletPubkey, @SerializedTransaction, @ExpiresAt, @CreatedAt, @UpdatedAt)",
             intent);
@@ -493,10 +493,10 @@ public class SupportIntentService : ISupportIntentService
 
         await conn.ExecuteAsync(
             @"INSERT INTO support_intents
-              (id, supporter_user_id, bird_id, recipient_user_id, bird_amount, wihngo_support_amount,
+              (id, supporter_user_id, bird_id, recipient_user_id, support_amount, bird_amount, wihngo_support_amount,
                total_amount, currency, status, payment_method, sender_wallet_pubkey,
                recipient_wallet_pubkey, wihngo_wallet_pubkey, serialized_transaction, expires_at, created_at, updated_at)
-              VALUES (@Id, @SupporterUserId, @BirdId, @RecipientUserId, @BirdAmount, @WihngoSupportAmount,
+              VALUES (@Id, @SupporterUserId, @BirdId, @RecipientUserId, @BirdAmount, @BirdAmount, @WihngoSupportAmount,
                @TotalAmount, @Currency, @Status, @PaymentMethod, @SenderWalletPubkey,
                @RecipientWalletPubkey, @WihngoWalletPubkey, @SerializedTransaction, @ExpiresAt, @CreatedAt, @UpdatedAt)",
             intent);

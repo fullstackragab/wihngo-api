@@ -109,11 +109,22 @@ public class SolanaTransactionService : ISolanaTransactionService
                 transactionBuilder.AddInstruction(platformTransferIx);
             }
 
-            // Build the transaction (unsigned)
-            var transaction = transactionBuilder.Build(new List<Account>());
+            // Compile the message to bytes (unsigned - client will sign)
+            var messageBytes = transactionBuilder.CompileMessage();
 
-            // Serialize to base64
-            var serialized = Convert.ToBase64String(transaction);
+            // For an unsigned transaction, we need to create the full transaction format:
+            // [1 byte: num signatures] [64 bytes per signature (empty)] [message bytes]
+            // Since client will sign, we create transaction with 1 empty signature slot
+            var numSignatures = 1; // sender needs to sign
+            var emptySignature = new byte[64]; // placeholder for client signature
+
+            var transactionBytes = new byte[1 + 64 + messageBytes.Length];
+            transactionBytes[0] = (byte)numSignatures;
+            Array.Copy(emptySignature, 0, transactionBytes, 1, 64);
+            Array.Copy(messageBytes, 0, transactionBytes, 65, messageBytes.Length);
+
+            // Serialize to base64 (ready for client to sign)
+            var serialized = Convert.ToBase64String(transactionBytes);
 
             _logger.LogInformation(
                 "Built USDC transfer transaction: {Amount} USDC to {Recipient}, PlatformFee: {Fee} USDC to {Platform}, FeePayer: {FeePayer}",

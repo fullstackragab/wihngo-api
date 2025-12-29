@@ -69,7 +69,8 @@
       "Bash(export PGPASSWORD=postgres:*)",
       "Bash(set:*)",
       "Bash(cmd.exe //c \"taskkill /IM wihngo-api.exe /F\")",
-      "Bash(del \"C:\\\\.net\\\\wihngo-api\\\\Controllers\\\\P2PPaymentsController.cs\")"
+      "Bash(del \"C:\\\\.net\\\\wihngo-api\\\\Controllers\\\\P2PPaymentsController.cs\")",
+      "WebFetch(domain:amzn-s3-wihngo-bucket.s3.us-west-2.amazonaws.com)"
     ]
   }
 }

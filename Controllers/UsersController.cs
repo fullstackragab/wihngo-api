@@ -641,12 +641,14 @@ namespace Wihngo.Controllers
         }
 
         /// <summary>
-        /// Get birds owned by the current authenticated user
-        /// GET /api/users/me/birds
+        /// Get birds owned by the current authenticated user (paginated)
+        /// GET /api/users/me/birds?page=1&pageSize=20
         /// </summary>
         [HttpGet("me/birds")]
         [Authorize]
-        public async Task<ActionResult<IEnumerable<BirdSummaryDto>>> GetMyBirds()
+        public async Task<ActionResult<PagedResult<BirdSummaryDto>>> GetMyBirds(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
         {
             try
             {
@@ -656,10 +658,62 @@ namespace Wihngo.Controllers
                     return Unauthorized(new { message = "Invalid authentication token" });
                 }
 
-                using var connection = await _dbFactory.CreateOpenConnectionAsync();
-                var birds = await GetUserBirdsAsync(connection, userId);
+                // Clamp values
+                page = Math.Max(1, page);
+                pageSize = Math.Clamp(pageSize, 1, 100);
+                var offset = (page - 1) * pageSize;
 
-                _logger.LogInformation("Retrieved {Count} birds for user {UserId}", birds.Count, userId);
+                using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+                // Get total count
+                using var countCmd = connection.CreateCommand();
+                countCmd.CommandText = "SELECT COUNT(*) FROM birds WHERE owner_id = @owner_id";
+                countCmd.Parameters.AddWithValue("owner_id", userId);
+                var totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
+
+                // Get paginated birds
+                var birds = new List<Bird>();
+                using var cmd = connection.CreateCommand();
+                cmd.CommandText = @"
+                    SELECT bird_id, owner_id, name, species, image_url, created_at
+                    FROM birds
+                    WHERE owner_id = @owner_id
+                    ORDER BY created_at DESC
+                    LIMIT @limit OFFSET @offset";
+                cmd.Parameters.AddWithValue("owner_id", userId);
+                cmd.Parameters.AddWithValue("limit", pageSize);
+                cmd.Parameters.AddWithValue("offset", offset);
+
+                using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    var imageS3Key = reader.IsDBNull(4) ? null : reader.GetString(4);
+                    string? imageUrl = null;
+
+                    if (!string.IsNullOrWhiteSpace(imageS3Key))
+                    {
+                        try
+                        {
+                            imageUrl = await _s3Service.GenerateDownloadUrlAsync(imageS3Key);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to generate presigned URL for bird image: {S3Key}", imageS3Key);
+                        }
+                    }
+
+                    birds.Add(new Bird
+                    {
+                        BirdId = reader.GetGuid(0),
+                        OwnerId = reader.GetGuid(1),
+                        Name = reader.GetString(2),
+                        Species = reader.GetString(3),
+                        ImageUrl = imageUrl ?? imageS3Key,
+                        CreatedAt = reader.GetDateTime(5)
+                    });
+                }
+
+                _logger.LogInformation("Retrieved {Count} birds (page {Page}) for user {UserId}", birds.Count, page, userId);
 
                 var birdDtos = _mapper.Map<List<BirdSummaryDto>>(birds);
                 for (int i = 0; i < birdDtos.Count; i++)
@@ -667,7 +721,13 @@ namespace Wihngo.Controllers
                     birdDtos[i].ImageUrl = birds[i].ImageUrl;
                 }
 
-                return Ok(birdDtos);
+                return Ok(new PagedResult<BirdSummaryDto>
+                {
+                    Items = birdDtos,
+                    TotalCount = totalCount,
+                    Page = page,
+                    PageSize = pageSize
+                });
             }
             catch (Exception ex)
             {

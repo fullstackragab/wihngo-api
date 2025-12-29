@@ -29,6 +29,14 @@ namespace Wihngo.Models
         [MaxLength(2000)]
         public string? Description { get; set; }
 
+        [MaxLength(200)]
+        [Column("location")]
+        public string? Location { get; set; }
+
+        [MaxLength(100)]
+        [Column("age")]
+        public string? Age { get; set; }
+
         [Required]
         [MaxLength(1000)]
         public string ImageUrl { get; set; } = string.Empty;
