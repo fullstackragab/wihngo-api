@@ -254,7 +254,7 @@ The Wihngo Team
             <p>Thank you for joining Wihngo! We're excited to have you as part of our community of bird lovers.</p>
             <p>Please confirm your email address to activate your account and start connecting with other bird enthusiasts:</p>
             <div style='text-align: center;'>
-                <a href='{confirmationUrl}' class='button'>Confirm Email Address</a>
+                <a href='{confirmationUrl}' style='display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; margin: 20px 0; font-size: 16px;'>Confirm Email Address</a>
             </div>
             <div class='warning'>
                 ?? This link will expire in 24 hours for security reasons.
@@ -308,7 +308,7 @@ The Wihngo Team
             <p>We received a request to reset your password for your Wihngo account.</p>
             <p>Click the button below to choose a new password:</p>
             <div style='text-align: center;'>
-                <a href='{resetUrl}' class='button'>Reset Password</a>
+                <a href='{resetUrl}' style='display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; margin: 20px 0; font-size: 16px;'>Reset Password</a>
             </div>
             <div class='warning'>
                 <strong>Note:</strong> This link will expire in 1 hour for security reasons.
@@ -373,7 +373,7 @@ The Wihngo Team
                 <li><span class='feature-icon'>??</span> <strong>Support Conservation</strong> - Help protect birds and their habitats</li>
             </ul>
             <div style='text-align: center;'>
-                <a href='{_frontendUrl}/birds/create' class='button'>Create Your First Bird Profile</a>
+                <a href='{_frontendUrl}/birds/create' style='display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; margin: 20px 0; font-size: 16px;'>Create Your First Bird Profile</a>
             </div>
         </div>
         <div class='footer'>
@@ -430,7 +430,7 @@ The Wihngo Team
                 <li>Contact support if you have concerns</li>
             </ul>
             <div style='text-align: center;'>
-                <a href='{_frontendUrl}/auth/forgot-password' class='button'>Reset Password</a>
+                <a href='{_frontendUrl}/auth/forgot-password' style='display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%); color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; margin: 20px 0; font-size: 16px;'>Reset Password</a>
             </div>
         </div>
         <div class='footer'>
@@ -477,7 +477,7 @@ The Wihngo Team
             <p>Your Wihngo account has been automatically unlocked and you can now log in again.</p>
             <p>Your account was temporarily locked due to multiple failed login attempts as a security precaution.</p>
             <div style='text-align: center;'>
-                <a href='{_frontendUrl}/auth/login' class='button'>Log In to Wihngo</a>
+                <a href='{_frontendUrl}/auth/login' style='display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; margin: 20px 0; font-size: 16px;'>Log In to Wihngo</a>
             </div>
             <p><strong>Security Tips:</strong></p>
             <ul>
