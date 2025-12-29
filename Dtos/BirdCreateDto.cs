@@ -26,4 +26,17 @@ namespace Wihngo.Dtos
         [MaxLength(1000)]
         public string ImageS3Key { get; set; } = string.Empty;
     }
+
+    /// <summary>
+    /// DTO for updating bird support settings
+    /// </summary>
+    public class BirdSupportSettingsDto
+    {
+        /// <summary>
+        /// Whether this bird should accept support.
+        /// Note: Owner must also have a wallet configured for support to work.
+        /// </summary>
+        [Required]
+        public bool SupportEnabled { get; set; }
+    }
 }

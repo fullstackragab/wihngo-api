@@ -204,6 +204,29 @@ namespace Wihngo.Services
             }
         }
 
+        public async Task UploadFileAsync(string s3Key, Stream stream, string contentType)
+        {
+            try
+            {
+                var request = new PutObjectRequest
+                {
+                    BucketName = _config.BucketName,
+                    Key = s3Key,
+                    InputStream = stream,
+                    ContentType = contentType
+                };
+
+                await _s3Client.PutObjectAsync(request);
+
+                _logger.LogInformation("Uploaded file to S3 with key {S3Key}", s3Key);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error uploading file to S3 with key {S3Key}", s3Key);
+                throw;
+            }
+        }
+
         private string BuildS3Key(Guid userId, string mediaType, Guid? relatedId, string uniqueId, string extension)
         {
             return mediaType.ToLower() switch

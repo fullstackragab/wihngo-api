@@ -316,6 +316,7 @@ public static class SupportIntentErrorCodes
 {
     public const string BirdNotFound = "BIRD_NOT_FOUND";
     public const string BirdInactive = "BIRD_INACTIVE";
+    public const string SupportNotEnabled = "SUPPORT_NOT_ENABLED";
     public const string CannotSupportOwnBird = "CANNOT_SUPPORT_OWN_BIRD";
     public const string InvalidAmount = "INVALID_AMOUNT";
     public const string InvalidCurrency = "INVALID_CURRENCY";

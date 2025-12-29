@@ -921,6 +921,52 @@ namespace Wihngo.Controllers
             return Ok();
         }
 
+        /// <summary>
+        /// Toggle whether a bird can receive support
+        /// </summary>
+        /// <remarks>
+        /// Bird owners can enable/disable support for their birds.
+        /// When disabled, the bird will not appear in support flows.
+        /// Note: Owner must also have a wallet configured for support to work.
+        /// </remarks>
+        [Authorize]
+        [HttpPatch("{id}/support-settings")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> UpdateSupportSettings(Guid id, [FromBody] BirdSupportSettingsDto dto)
+        {
+            if (!await EnsureOwner(id)) return Forbid();
+
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+            // Check if bird exists
+            var birdExists = await connection.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM birds WHERE bird_id = @BirdId)",
+                new { BirdId = id });
+
+            if (!birdExists) return NotFound();
+
+            // Update support_enabled
+            await connection.ExecuteAsync(@"
+                UPDATE birds
+                SET support_enabled = @SupportEnabled
+                WHERE bird_id = @BirdId",
+                new { dto.SupportEnabled, BirdId = id });
+
+            _logger.LogInformation(
+                "Bird {BirdId} support settings updated: SupportEnabled={SupportEnabled}",
+                id, dto.SupportEnabled);
+
+            return Ok(new {
+                success = true,
+                supportEnabled = dto.SupportEnabled,
+                message = dto.SupportEnabled
+                    ? "This bird can now receive support"
+                    : "Support has been disabled for this bird"
+            });
+        }
+
         [Authorize]
         [HttpPost("{id}/donate")]
         public async Task<IActionResult> DonateToBird(Guid id, [FromBody] long cents)

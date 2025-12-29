@@ -34,5 +34,13 @@ namespace Wihngo.Services.Interfaces
         /// </summary>
         /// <param name="s3Key">S3 key/path of the file</param>
         Task<bool> FileExistsAsync(string s3Key);
+
+        /// <summary>
+        /// Uploads a file directly to S3
+        /// </summary>
+        /// <param name="s3Key">S3 key/path for the file</param>
+        /// <param name="stream">File content stream</param>
+        /// <param name="contentType">MIME type of the file</param>
+        Task UploadFileAsync(string s3Key, Stream stream, string contentType);
     }
 }

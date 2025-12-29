@@ -76,7 +76,7 @@ public class SupportIntentService : ISupportIntentService
 
         // 2. Validate bird
         var bird = await conn.QueryFirstOrDefaultAsync<dynamic>(
-            "SELECT bird_id, owner_id, name, image_url FROM birds WHERE bird_id = @BirdId",
+            "SELECT bird_id, owner_id, name, image_url, support_enabled FROM birds WHERE bird_id = @BirdId",
             new { request.BirdId });
 
         if (bird == null)
@@ -86,6 +86,23 @@ public class SupportIntentService : ISupportIntentService
                 CanSupport = false,
                 ErrorCode = SupportIntentErrorCodes.BirdNotFound,
                 Message = "Bird not found"
+            };
+        }
+
+        // Check if bird is accepting support
+        if (bird.support_enabled == false)
+        {
+            return new SupportPreflightResponse
+            {
+                CanSupport = false,
+                ErrorCode = SupportIntentErrorCodes.SupportNotEnabled,
+                Message = "This bird is not accepting support at the moment",
+                Bird = new BirdSupportInfo
+                {
+                    BirdId = request.BirdId,
+                    Name = bird.name,
+                    ImageUrl = bird.image_url
+                }
             };
         }
 
@@ -107,7 +124,14 @@ public class SupportIntentService : ISupportIntentService
             "SELECT * FROM users WHERE user_id = @UserId",
             new { UserId = recipientUserId });
 
+        Console.WriteLine($"[Preflight] Looking up wallet for recipient: {recipientUserId}");
         var recipientWallet = await _walletService.GetPrimaryWalletAsync(recipientUserId);
+        Console.WriteLine($"[Preflight] Recipient wallet found: {recipientWallet != null}");
+        if (recipientWallet != null)
+        {
+            Console.WriteLine($"[Preflight] Recipient wallet pubkey: {recipientWallet.PublicKey}");
+        }
+
         if (recipientWallet == null)
         {
             return new SupportPreflightResponse
@@ -141,7 +165,8 @@ public class SupportIntentService : ISupportIntentService
                 Recipient = new RecipientInfo
                 {
                     UserId = recipientUserId,
-                    Name = recipient?.Name ?? "Unknown"
+                    Name = recipient?.Name ?? "Unknown",
+                    WalletAddress = recipientWallet.PublicKey
                 },
                 UsdcMintAddress = _config.UsdcMintAddress,
                 WihngoWalletAddress = _config.WihngoTreasuryWallet
@@ -182,6 +207,8 @@ public class SupportIntentService : ISupportIntentService
             errorCode = SupportIntentErrorCodes.InsufficientSol;
             message = $"Insufficient SOL for gas. You have {solBalance:F6} SOL but need {solRequired:F6} SOL";
         }
+
+        Console.WriteLine($"[Preflight] Building SUCCESS response with WalletAddress: {recipientWallet.PublicKey}");
 
         return new SupportPreflightResponse
         {

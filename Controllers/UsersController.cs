@@ -329,8 +329,9 @@ namespace Wihngo.Controllers
 
         /// <summary>
         /// Update authenticated user's profile
-        /// PUT /api/users/profile
+        /// PATCH /api/users/me or PUT /api/users/profile
         /// </summary>
+        [HttpPatch("me")]
         [HttpPut("profile")]
         [Authorize]
         public async Task<ActionResult<UserProfileResponseDto>> UpdateProfile([FromBody] UserUpdateDto dto)
@@ -477,8 +478,9 @@ namespace Wihngo.Controllers
 
         /// <summary>
         /// Get authenticated user's profile
-        /// GET /api/users/profile
+        /// GET /api/users/me or GET /api/users/profile
         /// </summary>
+        [HttpGet("me")]
         [HttpGet("profile")]
         [Authorize]
         public async Task<ActionResult<UserProfileResponseDto>> GetProfile()
@@ -553,6 +555,124 @@ namespace Wihngo.Controllers
             {
                 _logger.LogError(ex, "Error getting profile");
                 return StatusCode(500, new { message = "Failed to get profile. Please try again." });
+            }
+        }
+
+        /// <summary>
+        /// Upload profile image for authenticated user
+        /// POST /api/users/me/profile-image
+        /// </summary>
+        /// <remarks>
+        /// Accepts multipart/form-data with a "file" field containing the image.
+        /// Supported formats: JPEG, PNG, GIF, WebP
+        /// Max file size: 5MB
+        /// Returns the S3 key and full URL for the uploaded image.
+        /// </remarks>
+        [HttpPost("me/profile-image")]
+        [Authorize]
+        [ProducesResponseType(typeof(ProfileImageUploadResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<ActionResult<ProfileImageUploadResponse>> UploadProfileImage(IFormFile file)
+        {
+            try
+            {
+                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                {
+                    return Unauthorized(new { message = "Invalid authentication token" });
+                }
+
+                // Validate file
+                if (file == null || file.Length == 0)
+                {
+                    return BadRequest(new { message = "No file provided" });
+                }
+
+                // Max 5MB
+                const long maxFileSize = 5 * 1024 * 1024;
+                if (file.Length > maxFileSize)
+                {
+                    return BadRequest(new { message = "File size exceeds 5MB limit" });
+                }
+
+                // Validate content type
+                var allowedContentTypes = new[] { "image/jpeg", "image/png", "image/gif", "image/webp" };
+                if (!allowedContentTypes.Contains(file.ContentType.ToLower()))
+                {
+                    return BadRequest(new { message = "Invalid file type. Allowed: JPEG, PNG, GIF, WebP" });
+                }
+
+                // Generate S3 key
+                var extension = Path.GetExtension(file.FileName)?.ToLower() ?? ".jpg";
+                if (string.IsNullOrEmpty(extension) || extension == ".")
+                {
+                    extension = file.ContentType.ToLower() switch
+                    {
+                        "image/jpeg" => ".jpg",
+                        "image/png" => ".png",
+                        "image/gif" => ".gif",
+                        "image/webp" => ".webp",
+                        _ => ".jpg"
+                    };
+                }
+                var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var s3Key = $"users/{userId}/profile-image-{timestamp}{extension}";
+
+                // Upload to S3
+                using var stream = file.OpenReadStream();
+                await _s3Service.UploadFileAsync(s3Key, stream, file.ContentType);
+
+                // Generate download URL
+                var url = await _s3Service.GenerateDownloadUrlAsync(s3Key);
+
+                _logger.LogInformation("Profile image uploaded for user {UserId}: {S3Key}", userId, s3Key);
+
+                return Ok(new ProfileImageUploadResponse
+                {
+                    S3Key = s3Key,
+                    Url = url
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error uploading profile image");
+                return StatusCode(500, new { message = "Failed to upload profile image. Please try again." });
+            }
+        }
+
+        /// <summary>
+        /// Get birds owned by the current authenticated user
+        /// GET /api/users/me/birds
+        /// </summary>
+        [HttpGet("me/birds")]
+        [Authorize]
+        public async Task<ActionResult<IEnumerable<BirdSummaryDto>>> GetMyBirds()
+        {
+            try
+            {
+                var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                {
+                    return Unauthorized(new { message = "Invalid authentication token" });
+                }
+
+                using var connection = await _dbFactory.CreateOpenConnectionAsync();
+                var birds = await GetUserBirdsAsync(connection, userId);
+
+                _logger.LogInformation("Retrieved {Count} birds for user {UserId}", birds.Count, userId);
+
+                var birdDtos = _mapper.Map<List<BirdSummaryDto>>(birds);
+                for (int i = 0; i < birdDtos.Count; i++)
+                {
+                    birdDtos[i].ImageUrl = birds[i].ImageUrl;
+                }
+
+                return Ok(birdDtos);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving birds for current user");
+                return StatusCode(500, new { message = "Failed to retrieve birds. Please try again." });
             }
         }
 

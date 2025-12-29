@@ -7,23 +7,23 @@ using Wihngo.Services.Interfaces;
 namespace Wihngo.Controllers;
 
 /// <summary>
-/// Controller for P2P USDC payments on Solana
+/// Controller for USDC support transactions on Solana
 /// </summary>
 [ApiController]
-[Route("api/payments")]
+[Route("api/support")]
 [Authorize]
-public class P2PPaymentsController : ControllerBase
+public class SupportController : ControllerBase
 {
-    private readonly IP2PPaymentService _paymentService;
+    private readonly IP2PPaymentService _transferService;
     private readonly ISupportIntentService _supportIntentService;
-    private readonly ILogger<P2PPaymentsController> _logger;
+    private readonly ILogger<SupportController> _logger;
 
-    public P2PPaymentsController(
-        IP2PPaymentService paymentService,
+    public SupportController(
+        IP2PPaymentService transferService,
         ISupportIntentService supportIntentService,
-        ILogger<P2PPaymentsController> logger)
+        ILogger<SupportController> logger)
     {
-        _paymentService = paymentService;
+        _transferService = transferService;
         _supportIntentService = supportIntentService;
         _logger = logger;
     }
@@ -39,31 +39,31 @@ public class P2PPaymentsController : ControllerBase
     }
 
     /// <summary>
-    /// Validate a payment before creating intent
+    /// Validate a transfer before creating intent
     /// </summary>
     /// <remarks>
     /// Checks recipient exists, sender has sufficient balance, determines gas sponsorship need.
     /// Call this before creating an intent to show the user accurate fee information.
     /// </remarks>
-    [HttpPost("preflight")]
+    [HttpPost("transfers/preflight")]
     [ProducesResponseType(typeof(PreflightPaymentResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<PreflightPaymentResponse>> PreflightPayment([FromBody] PreflightPaymentRequest request)
+    public async Task<ActionResult<PreflightPaymentResponse>> PreflightTransfer([FromBody] PreflightPaymentRequest request)
     {
         try
         {
             var userId = GetUserId();
-            var result = await _paymentService.PreflightPaymentAsync(userId, request);
+            var result = await _transferService.PreflightPaymentAsync(userId, request);
 
             _logger.LogInformation(
-                "Preflight payment check: User {UserId} -> {RecipientId}, Amount: {Amount}, Valid: {Valid}",
+                "Preflight transfer check: User {UserId} -> {RecipientId}, Amount: {Amount}, Valid: {Valid}",
                 userId, request.RecipientId, request.Amount, result.Valid);
 
             return Ok(result);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in preflight payment");
+            _logger.LogError(ex, "Error in preflight transfer");
             return BadRequest(new PreflightPaymentResponse
             {
                 Valid = false,
@@ -74,84 +74,84 @@ public class P2PPaymentsController : ControllerBase
     }
 
     /// <summary>
-    /// Create a P2P payment intent (requires wallet, recipient user ID)
+    /// Create a P2P transfer intent (requires wallet, recipient user ID)
     /// </summary>
     /// <remarks>
-    /// Creates a payment record and builds an unsigned Solana transaction.
+    /// Creates a transfer record and builds an unsigned Solana transaction.
     /// The client should sign this transaction with Phantom and submit it.
-    /// For bird support/donations, use POST /api/payments/intents instead.
+    /// For bird support, use POST /api/support/intents instead.
     /// </remarks>
-    [HttpPost("p2p-intents")]
+    [HttpPost("transfers")]
     [ProducesResponseType(typeof(PaymentIntentResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<PaymentIntentResponse>> CreatePaymentIntent([FromBody] CreatePaymentIntentRequest request)
+    public async Task<ActionResult<PaymentIntentResponse>> CreateTransferIntent([FromBody] CreatePaymentIntentRequest request)
     {
         try
         {
             var userId = GetUserId();
-            var result = await _paymentService.CreatePaymentIntentAsync(userId, request);
+            var result = await _transferService.CreatePaymentIntentAsync(userId, request);
 
             _logger.LogInformation(
-                "Payment intent created: {PaymentId}, {Amount} USDC from {Sender} to {Recipient}",
+                "Transfer intent created: {TransferId}, {Amount} USDC from {Sender} to {Recipient}",
                 result.PaymentId, result.AmountUsdc, userId, request.RecipientUserId);
 
             return Ok(result);
         }
         catch (InvalidOperationException ex)
         {
-            _logger.LogWarning("Payment intent creation failed: {Message}", ex.Message);
+            _logger.LogWarning("Transfer intent creation failed: {Message}", ex.Message);
             return BadRequest(new { error = ex.Message });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error creating payment intent");
-            return StatusCode(500, new { error = "An error occurred creating the payment" });
+            _logger.LogError(ex, "Error creating transfer intent");
+            return StatusCode(500, new { error = "An error occurred creating the transfer" });
         }
     }
 
     /// <summary>
-    /// Get a P2P payment intent by ID
+    /// Get a P2P transfer intent by ID
     /// </summary>
-    [HttpGet("p2p-intents/{paymentId}")]
+    [HttpGet("transfers/{transferId}")]
     [ProducesResponseType(typeof(PaymentStatusResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<PaymentStatusResponse>> GetPaymentIntent(Guid paymentId)
+    public async Task<ActionResult<PaymentStatusResponse>> GetTransferIntent(Guid transferId)
     {
         try
         {
             var userId = GetUserId();
-            var result = await _paymentService.GetPaymentIntentAsync(paymentId, userId);
+            var result = await _transferService.GetPaymentIntentAsync(transferId, userId);
 
             if (result == null)
             {
-                return NotFound(new { error = "Payment not found" });
+                return NotFound(new { error = "Transfer not found" });
             }
 
             return Ok(result);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting payment intent {PaymentId}", paymentId);
+            _logger.LogError(ex, "Error getting transfer intent {TransferId}", transferId);
             return StatusCode(500, new { error = "An error occurred" });
         }
     }
 
     /// <summary>
-    /// Submit a signed transaction
+    /// Submit a signed transaction for a transfer
     /// </summary>
     /// <remarks>
     /// After the user signs the transaction in Phantom, submit it here.
     /// The backend will submit to Solana and start tracking confirmations.
     /// </remarks>
-    [HttpPost("submit")]
+    [HttpPost("transfers/submit")]
     [ProducesResponseType(typeof(SubmitTransactionResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<SubmitTransactionResponse>> SubmitTransaction([FromBody] SubmitTransactionRequest request)
+    public async Task<ActionResult<SubmitTransactionResponse>> SubmitTransferTransaction([FromBody] SubmitTransactionRequest request)
     {
         try
         {
             var userId = GetUserId();
-            var result = await _paymentService.SubmitSignedTransactionAsync(userId, request);
+            var result = await _transferService.SubmitSignedTransactionAsync(userId, request);
 
             if (result.Status == Models.Entities.PaymentStatus.Failed ||
                 result.Status == Models.Entities.PaymentStatus.Expired)
@@ -160,14 +160,14 @@ public class P2PPaymentsController : ControllerBase
             }
 
             _logger.LogInformation(
-                "Payment {PaymentId} submitted: Signature {Signature}",
+                "Transfer {TransferId} submitted: Signature {Signature}",
                 result.PaymentId, result.SolanaSignature);
 
             return Ok(result);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error submitting transaction for payment {PaymentId}", request.PaymentId);
+            _logger.LogError(ex, "Error submitting transaction for transfer {TransferId}", request.PaymentId);
             return StatusCode(500, new SubmitTransactionResponse
             {
                 PaymentId = request.PaymentId,
@@ -178,66 +178,66 @@ public class P2PPaymentsController : ControllerBase
     }
 
     /// <summary>
-    /// Cancel a pending payment
+    /// Cancel a pending transfer
     /// </summary>
-    [HttpPost("{paymentId}/cancel")]
+    [HttpPost("transfers/{transferId}/cancel")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> CancelPayment(Guid paymentId)
+    public async Task<IActionResult> CancelTransfer(Guid transferId)
     {
         try
         {
             var userId = GetUserId();
-            var result = await _paymentService.CancelPaymentAsync(paymentId, userId);
+            var result = await _transferService.CancelPaymentAsync(transferId, userId);
 
             if (!result)
             {
-                return BadRequest(new { error = "Payment cannot be cancelled. It may already be submitted or completed." });
+                return BadRequest(new { error = "Transfer cannot be cancelled. It may already be submitted or completed." });
             }
 
-            _logger.LogInformation("Payment {PaymentId} cancelled by user {UserId}", paymentId, userId);
-            return Ok(new { success = true, message = "Payment cancelled" });
+            _logger.LogInformation("Transfer {TransferId} cancelled by user {UserId}", transferId, userId);
+            return Ok(new { success = true, message = "Transfer cancelled" });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error cancelling payment {PaymentId}", paymentId);
+            _logger.LogError(ex, "Error cancelling transfer {TransferId}", transferId);
             return StatusCode(500, new { error = "An error occurred" });
         }
     }
 
     /// <summary>
-    /// Get user's payment history
+    /// Get user's transfer history
     /// </summary>
-    [HttpGet]
+    [HttpGet("transfers")]
     [ProducesResponseType(typeof(PagedResult<PaymentSummary>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<PagedResult<PaymentSummary>>> GetPayments(
+    public async Task<ActionResult<PagedResult<PaymentSummary>>> GetTransfers(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20)
     {
         try
         {
             var userId = GetUserId();
-            var result = await _paymentService.GetUserPaymentsAsync(userId, page, pageSize);
+            var result = await _transferService.GetUserPaymentsAsync(userId, page, pageSize);
             return Ok(result);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error getting payments");
+            _logger.LogError(ex, "Error getting transfers");
             return StatusCode(500, new { error = "An error occurred" });
         }
     }
 
     // =============================================
-    // SUPPORT INTENT ENDPOINTS (Bird Donations - USDC on Solana)
-    // MVP: Non-custodial - users pay directly from their wallets
+    // BIRD SUPPORT ENDPOINTS (USDC on Solana)
+    // MVP: Non-custodial - users support directly from their wallets
     // =============================================
 
     /// <summary>
     /// Check if user can support a bird (preflight)
     /// </summary>
     /// <remarks>
-    /// Call this before showing the payment UI. Returns:
+    /// Call this before showing the support UI. Returns:
     /// - Whether user has a connected wallet
     /// - User's USDC and SOL balances
     /// - Whether balances are sufficient
@@ -246,9 +246,9 @@ public class P2PPaymentsController : ControllerBase
     ///
     /// If hasWallet is false, prompt user to connect wallet first.
     /// </remarks>
-    [HttpPost("support/preflight")]
+    [HttpPost("birds/preflight")]
     [ProducesResponseType(typeof(CheckSupportBalanceResponse), StatusCodes.Status200OK)]
-    public async Task<ActionResult<CheckSupportBalanceResponse>> PreflightSupport([FromBody] CheckSupportBalanceRequest request)
+    public async Task<ActionResult<CheckSupportBalanceResponse>> PreflightBirdSupport([FromBody] CheckSupportBalanceRequest request)
     {
         try
         {
@@ -276,7 +276,7 @@ public class P2PPaymentsController : ControllerBase
     /// Returns an unsigned Solana transaction for the user to sign.
     ///
     /// Flow:
-    /// 1. Call POST /preflight to check balances
+    /// 1. Call POST /birds/preflight to check balances
     /// 2. If canSupport=true, call POST /intents
     /// 3. Sign the returned serializedTransaction in wallet
     /// 4. Call POST /intents/{id}/submit with signed transaction
@@ -284,7 +284,7 @@ public class P2PPaymentsController : ControllerBase
     /// Request body:
     /// - birdId: The bird to support (required)
     /// - supportAmount: Amount in USDC to give to bird owner (required)
-    /// - platformSupportAmount: Optional tip to platform in USDC (default 0)
+    /// - platformSupportAmount: Optional contribution to platform in USDC (default 0)
     /// - currency: USDC only for MVP
     /// </remarks>
     [HttpPost("intents")]
@@ -461,7 +461,7 @@ public class P2PPaymentsController : ControllerBase
     /// <summary>
     /// Get user's support history
     /// </summary>
-    [HttpGet("support-history")]
+    [HttpGet("history")]
     [ProducesResponseType(typeof(PagedResult<SupportIntentResponse>), StatusCodes.Status200OK)]
     public async Task<ActionResult<PagedResult<SupportIntentResponse>>> GetSupportHistory(
         [FromQuery] int page = 1,

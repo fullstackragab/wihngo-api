@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Wihngo.Dtos;
 
-public class CreatePaymentRequestDto
+public class CreateSupportRequestDto
 {
     public Guid? BirdId { get; set; }
 
@@ -19,7 +19,7 @@ public class CreatePaymentRequestDto
     public string Network { get; set; } = string.Empty;
 
     [Required]
-    [RegularExpression("^(premium_subscription|donation|purchase)$")]
+    [RegularExpression("^(premium_subscription|contribution|purchase)$")]
     public string Purpose { get; set; } = string.Empty;
 
     [RegularExpression("^(monthly|yearly|lifetime)$")]

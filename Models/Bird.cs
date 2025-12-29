@@ -50,8 +50,12 @@ namespace Wihngo.Models
         // Maximum media uploads per bird (all birds get same limit now - "All birds are equal")
         public int MaxMediaCount { get; set; } = 5;
 
-        // Track donations in cents to avoid floating point issues
+        // Track support amounts in cents to avoid floating point issues
         public long DonationCents { get; set; } = 0;
+
+        // Whether this bird is currently accepting support (controlled by owner)
+        [Column("support_enabled")]
+        public bool SupportEnabled { get; set; } = true;
 
         // Optional QR code URL for offline-to-online profile link
         [MaxLength(1000)]

@@ -143,9 +143,19 @@ public class WalletService : IWalletService
     {
         using var conn = await _dbFactory.CreateOpenConnectionAsync();
 
-        return await conn.QueryFirstOrDefaultAsync<Wallet>(
+        var wallet = await conn.QueryFirstOrDefaultAsync<Wallet>(
             "SELECT * FROM wallets WHERE user_id = @UserId AND is_primary = TRUE",
             new { UserId = userId });
+
+        // Debug logging
+        Console.WriteLine($"[WalletService] GetPrimaryWalletAsync for userId: {userId}");
+        Console.WriteLine($"[WalletService] Wallet found: {wallet != null}");
+        if (wallet != null)
+        {
+            Console.WriteLine($"[WalletService] Wallet PublicKey: {wallet.PublicKey}");
+        }
+
+        return wallet;
     }
 
     /// <inheritdoc />
