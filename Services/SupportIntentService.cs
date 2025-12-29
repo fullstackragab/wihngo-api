@@ -29,7 +29,7 @@ public class SupportIntentService : ISupportIntentService
     private readonly IWalletService _walletService;
     private readonly ISolanaTransactionService _solanaService;
     private readonly ILedgerService _ledgerService;
-    private readonly IInvoiceEmailService _invoiceEmailService;
+    private readonly ISupportConfirmationEmailService _supportConfirmationEmailService;
     private readonly P2PPaymentConfiguration _config;
     private readonly ILogger<SupportIntentService> _logger;
 
@@ -41,7 +41,7 @@ public class SupportIntentService : ISupportIntentService
         IWalletService walletService,
         ISolanaTransactionService solanaService,
         ILedgerService ledgerService,
-        IInvoiceEmailService invoiceEmailService,
+        ISupportConfirmationEmailService supportConfirmationEmailService,
         IOptions<P2PPaymentConfiguration> config,
         ILogger<SupportIntentService> logger)
     {
@@ -49,7 +49,7 @@ public class SupportIntentService : ISupportIntentService
         _walletService = walletService;
         _solanaService = solanaService;
         _ledgerService = ledgerService;
-        _invoiceEmailService = invoiceEmailService;
+        _supportConfirmationEmailService = supportConfirmationEmailService;
         _config = config.Value;
         _logger = logger;
     }
@@ -643,50 +643,59 @@ public class SupportIntentService : ISupportIntentService
                     new { intent.BirdId });
             }
 
-            // Generate invoice number for compliance records
-            var invoiceNumber = $"WIH-SUP-{DateTime.UtcNow:yyyyMMdd}-{intentId.ToString()[..8].ToUpper()}";
-
-            // Mark as completed with invoice number
+            // Mark as completed
             await conn.ExecuteAsync(
                 @"UPDATE support_intents
-                  SET status = @Status, completed_at = @CompletedAt, updated_at = @UpdatedAt, invoice_number = @InvoiceNumber
+                  SET status = @Status, completed_at = @CompletedAt, updated_at = @UpdatedAt
                   WHERE id = @IntentId",
                 new
                 {
                     Status = SupportIntentStatus.Completed,
                     CompletedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
-                    InvoiceNumber = invoiceNumber,
                     IntentId = intentId
                 });
 
             _logger.LogInformation(
-                "Support intent {IntentId} completed: BirdAmount={BirdAmount} USDC (100% to owner), WihngoSupport={WihngoSupport} USDC, Invoice: {Invoice}",
-                intentId, intent.BirdAmount, intent.WihngoSupportAmount, invoiceNumber);
+                "Support intent {IntentId} completed: BirdAmount={BirdAmount} USDC (100% to owner), WihngoSupport={WihngoSupport} USDC",
+                intentId, intent.BirdAmount, intent.WihngoSupportAmount);
 
-            // Send invoice email to supporter (payer) for compliance
+            // Send support confirmation email to supporter
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    var supporter = await conn.QueryFirstOrDefaultAsync<User>(
+                    using var emailConn = await _dbFactory.CreateOpenConnectionAsync();
+
+                    var supporter = await emailConn.QueryFirstOrDefaultAsync<User>(
                         "SELECT * FROM users WHERE user_id = @UserId",
                         new { UserId = intent.SupporterUserId });
 
-                    if (supporter?.Email != null)
-                    {
-                        await _invoiceEmailService.SendPaymentConfirmationAsync(
-                            supporter.Email,
-                            invoiceNumber,
-                            intent.TotalAmount,
-                            "USDC");
+                    var bird = await emailConn.QueryFirstOrDefaultAsync<dynamic>(
+                        "SELECT name, image_url FROM birds WHERE bird_id = @BirdId",
+                        new { intent.BirdId });
 
-                        _logger.LogInformation("Invoice email sent to {Email} for support intent {IntentId}", supporter.Email, intentId);
+                    if (supporter?.Email != null && bird != null)
+                    {
+                        await _supportConfirmationEmailService.SendSupportConfirmationAsync(new SupportConfirmationDto
+                        {
+                            SupporterEmail = supporter.Email,
+                            SupporterName = supporter.Name ?? "Supporter",
+                            BirdName = bird.name ?? "Bird",
+                            BirdImageUrl = bird.image_url,
+                            BirdAmount = intent.BirdAmount,
+                            WihngoAmount = intent.WihngoSupportAmount > 0 ? intent.WihngoSupportAmount : null,
+                            TotalAmount = intent.TotalAmount,
+                            TransactionDateTime = DateTime.UtcNow,
+                            TransactionHash = intent.SolanaSignature ?? intentId.ToString()
+                        });
+
+                        _logger.LogInformation("Support confirmation email sent to {Email} for intent {IntentId}", supporter.Email, intentId);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to send invoice email for support intent {IntentId}", intentId);
+                    _logger.LogError(ex, "Failed to send support confirmation email for intent {IntentId}", intentId);
                 }
             });
 
