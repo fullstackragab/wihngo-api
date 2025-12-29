@@ -434,18 +434,14 @@ namespace Wihngo.Controllers
             var userId = GetUserIdClaim();
             if (userId == null) return Unauthorized();
 
-            // Validate S3 key
-            if (string.IsNullOrWhiteSpace(dto.ImageS3Key))
+            // Validate S3 key if provided
+            if (!string.IsNullOrWhiteSpace(dto.ImageS3Key))
             {
-                return BadRequest(new { message = "ImageS3Key is required" });
-            }
-
-            // Verify file exists in S3
-            var imageExists = await _s3Service.FileExistsAsync(dto.ImageS3Key);
-
-            if (!imageExists)
-            {
-                return BadRequest(new { message = "Bird profile image not found in S3. Please upload the file first." });
+                var imageExists = await _s3Service.FileExistsAsync(dto.ImageS3Key);
+                if (!imageExists)
+                {
+                    return BadRequest(new { message = "Bird profile image not found in S3. Please upload the file first." });
+                }
             }
 
             // Content moderation check
@@ -476,6 +472,8 @@ namespace Wihngo.Controllers
                 Species = dto.Species,
                 Tagline = dto.Tagline,
                 Description = dto.Description,
+                Location = dto.Location,
+                Age = dto.Age,
                 ImageUrl = dto.ImageS3Key,
                 CreatedAt = DateTime.UtcNow
             };
@@ -484,12 +482,12 @@ namespace Wihngo.Controllers
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
             await connection.ExecuteAsync(@"
                 INSERT INTO birds (
-                    bird_id, owner_id, name, species, tagline, description, image_url, created_at,
+                    bird_id, owner_id, name, species, tagline, description, location, age, image_url, created_at,
                     loved_count, supported_count, donation_cents,
                     is_memorial, max_media_count, last_activity_at
                 )
                 VALUES (
-                    @BirdId, @OwnerId, @Name, @Species, @Tagline, @Description, @ImageUrl, @CreatedAt,
+                    @BirdId, @OwnerId, @Name, @Species, @Tagline, @Description, @Location, @Age, @ImageUrl, @CreatedAt,
                     0, 0, 0,
                     false, 10, @CreatedAt
                 )",
@@ -501,21 +499,26 @@ namespace Wihngo.Controllers
                     bird.Species,
                     bird.Tagline,
                     bird.Description,
+                    bird.Location,
+                    bird.Age,
                     bird.ImageUrl,
                     bird.CreatedAt
                 });
 
             _logger.LogInformation("Bird created: {BirdId} by user {UserId}", bird.BirdId, userId.Value);
 
-            // Generate download URL for response
+            // Generate download URL for response (only if image was provided)
             string? imageUrl = null;
-            try
+            if (!string.IsNullOrWhiteSpace(bird.ImageUrl))
             {
-                imageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.ImageUrl);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to generate download URL for bird {BirdId}", bird.BirdId);
+                try
+                {
+                    imageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.ImageUrl);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to generate download URL for bird {BirdId}", bird.BirdId);
+                }
             }
 
             var summary = new BirdSummaryDto
@@ -1295,30 +1298,6 @@ namespace Wihngo.Controllers
             }
 
             return Ok(new { success = true, message = "Memorial message deleted" });
-        }
-
-        /// <summary>
-        /// Process memorial fund redirection (Admin only)
-        /// POST /api/birds/{id}/memorial/process-funds
-        /// </summary>
-        [Authorize(Roles = "Admin")]
-        [HttpPost("{id}/memorial/process-funds")]
-        public async Task<ActionResult<MemorialFundRedirectionDto>> ProcessMemorialFunds(Guid id)
-        {
-            try
-            {
-                var result = await _memorialService.ProcessFundRedirectionAsync(id);
-                return Ok(new { success = true, redirection = result });
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error processing memorial funds for bird {BirdId}", id);
-                return StatusCode(500, new { message = "An error occurred while processing memorial funds" });
-            }
         }
 
         // ============================================================================

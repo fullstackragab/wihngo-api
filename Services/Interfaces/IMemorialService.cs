@@ -8,7 +8,7 @@ namespace Wihngo.Services.Interfaces
     public interface IMemorialService
     {
         /// <summary>
-        /// Mark a bird as memorial (deceased) and initiate fund redirection
+        /// Mark a bird as memorial (deceased)
         /// </summary>
         Task<MarkMemorialResponseDto> MarkBirdAsMemorialAsync(Guid birdId, Guid ownerId, MemorialRequestDto request);
 
@@ -36,11 +36,6 @@ namespace Wihngo.Services.Interfaces
         /// Check if a bird is memorial
         /// </summary>
         Task<bool> IsMemorialBirdAsync(Guid birdId);
-
-        /// <summary>
-        /// Process fund redirection for a memorial bird (admin operation)
-        /// </summary>
-        Task<MemorialFundRedirectionDto> ProcessFundRedirectionAsync(Guid birdId);
 
         /// <summary>
         /// Check rate limit for memorial messages (3 per user per bird per day)

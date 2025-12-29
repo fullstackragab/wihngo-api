@@ -10,14 +10,6 @@ namespace Wihngo.Dtos
 
         [MaxLength(500)]
         public string? MemorialReason { get; set; }
-
-        [Required]
-        [RegularExpression("^(emergency_fund|owner_keeps|charity)$", 
-            ErrorMessage = "FundsRedirectionChoice must be 'emergency_fund', 'owner_keeps', or 'charity'")]
-        public string FundsRedirectionChoice { get; set; } = string.Empty;
-
-        [MaxLength(255)]
-        public string? CharityName { get; set; } // Required if FundsRedirectionChoice is 'charity'
     }
 
     // Response DTO for memorial bird details
@@ -34,8 +26,6 @@ namespace Wihngo.Dtos
         public MemorialStatsDto Stats { get; set; } = new();
         public string? OwnerMessage { get; set; }
         public int MessagesCount { get; set; }
-        public string? FundsRedirectionChoice { get; set; }
-        public decimal RemainingBalance { get; set; }
     }
 
     public class MemorialStatsDto
@@ -73,22 +63,6 @@ namespace Wihngo.Dtos
         public int TotalCount { get; set; }
         public int TotalPages { get; set; }
         public List<MemorialMessageDto> Messages { get; set; } = new();
-    }
-
-    // DTO for memorial fund redirection
-    public class MemorialFundRedirectionDto
-    {
-        public Guid RedirectionId { get; set; }
-        public Guid BirdId { get; set; }
-        public string BirdName { get; set; } = string.Empty;
-        public decimal RemainingBalance { get; set; }
-        public string RedirectionType { get; set; } = string.Empty;
-        public string? CharityName { get; set; }
-        public string Status { get; set; } = string.Empty;
-        public DateTime? ProcessedAt { get; set; }
-        public string? TransactionId { get; set; }
-        public string? Notes { get; set; }
-        public DateTime CreatedAt { get; set; }
     }
 
     // Response DTO when marking bird as memorial

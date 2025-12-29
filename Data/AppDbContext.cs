@@ -73,7 +73,6 @@ namespace Wihngo.Data
 
         // Memorial system DbSets
         public StubDbSet<MemorialMessage> MemorialMessages => new StubDbSet<MemorialMessage>(_dbFactory, "memorial_messages", "id", _logger);
-        public StubDbSet<MemorialFundRedirection> MemorialFundRedirections => new StubDbSet<MemorialFundRedirection>(_dbFactory, "memorial_fund_redirections", "id", _logger);
 
         public StubDatabase Database => new StubDatabase(_dbFactory, _logger);
 

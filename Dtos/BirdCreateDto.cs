@@ -6,25 +6,38 @@ namespace Wihngo.Dtos
     public class BirdCreateDto
     {
         [Required]
-        [MaxLength(200)]
+        [MaxLength(50)]
         public string Name { get; set; } = string.Empty;
 
-        [MaxLength(200)]
-        public string? Species { get; set; }
+        [Required]
+        [MaxLength(100)]
+        public string Species { get; set; } = string.Empty;
 
         [MaxLength(500)]
         public string? Tagline { get; set; }
 
-        [MaxLength(2000)]
+        [MaxLength(1000)]
         public string? Description { get; set; }
 
         /// <summary>
-        /// S3 key for bird profile image (e.g., birds/profile-images/{birdId}/{uuid}.jpg)
-        /// Use /api/media/upload-url with mediaType='bird-profile-image' to get pre-signed upload URL
+        /// Bird's location (e.g., "San Francisco, CA" or "Backyard aviary")
         /// </summary>
-        [Required]
+        [MaxLength(100)]
+        public string? Location { get; set; }
+
+        /// <summary>
+        /// Bird's age as free text (e.g., "2 years", "6 months", "Unknown")
+        /// </summary>
+        [MaxLength(50)]
+        public string? Age { get; set; }
+
+        /// <summary>
+        /// S3 key for bird profile image (e.g., birds/profile-images/{birdId}/{uuid}.jpg)
+        /// Use /api/media/upload-url with mediaType='bird-profile-image' to get pre-signed upload URL.
+        /// Optional - birds can be created without an image.
+        /// </summary>
         [MaxLength(1000)]
-        public string ImageS3Key { get; set; } = string.Empty;
+        public string? ImageS3Key { get; set; }
     }
 
     /// <summary>

@@ -7,7 +7,6 @@ using Microsoft.Extensions.Logging;
 using Wihngo.Data;
 using Wihngo.Dtos;
 using Wihngo.Models;
-using Wihngo.Models.Payout;
 using Wihngo.Services.Interfaces;
 
 namespace Wihngo.Services
@@ -75,59 +74,23 @@ namespace Wihngo.Services
                     };
                 }
 
-                // Validate charity name if choice is charity
-                if (request.FundsRedirectionChoice == "charity" && string.IsNullOrWhiteSpace(request.CharityName))
-                {
-                    return new MarkMemorialResponseDto
-                    {
-                        Success = false,
-                        Message = "Charity name is required when redirecting funds to charity"
-                    };
-                }
-
                 var memorialDate = request.MemorialDate ?? DateTime.UtcNow;
 
                 // Update bird to memorial status
                 await connection.ExecuteAsync(@"
-                    UPDATE birds 
+                    UPDATE birds
                     SET is_memorial = true,
                         memorial_date = @MemorialDate,
-                        memorial_reason = @MemorialReason,
-                        funds_redirection_choice = @FundsRedirectionChoice
+                        memorial_reason = @MemorialReason
                     WHERE bird_id = @BirdId",
                     new
                     {
                         BirdId = birdId,
                         MemorialDate = memorialDate,
-                        MemorialReason = request.MemorialReason,
-                        FundsRedirectionChoice = request.FundsRedirectionChoice
+                        MemorialReason = request.MemorialReason
                     });
 
-                // Calculate remaining balance from payout system
-                var remainingBalance = await connection.QueryFirstOrDefaultAsync<decimal?>(
-                    "SELECT available_balance FROM payout_balances WHERE user_id = @OwnerId",
-                    new { OwnerId = ownerId }) ?? 0;
-
-                // Create fund redirection record
-                var redirectionId = Guid.NewGuid();
-                await connection.ExecuteAsync(@"
-                    INSERT INTO memorial_fund_redirections 
-                    (redirection_id, bird_id, previous_owner_id, remaining_balance, redirection_type, charity_name, status, created_at, updated_at)
-                    VALUES 
-                    (@RedirectionId, @BirdId, @OwnerId, @RemainingBalance, @RedirectionType, @CharityName, 'pending', @Now, @Now)",
-                    new
-                    {
-                        RedirectionId = redirectionId,
-                        BirdId = birdId,
-                        OwnerId = ownerId,
-                        RemainingBalance = remainingBalance,
-                        RedirectionType = request.FundsRedirectionChoice,
-                        CharityName = request.CharityName,
-                        Now = DateTime.UtcNow
-                    });
-
-                _logger.LogInformation("Bird {BirdId} marked as memorial by owner {OwnerId}. Fund redirection: {RedirectionType}",
-                    birdId, ownerId, request.FundsRedirectionChoice);
+                _logger.LogInformation("Bird {BirdId} marked as memorial by owner {OwnerId}", birdId, ownerId);
 
                 // Get supporters for notifications (run in background)
                 _ = Task.Run(async () =>
@@ -168,7 +131,7 @@ namespace Wihngo.Services
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
 
             var bird = await connection.QueryFirstOrDefaultAsync<dynamic>(@"
-                SELECT 
+                SELECT
                     b.bird_id,
                     b.name,
                     b.species,
@@ -176,7 +139,6 @@ namespace Wihngo.Services
                     b.memorial_date,
                     b.memorial_reason,
                     b.image_url,
-                    b.funds_redirection_choice,
                     COALESCE(b.loved_count, 0) as loved_by,
                     COALESCE(b.supported_count, 0) as supported_by,
                     COALESCE(b.donation_cents, 0) as donation_cents,
@@ -191,11 +153,6 @@ namespace Wihngo.Services
             var messagesCount = await connection.ExecuteScalarAsync<int>(
                 "SELECT COUNT(*) FROM memorial_messages WHERE bird_id = @BirdId AND is_approved = true",
                 new { BirdId = birdId });
-
-            // Get remaining balance if exists
-            var remainingBalance = await connection.QueryFirstOrDefaultAsync<decimal?>(
-                "SELECT remaining_balance FROM memorial_fund_redirections WHERE bird_id = @BirdId ORDER BY created_at DESC LIMIT 1",
-                new { BirdId = birdId }) ?? 0;
 
             // Generate download URL for image
             string? imageUrl = null;
@@ -228,9 +185,7 @@ namespace Wihngo.Services
                     TotalSupportReceived = (bird.donation_cents ?? 0) / 100m
                 },
                 OwnerMessage = bird.owner_message,
-                MessagesCount = messagesCount,
-                FundsRedirectionChoice = bird.funds_redirection_choice,
-                RemainingBalance = remainingBalance
+                MessagesCount = messagesCount
             };
         }
 
@@ -406,123 +361,6 @@ namespace Wihngo.Services
                 new { UserId = userId, BirdId = birdId, OneDayAgo = oneDayAgo });
 
             return messageCount < 3;
-        }
-
-        public async Task<MemorialFundRedirectionDto> ProcessFundRedirectionAsync(Guid birdId)
-        {
-            using var connection = await _dbFactory.CreateOpenConnectionAsync();
-
-            // Get redirection record
-            var redirection = await connection.QueryFirstOrDefaultAsync<dynamic>(@"
-                SELECT 
-                    mfr.*,
-                    b.name as bird_name
-                FROM memorial_fund_redirections mfr
-                INNER JOIN birds b ON mfr.bird_id = b.bird_id
-                WHERE mfr.bird_id = @BirdId AND mfr.status = 'pending'
-                ORDER BY mfr.created_at DESC
-                LIMIT 1",
-                new { BirdId = birdId });
-
-            if (redirection == null)
-            {
-                throw new InvalidOperationException("No pending fund redirection found for this bird");
-            }
-
-            var redirectionId = (Guid)redirection.redirection_id;
-            var redirectionType = redirection.redirection_type;
-            var remainingBalance = (decimal)redirection.remaining_balance;
-            var ownerId = (Guid)redirection.previous_owner_id;
-
-            // Update status to processing
-            await connection.ExecuteAsync(
-                "UPDATE memorial_fund_redirections SET status = 'processing', updated_at = @Now WHERE redirection_id = @RedirectionId",
-                new { RedirectionId = redirectionId, Now = DateTime.UtcNow });
-
-            try
-            {
-                string notes = string.Empty;
-                string? transactionId = null;
-
-                switch (redirectionType)
-                {
-                    case "emergency_fund":
-                        // Transfer to platform emergency fund
-                        // This would integrate with your payment system
-                        notes = $"Transferred {remainingBalance:C} to platform emergency fund";
-                        transactionId = $"EMERG-{Guid.NewGuid().ToString().Substring(0, 8)}";
-                        _logger.LogInformation("Memorial fund {Amount} redirected to emergency fund for bird {BirdId}", remainingBalance, birdId);
-                        break;
-
-                    case "owner_keeps":
-                        // Payout to owner (integrate with existing payout system)
-                        notes = $"Scheduled payout of {remainingBalance:C} to owner";
-                        transactionId = $"PAYOUT-{Guid.NewGuid().ToString().Substring(0, 8)}";
-                        _logger.LogInformation("Memorial fund {Amount} scheduled for payout to owner {OwnerId}", remainingBalance, ownerId);
-                        break;
-
-                    case "charity":
-                        // Donate to charity
-                        var charityName = redirection.charity_name as string ?? "Bird Conservation Charity";
-                        notes = $"Donated {remainingBalance:C} to {charityName}";
-                        transactionId = $"CHARITY-{Guid.NewGuid().ToString().Substring(0, 8)}";
-                        _logger.LogInformation("Memorial fund {Amount} donated to charity {CharityName} for bird {BirdId}",
-                            remainingBalance, charityName, birdId);
-                        break;
-                }
-
-                // Update redirection to completed
-                await connection.ExecuteAsync(@"
-                    UPDATE memorial_fund_redirections 
-                    SET status = 'completed',
-                        processed_at = @Now,
-                        transaction_id = @TransactionId,
-                        notes = @Notes,
-                        updated_at = @Now
-                    WHERE redirection_id = @RedirectionId",
-                    new
-                    {
-                        RedirectionId = redirectionId,
-                        Now = DateTime.UtcNow,
-                        TransactionId = transactionId,
-                        Notes = notes
-                    });
-
-                return new MemorialFundRedirectionDto
-                {
-                    RedirectionId = redirectionId,
-                    BirdId = birdId,
-                    BirdName = redirection.bird_name,
-                    RemainingBalance = remainingBalance,
-                    RedirectionType = redirectionType,
-                    CharityName = redirection.charity_name,
-                    Status = "completed",
-                    ProcessedAt = DateTime.UtcNow,
-                    TransactionId = transactionId,
-                    Notes = notes,
-                    CreatedAt = redirection.created_at
-                };
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error processing fund redirection for bird {BirdId}", birdId);
-                
-                // Update to failed status
-                await connection.ExecuteAsync(@"
-                    UPDATE memorial_fund_redirections 
-                    SET status = 'failed',
-                        notes = @Notes,
-                        updated_at = @Now
-                    WHERE redirection_id = @RedirectionId",
-                    new
-                    {
-                        RedirectionId = redirectionId,
-                        Notes = $"Failed: {ex.Message}",
-                        Now = DateTime.UtcNow
-                    });
-
-                throw;
-            }
         }
 
         private async Task SendMemorialNotificationsAsync(Guid birdId, string birdName, Guid ownerId)

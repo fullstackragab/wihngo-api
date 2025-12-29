@@ -93,16 +93,12 @@ namespace Wihngo.Mapping
                 .ForMember(dest => dest.UserName, opt => opt.MapFrom(src => src.User != null ? src.User.Name : string.Empty))
                 .ForMember(dest => dest.UserAvatarUrl, opt => opt.Ignore()); // Set by service if needed
 
-            CreateMap<MemorialFundRedirection, MemorialFundRedirectionDto>()
-                .ForMember(dest => dest.BirdName, opt => opt.MapFrom(src => src.Bird != null ? src.Bird.Name : string.Empty));
-
             CreateMap<Bird, MemorialBirdDto>()
                 .ForMember(dest => dest.ImageUrl, opt => opt.Ignore()) // Set by service
                 .ForMember(dest => dest.CoverImageUrl, opt => opt.Ignore()) // Set by service
                 .ForMember(dest => dest.Stats, opt => opt.Ignore()) // Set by service
                 .ForMember(dest => dest.OwnerMessage, opt => opt.MapFrom(src => src.Description))
-                .ForMember(dest => dest.MessagesCount, opt => opt.Ignore()) // Set by service
-                .ForMember(dest => dest.RemainingBalance, opt => opt.Ignore()); // Set by service
+                .ForMember(dest => dest.MessagesCount, opt => opt.Ignore()); // Set by service
         }
 
         // Helper methods for payout mappings

@@ -84,12 +84,7 @@ namespace Wihngo.Models
         [Column("memorial_reason")]
         public string? MemorialReason { get; set; }
 
-        [MaxLength(50)]
-        [Column("funds_redirection_choice")]
-        public string? FundsRedirectionChoice { get; set; }
-
         // Navigation properties for memorial
         public List<MemorialMessage> MemorialMessages { get; set; } = new();
-        public List<MemorialFundRedirection> FundRedirections { get; set; } = new();
     }
 }
