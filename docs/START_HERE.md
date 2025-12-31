@@ -31,8 +31,8 @@ C:\Program Files\PostgreSQL\18\bin\psql.exe
 2. Copy-paste this entire block:
    ```cmd
    cd C:\.net\Wihngo
-   set PGPASSWORD=***REMOVED***
-   "C:\Program Files\PostgreSQL\18\bin\psql.exe" "postgresql://wihngo@***REMOVED***:5432/wihngo_kzno?sslmode=require" -f Database\migrations\simple_fix.sql
+   set PGPASSWORD=YOUR_DB_PASSWORD
+   "C:\Program Files\PostgreSQL\18\bin\psql.exe" "postgresql://wihngo@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require" -f Database\migrations\simple_fix.sql
    ```
 3. Press Enter
 4. Done!

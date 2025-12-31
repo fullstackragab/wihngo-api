@@ -373,3 +373,12 @@ nul
 replacements.txt
 appsettings.Secrets.json
 .env.production
+
+# Local secrets backup (NEVER COMMIT!)
+SECRETS_BACKUP.local.txt
+*.local.txt
+*.secrets
+secrets.txt
+
+# Claude Code local settings
+.claude/settings.local.json

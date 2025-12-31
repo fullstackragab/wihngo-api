@@ -30,11 +30,11 @@ Open `Database/migrations/fix_missing_columns.sql` and copy its entire contents.
    ```
 3. Set password:
    ```cmd
-   set PGPASSWORD=***REMOVED***
+   set PGPASSWORD=YOUR_DB_PASSWORD
    ```
 4. Connect:
    ```cmd
-   psql "postgresql://wihngo@***REMOVED***:5432/wihngo_kzno?sslmode=require"
+   psql "postgresql://wihngo@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require"
    ```
 
 ### Method B: Using Render Dashboard (Easiest!)
@@ -52,11 +52,11 @@ Open `Database/migrations/fix_missing_columns.sql` and copy its entire contents.
 3. General tab:
    - Name: `Wihngo Render DB`
 4. Connection tab:
-   - Host: `***REMOVED***`
+   - Host: `YOUR_DB_HOST`
    - Port: `5432`
    - Database: `wihngo_kzno`
    - Username: `wihngo`
-   - Password: `***REMOVED***`
+   - Password: `YOUR_DB_PASSWORD`
 5. SSL tab:
    - SSL mode: `Require`
 6. Click **Save**

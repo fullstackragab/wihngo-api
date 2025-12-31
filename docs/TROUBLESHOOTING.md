@@ -95,11 +95,11 @@ If you prefer a visual tool:
 4. Fill in connection details:
    ```
    Name: Wihngo Render
-   Host: ***REMOVED***
+   Host: YOUR_DB_HOST
    Port: 5432
    Database: wihngo_kzno
    Username: wihngo
-   Password: ***REMOVED***
+   Password: YOUR_DB_PASSWORD
    SSL Mode: Require (in SSL tab)
    ```
 5. Click **Save**
@@ -121,11 +121,11 @@ PowerShell can have path issues. Command Prompt is more reliable:
    ```
 3. Set password:
    ```cmd
-   set PGPASSWORD=***REMOVED***
+   set PGPASSWORD=YOUR_DB_PASSWORD
    ```
 4. Connect:
    ```cmd
-   psql "postgresql://wihngo@***REMOVED***:5432/wihngo_kzno?sslmode=require"
+   psql "postgresql://wihngo@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require"
    ```
 5. Once connected, paste the 3 ALTER TABLE commands
 6. Type `\q` to exit

@@ -26,7 +26,7 @@ Database migrations were never run. The C# models have properties that don't exi
 
 **Option B: Command Line**
 ```bash
-psql "postgresql://wihngo@***REMOVED***:5432/wihngo_kzno?sslmode=require" -f Database/migrations/fix_missing_columns.sql
+psql "postgresql://wihngo@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require" -f Database/migrations/fix_missing_columns.sql
 ```
 
 ### Step 2: Restart Application

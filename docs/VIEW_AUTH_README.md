@@ -29,7 +29,7 @@ Shows:
 
 **Run with:**
 ```cmd
-"C:\Program Files\PostgreSQL\18\bin\psql.exe" "postgresql://wihngo@***REMOVED***:5432/wihngo_kzno?sslmode=require" -f Database\queries\quick_auth_view.sql
+"C:\Program Files\PostgreSQL\18\bin\psql.exe" "postgresql://wihngo@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require" -f Database\queries\quick_auth_view.sql
 ```
 
 Shows:
@@ -46,7 +46,7 @@ Shows:
 
 **Or run:**
 ```cmd
-"C:\Program Files\PostgreSQL\18\bin\psql.exe" "postgresql://wihngo@***REMOVED***:5432/wihngo_kzno?sslmode=require" -f Database\queries\view_auth_database.sql
+"C:\Program Files\PostgreSQL\18\bin\psql.exe" "postgresql://wihngo@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require" -f Database\queries\view_auth_database.sql
 ```
 
 Shows **13 sections:**

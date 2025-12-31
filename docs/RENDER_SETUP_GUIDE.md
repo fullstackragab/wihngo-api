@@ -25,13 +25,13 @@ I've created a **complete invoice/payment system** with:
 
 2. **Copy the Connection Command**
    ```bash
-   PGPASSWORD=***REMOVED*** psql -h ***REMOVED*** -U wihngo wihngo_kzno
+   PGPASSWORD=YOUR_DB_PASSWORD psql -h YOUR_DB_HOST -U wihngo wihngo_kzno
    ```
 
 3. **Run the Setup Script**
    ```bash
    # If psql is installed locally:
-   PGPASSWORD=***REMOVED*** psql -h ***REMOVED*** -U wihngo -d wihngo_kzno -f render-database-setup.sql
+   PGPASSWORD=YOUR_DB_PASSWORD psql -h YOUR_DB_HOST -U wihngo -d wihngo_kzno -f render-database-setup.sql
    ```
 
 ### **Option 2: Use Render Web Shell**
@@ -43,11 +43,11 @@ I've created a **complete invoice/payment system** with:
 ### **Option 3: Use pgAdmin or DBeaver**
 
 1. Connect with these credentials:
-   - Host: `***REMOVED***`
+   - Host: `YOUR_DB_HOST`
    - Port: `5432`
    - Database: `wihngo_kzno`
    - Username: `wihngo`
-   - Password: `***REMOVED***`
+   - Password: `YOUR_DB_PASSWORD`
    - SSL: Required
 
 2. Open `render-database-setup.sql` and execute
@@ -215,7 +215,7 @@ Edit `appsettings.Development.json`:
 ### **Can't connect to database?**
 - Check if SSL is enabled in connection string
 - Verify Render database is "Available" in dashboard
-- Test connection with: `psql "postgresql://wihngo:***REMOVED***@***REMOVED***:5432/wihngo_kzno?sslmode=require"`
+- Test connection with: `psql "postgresql://wihngo:YOUR_DB_PASSWORD@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require"`
 
 ### **Database setup failed?**
 - Run the SQL script section by section

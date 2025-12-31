@@ -41,7 +41,7 @@ Set DEFAULT_CONNECTION environment variable.
 
 Run as Administrator:
 ```powershell
-[System.Environment]::SetEnvironmentVariable('DEFAULT_CONNECTION', 'Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;SSL Mode=Require;Trust Server Certificate=True', 'User')
+[System.Environment]::SetEnvironmentVariable('DEFAULT_CONNECTION', 'Host=YOUR_DB_HOST;Port=5432;Database=YOUR_DB_NAME;Username=YOUR_USERNAME;Password=YOUR_PASSWORD;SSL Mode=Require;Trust Server Certificate=True', 'User')
 ```
 
 **Restart Visual Studio!**
@@ -52,7 +52,7 @@ Run as Administrator:
 
 ```bash
 cd C:\.net\Wihngo
-dotnet user-secrets set "DEFAULT_CONNECTION" "Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;SSL Mode=Require;Trust Server Certificate=True"
+dotnet user-secrets set "DEFAULT_CONNECTION" "Host=YOUR_DB_HOST;Port=5432;Database=YOUR_DB_NAME;Username=YOUR_USERNAME;Password=YOUR_PASSWORD;SSL Mode=Require;Trust Server Certificate=True"
 ```
 
 **No restart needed!**
@@ -107,7 +107,7 @@ AWS_REGION=us-east-1
 # Run as Administrator
 
 # 1. Database (REQUIRED)
-[System.Environment]::SetEnvironmentVariable('DEFAULT_CONNECTION', 'Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;SSL Mode=Require;Trust Server Certificate=True', 'User')
+[System.Environment]::SetEnvironmentVariable('DEFAULT_CONNECTION', 'Host=YOUR_DB_HOST;Port=5432;Database=YOUR_DB_NAME;Username=YOUR_USERNAME;Password=YOUR_PASSWORD;SSL Mode=Require;Trust Server Certificate=True', 'User')
 
 # 2. AWS S3 (REQUIRED)
 [System.Environment]::SetEnvironmentVariable('AWS_ACCESS_KEY_ID', 'YOUR_AWS_KEY', 'User')
@@ -132,7 +132,7 @@ AWS_REGION=us-east-1
 cd C:\.net\Wihngo
 
 # Database
-dotnet user-secrets set "DEFAULT_CONNECTION" "Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;SSL Mode=Require;Trust Server Certificate=True"
+dotnet user-secrets set "DEFAULT_CONNECTION" "Host=YOUR_DB_HOST;Port=5432;Database=YOUR_DB_NAME;Username=YOUR_USERNAME;Password=YOUR_PASSWORD;SSL Mode=Require;Trust Server Certificate=True"
 
 # AWS S3
 dotnet user-secrets set "AWS_ACCESS_KEY_ID" "YOUR_AWS_KEY"
@@ -150,7 +150,7 @@ dotnet user-secrets set "EMAIL_PROVIDER" "SendGrid"
 Add/update these in Render Dashboard ? Environment:
 
 ```
-DEFAULT_CONNECTION = Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;SSL Mode=Require;Trust Server Certificate=True;Pooling=true
+DEFAULT_CONNECTION = Host=YOUR_DB_HOST;Port=5432;Database=YOUR_DB_NAME;Username=YOUR_USERNAME;Password=YOUR_PASSWORD;SSL Mode=Require;Trust Server Certificate=True;Pooling=true
 
 AWS_ACCESS_KEY_ID = YOUR_KEY
 AWS_SECRET_ACCESS_KEY = YOUR_SECRET

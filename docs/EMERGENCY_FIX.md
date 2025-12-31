@@ -71,11 +71,11 @@ If terminal doesn't work, download **pgAdmin**:
 1. https://www.pgadmin.org/download/
 2. Install it
 3. Connect with these details:
-   - Host: `***REMOVED***`
+   - Host: `YOUR_DB_HOST`
    - Port: `5432`
    - Database: `wihngo_kzno`
    - Username: `wihngo`
-   - Password: `***REMOVED***`
+   - Password: `YOUR_DB_PASSWORD`
    - SSL: **Require**
 4. Open Query Tool
 5. Paste the 3 ALTER TABLE commands

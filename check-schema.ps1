@@ -10,11 +10,11 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Database connection string
-$DB_HOST = "***REMOVED***"
+$DB_HOST = "YOUR_DB_HOST"
 $DB_PORT = "5432"
 $DB_NAME = "wihngo_kzno"
 $DB_USER = "wihngo"
-$DB_PASSWORD = "***REMOVED***"
+$DB_PASSWORD = "YOUR_DB_PASSWORD"
 
 $env:PGPASSWORD = $DB_PASSWORD
 

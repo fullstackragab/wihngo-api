@@ -49,8 +49,8 @@ Open Command Prompt and run:
 
 ```cmd
 cd C:\.net\Wihngo
-set PGPASSWORD=***REMOVED***
-"C:\Program Files\PostgreSQL\18\bin\psql.exe" "postgresql://wihngo@***REMOVED***:5432/wihngo_kzno?sslmode=require" -f Database\migrations\simple_fix.sql
+set PGPASSWORD=YOUR_DB_PASSWORD
+"C:\Program Files\PostgreSQL\18\bin\psql.exe" "postgresql://wihngo@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require" -f Database\migrations\simple_fix.sql
 ```
 
 ---
@@ -63,8 +63,8 @@ If batch files are blocked by antivirus or security settings:
 2. Run:
    ```cmd
    cd "C:\Program Files\PostgreSQL\18\bin"
-   set PGPASSWORD=***REMOVED***
-   psql "postgresql://wihngo@***REMOVED***:5432/wihngo_kzno?sslmode=require"
+   set PGPASSWORD=YOUR_DB_PASSWORD
+   psql "postgresql://wihngo@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require"
    ```
 3. Once connected, copy and paste these 3 lines:
    ```sql

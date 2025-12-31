@@ -55,10 +55,10 @@ If you prefer to run the migration manually:
 
 ```bash
 # Set password environment variable
-export PGPASSWORD="***REMOVED***"
+export PGPASSWORD="YOUR_DB_PASSWORD"
 
 # Run migration
-psql "postgresql://wihngo@***REMOVED***:5432/wihngo_kzno?sslmode=require" \
+psql "postgresql://wihngo@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require" \
   -f Database/migrations/fix_missing_columns.sql
 
 # Clear password

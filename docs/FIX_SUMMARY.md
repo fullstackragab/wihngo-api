@@ -37,13 +37,13 @@ If you have psql installed:
 
 ```bash
 # Windows PowerShell
-$env:PGPASSWORD="***REMOVED***"
-psql "postgresql://wihngo@***REMOVED***:5432/wihngo_kzno?sslmode=require" -f Database/migrations/fix_missing_columns.sql
+$env:PGPASSWORD="YOUR_DB_PASSWORD"
+psql "postgresql://wihngo@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require" -f Database/migrations/fix_missing_columns.sql
 $env:PGPASSWORD=""
 
 # Linux/Mac
-export PGPASSWORD="***REMOVED***"
-psql "postgresql://wihngo@***REMOVED***:5432/wihngo_kzno?sslmode=require" -f Database/migrations/fix_missing_columns.sql
+export PGPASSWORD="YOUR_DB_PASSWORD"
+psql "postgresql://wihngo@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require" -f Database/migrations/fix_missing_columns.sql
 unset PGPASSWORD
 ```
 
@@ -61,11 +61,11 @@ unset PGPASSWORD
 ### ?? Method 4: Any PostgreSQL Client (pgAdmin, DBeaver, etc.)
 
 1. Connect to your database:
-   - Host: `***REMOVED***`
+   - Host: `YOUR_DB_HOST`
    - Port: `5432`
    - Database: `wihngo_kzno`
    - Username: `wihngo`
-   - Password: `***REMOVED***`
+   - Password: `YOUR_DB_PASSWORD`
    - SSL Mode: Require
 
 2. Open `Database/migrations/fix_missing_columns.sql`
@@ -271,7 +271,7 @@ If you need help:
 .\run-fix-migration.ps1
 
 # Manual psql connection
-psql "postgresql://wihngo@***REMOVED***:5432/wihngo_kzno?sslmode=require"
+psql "postgresql://wihngo@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require"
 ```
 
 ---

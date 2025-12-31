@@ -431,7 +431,7 @@ You can easily switch between local and production databases by changing `appset
 
 **Production/Render.com:**
 ```json
-"DefaultConnection": "Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;SSL Mode=Require;Trust Server Certificate=true"
+"DefaultConnection": "Host=YOUR_DB_HOST;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=YOUR_DB_PASSWORD;SSL Mode=Require;Trust Server Certificate=true"
 ```
 
 > ?? **Warning:** Be very careful when connecting to production! Always use local database for development.

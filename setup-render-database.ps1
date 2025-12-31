@@ -3,15 +3,15 @@
 # ============================================
 
 # Set password as environment variable to avoid prompt
-$env:PGPASSWORD="***REMOVED***"
+$env:PGPASSWORD="YOUR_DB_PASSWORD"
 
 Write-Host "?? Connecting to Render.com database..." -ForegroundColor Green
-Write-Host "   Host: ***REMOVED***" -ForegroundColor Cyan
+Write-Host "   Host: YOUR_DB_HOST" -ForegroundColor Cyan
 Write-Host "   Database: wihngo_kzno" -ForegroundColor Cyan
 Write-Host ""
 
 # Run the setup script
-psql -h ***REMOVED*** `
+psql -h YOUR_DB_HOST `
      -U wihngo `
      -d wihngo_kzno `
      -f render-database-setup.sql

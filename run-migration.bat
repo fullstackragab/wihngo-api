@@ -23,11 +23,11 @@ echo Found psql at %PSQL_PATH%
 echo.
 
 REM Database connection details
-set DB_HOST=***REMOVED***
+set DB_HOST=YOUR_DB_HOST
 set DB_PORT=5432
 set DB_NAME=wihngo_kzno
 set DB_USER=wihngo
-set PGPASSWORD=***REMOVED***
+set PGPASSWORD=YOUR_DB_PASSWORD
 
 echo Target Database: %DB_NAME%
 echo Host: %DB_HOST%

@@ -26,11 +26,11 @@ Write-Host "? Found psql at: $psqlPath" -ForegroundColor Green
 Write-Host ""
 
 # Database connection details
-$DB_HOST = "***REMOVED***"
+$DB_HOST = "YOUR_DB_HOST"
 $DB_PORT = "5432"
 $DB_NAME = "wihngo_kzno"
 $DB_USER = "wihngo"
-$DB_PASSWORD = "***REMOVED***"
+$DB_PASSWORD = "YOUR_DB_PASSWORD"
 
 Write-Host "? Target Database: $DB_NAME" -ForegroundColor Yellow
 Write-Host "? Host: $DB_HOST" -ForegroundColor Yellow

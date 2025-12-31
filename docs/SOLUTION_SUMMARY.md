@@ -225,7 +225,7 @@ cat backup.sql | docker exec -i wihngo-postgres psql -U postgres -d wihngo
 
 Your original connection was to:
 ```
-Host: ***REMOVED***
+Host: YOUR_DB_HOST
 Database: wihngo_kzno
 ```
 

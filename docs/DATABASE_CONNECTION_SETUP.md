@@ -20,7 +20,7 @@ DEFAULT_CONNECTION=Host=your-host;Port=5432;Database=wihngo;Username=user;Passwo
 
 #### Permanent Setup (Run as Administrator):
 ```powershell
-[System.Environment]::SetEnvironmentVariable('DEFAULT_CONNECTION', 'Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;SSL Mode=Require;Trust Server Certificate=True', 'User')
+[System.Environment]::SetEnvironmentVariable('DEFAULT_CONNECTION', 'Host=YOUR_DB_HOST;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=YOUR_DB_PASSWORD;SSL Mode=Require;Trust Server Certificate=True', 'User')
 ```
 
 **Remember:** Restart Visual Studio after setting!
@@ -75,7 +75,7 @@ Edit `Properties/launchSettings.json`:
 4. Add/update this variable:
 
 ```
-DEFAULT_CONNECTION = Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;Pooling=true;SSL Mode=Require;Trust Server Certificate=True
+DEFAULT_CONNECTION = Host=YOUR_DB_HOST;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=YOUR_DB_PASSWORD;Pooling=true;SSL Mode=Require;Trust Server Certificate=True
 ```
 
 5. Click **"Save Changes"**

@@ -14,7 +14,7 @@ This is a **security improvement** - connection strings should never be committe
 
 **From old `appsettings.json`:**
 ```
-Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;SSL Mode=Require;Trust Server Certificate=True
+Host=YOUR_DB_HOST;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=YOUR_DB_PASSWORD;SSL Mode=Require;Trust Server Certificate=True
 ```
 
 Or **get from Render Dashboard:**
@@ -28,13 +28,13 @@ Or **get from Render Dashboard:**
 
 **PowerShell (Run as Administrator):**
 ```powershell
-[System.Environment]::SetEnvironmentVariable('DEFAULT_CONNECTION', 'Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;SSL Mode=Require;Trust Server Certificate=True', 'User')
+[System.Environment]::SetEnvironmentVariable('DEFAULT_CONNECTION', 'Host=YOUR_DB_HOST;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=YOUR_DB_PASSWORD;SSL Mode=Require;Trust Server Certificate=True', 'User')
 ```
 
 **Or User Secrets (Easier):**
 ```bash
 cd C:\.net\Wihngo
-dotnet user-secrets set "DEFAULT_CONNECTION" "Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;SSL Mode=Require;Trust Server Certificate=True"
+dotnet user-secrets set "DEFAULT_CONNECTION" "Host=YOUR_DB_HOST;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=YOUR_DB_PASSWORD;SSL Mode=Require;Trust Server Certificate=True"
 ```
 
 ---
@@ -73,7 +73,7 @@ If you see the error, the environment variable is not set correctly!
 4. Add or update:
 
 ```
-DEFAULT_CONNECTION = Host=***REMOVED***;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=***REMOVED***;SSL Mode=Require;Trust Server Certificate=True;Pooling=true
+DEFAULT_CONNECTION = Host=YOUR_DB_HOST;Port=5432;Database=wihngo_kzno;Username=wihngo;Password=YOUR_DB_PASSWORD;SSL Mode=Require;Trust Server Certificate=True;Pooling=true
 ```
 
 5. Click **"Save Changes"**

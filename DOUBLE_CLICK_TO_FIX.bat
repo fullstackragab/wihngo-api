@@ -17,14 +17,14 @@ echo Press any key to continue or Ctrl+C to cancel...
 pause >nul
 
 REM Set password
-set PGPASSWORD=***REMOVED***
+set PGPASSWORD=YOUR_DB_PASSWORD
 
 REM Run migration
 echo.
 echo Running migration...
 echo.
 
-"C:\Program Files\PostgreSQL\18\bin\psql.exe" "postgresql://wihngo@***REMOVED***:5432/wihngo_kzno?sslmode=require" -f Database\migrations\simple_fix.sql
+"C:\Program Files\PostgreSQL\18\bin\psql.exe" "postgresql://wihngo@YOUR_DB_HOST:5432/wihngo_kzno?sslmode=require" -f Database\migrations\simple_fix.sql
 
 if %ERRORLEVEL% EQU 0 (
     echo.
