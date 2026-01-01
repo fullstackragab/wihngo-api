@@ -46,6 +46,14 @@ public class CreateSupportIntentRequest
     [Required(ErrorMessage = "Currency is required")]
     [RegularExpression("^(USDC)$", ErrorMessage = "Only USDC is supported")]
     public string Currency { get; set; } = "USDC";
+
+    /// <summary>
+    /// Optional idempotency key for preventing duplicate intent creation.
+    /// Frontend generates as SHA-256 hash of "{userId}|{birdId}|{birdAmount}|{wihngoAmount}|{minuteBucket}".
+    /// If a request with the same key was already processed within 1 minute, the existing intent is returned.
+    /// </summary>
+    [StringLength(64, MinimumLength = 1, ErrorMessage = "Idempotency key must be 1-64 characters")]
+    public string? IdempotencyKey { get; set; }
 }
 
 /// <summary>

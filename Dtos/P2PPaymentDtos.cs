@@ -146,6 +146,14 @@ public class SubmitTransactionRequest
     /// </summary>
     [Required]
     public string SignedTransaction { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional idempotency key to prevent duplicate submissions.
+    /// Should be unique per submission attempt (e.g., "{paymentId}-{attemptNumber}-{timestamp}").
+    /// If a request with the same idempotency key was already processed, the original result is returned.
+    /// </summary>
+    [StringLength(64, MinimumLength = 1, ErrorMessage = "Idempotency key must be 1-64 characters")]
+    public string? IdempotencyKey { get; set; }
 }
 
 /// <summary>
@@ -157,6 +165,11 @@ public class SubmitTransactionResponse
     public string? SolanaSignature { get; set; }
     public string Status { get; set; } = string.Empty;
     public string? ErrorMessage { get; set; }
+
+    /// <summary>
+    /// True if this response is from a previous submission with the same idempotency key
+    /// </summary>
+    public bool WasAlreadySubmitted { get; set; }
 }
 
 // =============================================

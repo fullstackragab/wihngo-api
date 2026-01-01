@@ -59,10 +59,15 @@ public interface ISupportIntentService
     /// Submits a signed transaction for a support intent.
     /// Called after user signs the transaction in Phantom wallet.
     /// </summary>
+    /// <param name="userId">The user submitting the transaction</param>
+    /// <param name="intentId">The support intent ID</param>
+    /// <param name="signedTransaction">Base64-encoded signed transaction</param>
+    /// <param name="idempotencyKey">Optional key to prevent duplicate submissions</param>
     Task<(SubmitTransactionResponse? Response, ValidationErrorResponse? Error)> SubmitSignedTransactionAsync(
         Guid userId,
         Guid intentId,
-        string signedTransaction);
+        string signedTransaction,
+        string? idempotencyKey = null);
 
     /// <summary>
     /// Called by background job when transaction is confirmed on-chain.

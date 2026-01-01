@@ -65,6 +65,14 @@ public interface ISolanaTransactionService
         string expectedSender,
         string expectedRecipient,
         decimal expectedAmount);
+
+    /// <summary>
+    /// Adds the sponsor wallet signature to a partially signed transaction
+    /// Required for gas-sponsored transactions where the platform wallet is the fee payer
+    /// </summary>
+    /// <param name="partiallySignedTransactionBase64">Base64 encoded transaction with user signature</param>
+    /// <returns>Base64 encoded fully signed transaction</returns>
+    Task<string> AddSponsorSignatureAsync(string partiallySignedTransactionBase64);
 }
 
 /// <summary>

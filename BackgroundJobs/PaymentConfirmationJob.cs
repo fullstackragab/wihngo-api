@@ -10,6 +10,9 @@ public class PaymentConfirmationJob
     private readonly IP2PPaymentService _paymentService;
     private readonly ILogger<PaymentConfirmationJob> _logger;
 
+    // Timeout for submitted transactions that never appear on-chain
+    private static readonly TimeSpan SubmittedTimeout = TimeSpan.FromMinutes(30);
+
     public PaymentConfirmationJob(
         IP2PPaymentService paymentService,
         ILogger<PaymentConfirmationJob> logger)
@@ -39,6 +42,20 @@ public class PaymentConfirmationJob
             {
                 try
                 {
+                    // Check for timeout - if submitted > 30 minutes ago and still not confirmed
+                    if (payment.SubmittedAt.HasValue &&
+                        DateTime.UtcNow - payment.SubmittedAt.Value > SubmittedTimeout)
+                    {
+                        _logger.LogWarning(
+                            "Payment {PaymentId} timed out after {Minutes} minutes. Submitted at {SubmittedAt}",
+                            payment.Id,
+                            (DateTime.UtcNow - payment.SubmittedAt.Value).TotalMinutes,
+                            payment.SubmittedAt);
+
+                        await _paymentService.HandlePaymentTimeoutAsync(payment.Id);
+                        continue;
+                    }
+
                     var confirmed = await _paymentService.CheckPaymentConfirmationAsync(payment.Id);
 
                     if (confirmed)

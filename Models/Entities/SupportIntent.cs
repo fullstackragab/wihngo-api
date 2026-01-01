@@ -86,6 +86,19 @@ public class SupportIntent
     [Column("serialized_transaction")]
     public string? SerializedTransaction { get; set; }
 
+    /// <summary>
+    /// Idempotency key for preventing duplicate intents and submissions
+    /// </summary>
+    [Column("idempotency_key")]
+    [MaxLength(64)]
+    public string? IdempotencyKey { get; set; }
+
+    /// <summary>
+    /// Error message for failed intents
+    /// </summary>
+    [Column("error_message")]
+    public string? ErrorMessage { get; set; }
+
     [Column("expires_at")]
     public DateTime ExpiresAt { get; set; }
 

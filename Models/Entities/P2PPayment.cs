@@ -74,6 +74,15 @@ public class P2PPayment
     [Column("memo")]
     public string? Memo { get; set; }
 
+    // Idempotency key for preventing duplicate submissions
+    [MaxLength(64)]
+    [Column("idempotency_key")]
+    public string? IdempotencyKey { get; set; }
+
+    // Error message for failed payments
+    [Column("error_message")]
+    public string? ErrorMessage { get; set; }
+
     // Timestamps
     [Required]
     [Column("expires_at")]
@@ -119,4 +128,5 @@ public static class PaymentStatus
     public const string Failed = "failed";
     public const string Expired = "expired";
     public const string Cancelled = "cancelled";
+    public const string Timeout = "timeout"; // Transaction never appeared on-chain after submission
 }

@@ -336,18 +336,49 @@ public class P2PPaymentService : IP2PPaymentService
             };
         }
 
-        // 2. Check payment is still pending
+        // 2. Check for idempotency - if same key was already used, return existing result
+        if (!string.IsNullOrEmpty(request.IdempotencyKey))
+        {
+            var existingWithSameKey = await conn.QueryFirstOrDefaultAsync<P2PPayment>(@"
+                SELECT * FROM p2p_payments
+                WHERE id = @PaymentId
+                AND idempotency_key = @IdempotencyKey
+                AND status NOT IN ('pending', 'expired', 'cancelled')",
+                new { PaymentId = request.PaymentId, IdempotencyKey = request.IdempotencyKey });
+
+            if (existingWithSameKey != null)
+            {
+                _logger.LogInformation(
+                    "Idempotent request detected for payment {PaymentId} with key {Key}. Returning existing result.",
+                    request.PaymentId, request.IdempotencyKey);
+
+                return new SubmitTransactionResponse
+                {
+                    PaymentId = existingWithSameKey.Id,
+                    SolanaSignature = existingWithSameKey.SolanaSignature,
+                    Status = existingWithSameKey.Status,
+                    WasAlreadySubmitted = true
+                };
+            }
+        }
+
+        // 3. Check payment is still pending
         if (payment.Status != PaymentStatus.Pending)
         {
             return new SubmitTransactionResponse
             {
                 PaymentId = payment.Id,
                 Status = payment.Status,
-                ErrorMessage = $"Payment is already {payment.Status}"
+                SolanaSignature = payment.SolanaSignature,
+                ErrorMessage = $"Payment is already {payment.Status}",
+                WasAlreadySubmitted = payment.Status == PaymentStatus.Submitted ||
+                                      payment.Status == PaymentStatus.Confirming ||
+                                      payment.Status == PaymentStatus.Confirmed ||
+                                      payment.Status == PaymentStatus.Completed
             };
         }
 
-        // 3. Check not expired
+        // 4. Check not expired
         if (payment.IsExpired)
         {
             await conn.ExecuteAsync(
@@ -364,12 +395,23 @@ public class P2PPaymentService : IP2PPaymentService
 
         try
         {
-            // 4. Submit the transaction
-            // Note: If gas is sponsored, the platform wallet would need to add its signature
-            // For now, we assume the client has properly signed the transaction
-            var signature = await _solanaService.SubmitTransactionAsync(request.SignedTransaction);
+            // 4. Prepare the transaction for submission
+            var transactionToSubmit = request.SignedTransaction;
 
-            // 5. Record gas sponsorship if applicable
+            // If gas is sponsored, the platform wallet must add its signature
+            if (payment.GasSponsored)
+            {
+                _logger.LogInformation(
+                    "Adding sponsor signature for gas-sponsored payment {PaymentId}",
+                    payment.Id);
+
+                transactionToSubmit = await _solanaService.AddSponsorSignatureAsync(request.SignedTransaction);
+            }
+
+            // 5. Submit the fully-signed transaction
+            var signature = await _solanaService.SubmitTransactionAsync(transactionToSubmit);
+
+            // 7. Record gas sponsorship if applicable
             if (payment.GasSponsored)
             {
                 var sponsorPubkey = await _gasSponsorshipService.GetSponsorWalletPubkeyAsync();
@@ -383,15 +425,20 @@ public class P2PPaymentService : IP2PPaymentService
                 }
             }
 
-            // 6. Update payment status
+            // 8. Update payment status with idempotency key
             await conn.ExecuteAsync(
                 @"UPDATE p2p_payments
-                  SET status = @Status, solana_signature = @Signature, submitted_at = @SubmittedAt, updated_at = @UpdatedAt
+                  SET status = @Status,
+                      solana_signature = @Signature,
+                      idempotency_key = @IdempotencyKey,
+                      submitted_at = @SubmittedAt,
+                      updated_at = @UpdatedAt
                   WHERE id = @PaymentId",
                 new
                 {
                     Status = PaymentStatus.Submitted,
                     Signature = signature,
+                    IdempotencyKey = request.IdempotencyKey,
                     SubmittedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
                     PaymentId = payment.Id
@@ -645,5 +692,70 @@ public class P2PPaymentService : IP2PPaymentService
             new { Submitted = PaymentStatus.Submitted, Confirming = PaymentStatus.Confirming });
 
         return payments.ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task HandlePaymentTimeoutAsync(Guid paymentId)
+    {
+        using var conn = await _dbFactory.CreateOpenConnectionAsync();
+
+        var payment = await conn.QueryFirstOrDefaultAsync<P2PPayment>(
+            "SELECT * FROM p2p_payments WHERE id = @PaymentId",
+            new { PaymentId = paymentId });
+
+        if (payment == null || string.IsNullOrEmpty(payment.SolanaSignature))
+        {
+            _logger.LogWarning("Cannot handle timeout for payment {PaymentId}: not found or no signature", paymentId);
+            return;
+        }
+
+        // Check if transaction exists on-chain (may have appeared after timeout check)
+        var status = await _solanaService.GetTransactionStatusAsync(payment.SolanaSignature);
+
+        if (status.Found)
+        {
+            // Transaction exists on-chain - let normal confirmation flow handle it
+            _logger.LogInformation(
+                "Payment {PaymentId} transaction found on-chain after timeout check. Confirmations: {Confirmations}",
+                paymentId, status.Confirmations);
+
+            // Update status to confirming if it was still submitted
+            if (payment.Status == PaymentStatus.Submitted)
+            {
+                await conn.ExecuteAsync(
+                    @"UPDATE p2p_payments
+                      SET status = @Status, confirmations = @Confirmations, updated_at = @UpdatedAt
+                      WHERE id = @PaymentId",
+                    new
+                    {
+                        Status = PaymentStatus.Confirming,
+                        Confirmations = status.Confirmations,
+                        UpdatedAt = DateTime.UtcNow,
+                        PaymentId = paymentId
+                    });
+            }
+            return;
+        }
+
+        // Transaction not found on-chain after timeout - mark as timeout
+        _logger.LogWarning(
+            "Payment {PaymentId} timed out: transaction {Signature} not found on-chain. Marking as timeout.",
+            paymentId, payment.SolanaSignature);
+
+        await conn.ExecuteAsync(
+            @"UPDATE p2p_payments
+              SET status = @Status,
+                  error_message = @ErrorMessage,
+                  updated_at = @UpdatedAt
+              WHERE id = @PaymentId",
+            new
+            {
+                Status = PaymentStatus.Timeout,
+                ErrorMessage = "Transaction was submitted but never appeared on-chain. The transaction may have been dropped from the mempool. You can retry the payment.",
+                UpdatedAt = DateTime.UtcNow,
+                PaymentId = paymentId
+            });
+
+        // TODO: Consider sending a notification to the user about the timeout
     }
 }

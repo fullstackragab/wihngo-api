@@ -352,6 +352,9 @@ builder.Services.AddScoped<IS3Service, S3Service>();
 builder.Services.Configure<P2PPaymentConfiguration>(builder.Configuration.GetSection("P2PPayment"));
 builder.Services.Configure<SolanaConfig>(builder.Configuration.GetSection("Solana"));
 
+// Secret Management Service (for sponsor wallet private key, etc.)
+builder.Services.AddSingleton<ISecretService, SecretService>();
+
 // P2P Payment Services (NEW - USDC on Solana)
 builder.Services.AddScoped<ISolanaTransactionService, SolanaTransactionService>();
 builder.Services.AddScoped<IWalletService, WalletService>();

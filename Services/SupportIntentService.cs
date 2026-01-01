@@ -286,6 +286,39 @@ public class SupportIntentService : ISupportIntentService
             });
         }
 
+        // Check for idempotent request - return existing intent if same key was used recently
+        if (!string.IsNullOrEmpty(request.IdempotencyKey))
+        {
+            using var idempotencyConn = await _dbFactory.CreateOpenConnectionAsync();
+            var existingIntent = await idempotencyConn.QueryFirstOrDefaultAsync<SupportIntent>(
+                @"SELECT * FROM support_intents
+                  WHERE idempotency_key = @IdempotencyKey
+                  AND supporter_user_id = @UserId
+                  AND status IN (@AwaitingPayment, @Processing)
+                  AND expires_at > @Now
+                  ORDER BY created_at DESC
+                  LIMIT 1",
+                new
+                {
+                    IdempotencyKey = request.IdempotencyKey,
+                    UserId = supporterUserId,
+                    AwaitingPayment = SupportIntentStatus.AwaitingPayment,
+                    Processing = SupportIntentStatus.Processing,
+                    Now = DateTime.UtcNow
+                });
+
+            if (existingIntent != null)
+            {
+                _logger.LogInformation(
+                    "Returning existing intent {IntentId} for idempotency key {Key}",
+                    existingIntent.Id, request.IdempotencyKey);
+
+                // Return the existing intent
+                var existingResponse = await GetSupportIntentResponseAsync(existingIntent.Id, supporterUserId);
+                return (existingResponse, null);
+            }
+        }
+
         // First do a preflight check
         var preflight = await PreflightAsync(supporterUserId, new SupportPreflightRequest
         {
@@ -368,6 +401,7 @@ public class SupportIntentService : ISupportIntentService
             RecipientWalletPubkey = recipientWallet!.PublicKey,
             WihngoWalletPubkey = request.WihngoSupportAmount > 0 ? _config.WihngoTreasuryWallet : null,
             SerializedTransaction = serializedTx,
+            IdempotencyKey = request.IdempotencyKey,
             ExpiresAt = DateTime.UtcNow.AddMinutes(_config.PaymentExpirationMinutes),
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
@@ -378,10 +412,10 @@ public class SupportIntentService : ISupportIntentService
             @"INSERT INTO support_intents
               (id, supporter_user_id, bird_id, recipient_user_id, support_amount, bird_amount, wihngo_support_amount,
                total_amount, currency, status, payment_method, sender_wallet_pubkey,
-               recipient_wallet_pubkey, wihngo_wallet_pubkey, serialized_transaction, expires_at, created_at, updated_at)
+               recipient_wallet_pubkey, wihngo_wallet_pubkey, serialized_transaction, idempotency_key, expires_at, created_at, updated_at)
               VALUES (@Id, @SupporterUserId, @BirdId, @RecipientUserId, @BirdAmount, @BirdAmount, @WihngoSupportAmount,
                @TotalAmount, @Currency, @Status, @PaymentMethod, @SenderWalletPubkey,
-               @RecipientWalletPubkey, @WihngoWalletPubkey, @SerializedTransaction, @ExpiresAt, @CreatedAt, @UpdatedAt)",
+               @RecipientWalletPubkey, @WihngoWalletPubkey, @SerializedTransaction, @IdempotencyKey, @ExpiresAt, @CreatedAt, @UpdatedAt)",
             intent);
 
         _logger.LogInformation(
@@ -522,7 +556,8 @@ public class SupportIntentService : ISupportIntentService
     public async Task<(SubmitTransactionResponse? Response, ValidationErrorResponse? Error)> SubmitSignedTransactionAsync(
         Guid userId,
         Guid intentId,
-        string signedTransaction)
+        string signedTransaction,
+        string? idempotencyKey = null)
     {
         using var conn = await _dbFactory.CreateOpenConnectionAsync();
 
@@ -537,6 +572,28 @@ public class SupportIntentService : ISupportIntentService
                 ErrorCode = SupportIntentErrorCodes.IntentNotFound,
                 Message = "Support intent not found"
             });
+        }
+
+        // Check for idempotent submission - if same key was used before and intent already processed
+        if (!string.IsNullOrEmpty(idempotencyKey) && !string.IsNullOrEmpty(intent.IdempotencyKey))
+        {
+            // If intent already has a signature and matches the idempotency key, return existing result
+            if (intent.IdempotencyKey == idempotencyKey &&
+                !string.IsNullOrEmpty(intent.SolanaSignature) &&
+                intent.Status != SupportIntentStatus.AwaitingPayment)
+            {
+                _logger.LogInformation(
+                    "Returning existing submission for intent {IntentId}, idempotency key {Key}",
+                    intentId, idempotencyKey);
+
+                return (new SubmitTransactionResponse
+                {
+                    PaymentId = intentId,
+                    SolanaSignature = intent.SolanaSignature,
+                    Status = intent.Status,
+                    WasAlreadySubmitted = true
+                }, null);
+            }
         }
 
         if (intent.IsExpired)
@@ -554,6 +611,19 @@ public class SupportIntentService : ISupportIntentService
 
         if (intent.Status != SupportIntentStatus.AwaitingPayment)
         {
+            // If already submitted/processing, return existing result (idempotent behavior)
+            if (intent.Status == SupportIntentStatus.Processing ||
+                intent.Status == SupportIntentStatus.Completed)
+            {
+                return (new SubmitTransactionResponse
+                {
+                    PaymentId = intentId,
+                    SolanaSignature = intent.SolanaSignature,
+                    Status = intent.Status,
+                    WasAlreadySubmitted = true
+                }, null);
+            }
+
             return (null, new ValidationErrorResponse
             {
                 ErrorCode = SupportIntentErrorCodes.IntentAlreadyProcessed,
@@ -566,16 +636,18 @@ public class SupportIntentService : ISupportIntentService
             // Submit to Solana
             var signature = await _solanaService.SubmitTransactionAsync(signedTransaction);
 
-            // Update intent status
+            // Update intent status (also update idempotency key if provided)
             await conn.ExecuteAsync(
                 @"UPDATE support_intents
-                  SET status = @Status, solana_signature = @Signature, paid_at = @PaidAt, updated_at = @UpdatedAt
+                  SET status = @Status, solana_signature = @Signature, paid_at = @PaidAt,
+                      idempotency_key = COALESCE(@IdempotencyKey, idempotency_key), updated_at = @UpdatedAt
                   WHERE id = @IntentId",
                 new
                 {
                     Status = SupportIntentStatus.Processing,
                     Signature = signature,
                     PaidAt = DateTime.UtcNow,
+                    IdempotencyKey = idempotencyKey,
                     UpdatedAt = DateTime.UtcNow,
                     IntentId = intentId
                 });
@@ -596,8 +668,16 @@ public class SupportIntentService : ISupportIntentService
             _logger.LogError(ex, "Failed to submit transaction for support intent {IntentId}", intentId);
 
             await conn.ExecuteAsync(
-                "UPDATE support_intents SET status = @Status, updated_at = @UpdatedAt WHERE id = @IntentId",
-                new { Status = SupportIntentStatus.Failed, UpdatedAt = DateTime.UtcNow, IntentId = intentId });
+                @"UPDATE support_intents
+                  SET status = @Status, error_message = @ErrorMessage, updated_at = @UpdatedAt
+                  WHERE id = @IntentId",
+                new
+                {
+                    Status = SupportIntentStatus.Failed,
+                    ErrorMessage = ex.Message,
+                    UpdatedAt = DateTime.UtcNow,
+                    IntentId = intentId
+                });
 
             return (null, new ValidationErrorResponse
             {

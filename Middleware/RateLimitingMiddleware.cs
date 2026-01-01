@@ -11,12 +11,17 @@ namespace Wihngo.Middleware
         // Store: IP => (RequestCount, WindowStart)
         private static readonly ConcurrentDictionary<string, (int count, DateTime windowStart)> _loginAttempts = new();
         private static readonly ConcurrentDictionary<string, (int count, DateTime windowStart)> _apiRequests = new();
-        
+        private static readonly ConcurrentDictionary<string, (int count, DateTime windowStart)> _walletCallbackAttempts = new();
+
         // Configuration
         private const int MaxLoginAttemptsPerWindow = 5;
         private const int LoginWindowMinutes = 15;
         private const int MaxApiRequestsPerWindow = 100;
         private const int ApiWindowMinutes = 1;
+
+        // Wallet callback - stricter limits for this public endpoint
+        private const int MaxWalletCallbackAttemptsPerMinute = 10;
+        private const int MaxWalletCallbackAttemptsPerHour = 30;
 
         public RateLimitingMiddleware(RequestDelegate next, ILogger<RateLimitingMiddleware> logger)
         {
@@ -52,6 +57,25 @@ namespace Wihngo.Middleware
                         message = "Too many login attempts. Please try again later.",
                         code = "RATE_LIMIT_EXCEEDED",
                         retryAfter = LoginWindowMinutes * 60
+                    }));
+                    return;
+                }
+            }
+
+            // Apply stricter rate limiting to wallet-connect callback (public endpoint)
+            if (path.Contains("/api/wallet-connect/callback") && context.Request.Method == "POST")
+            {
+                if (!CheckWalletCallbackRateLimit(ipAddress))
+                {
+                    _logger.LogWarning("Wallet callback rate limit exceeded for IP: {IpAddress}", ipAddress);
+                    context.Response.StatusCode = (int)HttpStatusCode.TooManyRequests;
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        success = false,
+                        message = "Too many wallet connection attempts. Please try again later.",
+                        errorCode = "RATE_LIMIT_EXCEEDED",
+                        retryAfter = 60
                     }));
                     return;
                 }
@@ -114,18 +138,18 @@ namespace Wihngo.Middleware
         private bool CheckApiRateLimit(string ipAddress)
         {
             var now = DateTime.UtcNow;
-            
+
             if (_apiRequests.TryGetValue(ipAddress, out var existing))
             {
                 var windowExpiry = existing.windowStart.AddMinutes(ApiWindowMinutes);
-                
+
                 if (now < windowExpiry)
                 {
                     if (existing.count >= MaxApiRequestsPerWindow)
                     {
                         return false;
                     }
-                    
+
                     _apiRequests[ipAddress] = (existing.count + 1, existing.windowStart);
                 }
                 else
@@ -137,7 +161,60 @@ namespace Wihngo.Middleware
             {
                 _apiRequests[ipAddress] = (1, now);
             }
-            
+
+            return true;
+        }
+
+        private bool CheckWalletCallbackRateLimit(string ipAddress)
+        {
+            var now = DateTime.UtcNow;
+            var keyMinute = $"{ipAddress}:minute";
+            var keyHour = $"{ipAddress}:hour";
+
+            // Check per-minute limit
+            if (_walletCallbackAttempts.TryGetValue(keyMinute, out var minuteData))
+            {
+                var windowExpiry = minuteData.windowStart.AddMinutes(1);
+                if (now < windowExpiry)
+                {
+                    if (minuteData.count >= MaxWalletCallbackAttemptsPerMinute)
+                    {
+                        return false; // Rate limit exceeded
+                    }
+                    _walletCallbackAttempts[keyMinute] = (minuteData.count + 1, minuteData.windowStart);
+                }
+                else
+                {
+                    _walletCallbackAttempts[keyMinute] = (1, now);
+                }
+            }
+            else
+            {
+                _walletCallbackAttempts[keyMinute] = (1, now);
+            }
+
+            // Check per-hour limit
+            if (_walletCallbackAttempts.TryGetValue(keyHour, out var hourData))
+            {
+                var windowExpiry = hourData.windowStart.AddHours(1);
+                if (now < windowExpiry)
+                {
+                    if (hourData.count >= MaxWalletCallbackAttemptsPerHour)
+                    {
+                        return false; // Rate limit exceeded
+                    }
+                    _walletCallbackAttempts[keyHour] = (hourData.count + 1, hourData.windowStart);
+                }
+                else
+                {
+                    _walletCallbackAttempts[keyHour] = (1, now);
+                }
+            }
+            else
+            {
+                _walletCallbackAttempts[keyHour] = (1, now);
+            }
+
             return true;
         }
 
@@ -168,33 +245,45 @@ namespace Wihngo.Middleware
         private void CleanupOldEntries()
         {
             var now = DateTime.UtcNow;
-            
+
             // Clean login attempts
             var loginExpiredKeys = _loginAttempts
                 .Where(kvp => now > kvp.Value.windowStart.AddMinutes(LoginWindowMinutes * 2))
                 .Select(kvp => kvp.Key)
                 .ToList();
-            
+
             foreach (var key in loginExpiredKeys)
             {
                 _loginAttempts.TryRemove(key, out _);
             }
-            
+
             // Clean API requests
             var apiExpiredKeys = _apiRequests
                 .Where(kvp => now > kvp.Value.windowStart.AddMinutes(ApiWindowMinutes * 2))
                 .Select(kvp => kvp.Key)
                 .ToList();
-            
+
             foreach (var key in apiExpiredKeys)
             {
                 _apiRequests.TryRemove(key, out _);
             }
-            
-            if (loginExpiredKeys.Count > 0 || apiExpiredKeys.Count > 0)
+
+            // Clean wallet callback attempts (hour-based entries last longer)
+            var walletExpiredKeys = _walletCallbackAttempts
+                .Where(kvp => now > kvp.Value.windowStart.AddHours(2))
+                .Select(kvp => kvp.Key)
+                .ToList();
+
+            foreach (var key in walletExpiredKeys)
             {
-                _logger.LogDebug("Cleaned up {LoginCount} login and {ApiCount} API rate limit entries", 
-                    loginExpiredKeys.Count, apiExpiredKeys.Count);
+                _walletCallbackAttempts.TryRemove(key, out _);
+            }
+
+            if (loginExpiredKeys.Count > 0 || apiExpiredKeys.Count > 0 || walletExpiredKeys.Count > 0)
+            {
+                _logger.LogDebug(
+                    "Cleaned up {LoginCount} login, {ApiCount} API, and {WalletCount} wallet callback rate limit entries",
+                    loginExpiredKeys.Count, apiExpiredKeys.Count, walletExpiredKeys.Count);
             }
         }
     }

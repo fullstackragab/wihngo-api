@@ -48,4 +48,10 @@ public interface IP2PPaymentService
     /// Gets all pending payments that need confirmation checking
     /// </summary>
     Task<List<P2PPayment>> GetPendingConfirmationsAsync();
+
+    /// <summary>
+    /// Handles a payment that has timed out (submitted but never confirmed)
+    /// Checks if transaction exists on-chain, and either waits longer or marks as timeout
+    /// </summary>
+    Task HandlePaymentTimeoutAsync(Guid paymentId);
 }

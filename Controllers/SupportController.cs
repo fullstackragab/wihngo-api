@@ -343,6 +343,72 @@ public class SupportController : ControllerBase
     }
 
     /// <summary>
+    /// Support Wihngo directly (no bird involved)
+    /// </summary>
+    /// <remarks>
+    /// Use this endpoint when supporting Wihngo platform directly, without a specific bird.
+    /// Minimum support amount: $0.05 USDC.
+    ///
+    /// Flow:
+    /// 1. Call POST /wihngo with amount
+    /// 2. Sign the returned serializedTransaction in wallet
+    /// 3. Call POST /intents/{id}/submit with signed transaction
+    /// </remarks>
+    [HttpPost("wihngo")]
+    [ProducesResponseType(typeof(SupportWihngoResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ValidationErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> SupportWihngo([FromBody] SupportWihngoRequest request)
+    {
+        try
+        {
+            if (!ModelState.IsValid)
+            {
+                var errors = new Dictionary<string, string[]>();
+                foreach (var kvp in ModelState)
+                {
+                    if (kvp.Value.Errors.Count > 0)
+                    {
+                        errors[ToCamelCase(kvp.Key)] = kvp.Value.Errors.Select(e => e.ErrorMessage).ToArray();
+                    }
+                }
+
+                return BadRequest(new ValidationErrorResponse
+                {
+                    ErrorCode = "VALIDATION_ERROR",
+                    Message = "One or more validation errors occurred",
+                    FieldErrors = errors
+                });
+            }
+
+            var userId = GetUserId();
+            var (response, error) = await _supportIntentService.CreateWihngoSupportIntentAsync(userId, request);
+
+            if (error != null)
+            {
+                _logger.LogWarning(
+                    "Wihngo support intent creation failed: {ErrorCode} - {Message}",
+                    error.ErrorCode, error.Message);
+                return BadRequest(error);
+            }
+
+            _logger.LogInformation(
+                "Wihngo support intent created: {IntentId}, Amount: {Amount} USDC",
+                response!.IntentId, response.Amount);
+
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating Wihngo support intent");
+            return StatusCode(500, new ValidationErrorResponse
+            {
+                ErrorCode = SupportIntentErrorCodes.InternalError,
+                Message = "An error occurred creating the support intent"
+            });
+        }
+    }
+
+    /// <summary>
     /// Get a support intent by ID
     /// </summary>
     [HttpGet("intents/{intentId}")]
@@ -386,6 +452,9 @@ public class SupportController : ControllerBase
     ///
     /// The transaction will be submitted to the network and the intent status
     /// will change to "processing". A background job monitors confirmation.
+    ///
+    /// Idempotency: If the same idempotencyKey is used for a request that was already
+    /// processed, the original result will be returned (with wasAlreadySubmitted=true).
     /// </remarks>
     [HttpPost("intents/{intentId}/submit")]
     [ProducesResponseType(typeof(SubmitTransactionResponse), StatusCodes.Status200OK)]
@@ -396,7 +465,7 @@ public class SupportController : ControllerBase
         {
             var userId = GetUserId();
             var (response, error) = await _supportIntentService.SubmitSignedTransactionAsync(
-                userId, intentId, request.SignedTransaction);
+                userId, intentId, request.SignedTransaction, request.IdempotencyKey);
 
             if (error != null)
             {
@@ -407,8 +476,8 @@ public class SupportController : ControllerBase
             }
 
             _logger.LogInformation(
-                "Transaction submitted for intent {IntentId}: {Signature}",
-                intentId, response!.SolanaSignature);
+                "Transaction submitted for intent {IntentId}: {Signature}, WasAlreadySubmitted: {WasAlready}",
+                intentId, response!.SolanaSignature, response.WasAlreadySubmitted);
 
             return Ok(response);
         }

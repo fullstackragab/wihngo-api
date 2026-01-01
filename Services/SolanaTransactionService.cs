@@ -5,6 +5,7 @@ using Solnet.Rpc.Builders;
 using Solnet.Rpc.Models;
 using Solnet.Rpc.Types;
 using Solnet.Wallet;
+using Solnet.Wallet.Utilities;
 using Wihngo.Configuration;
 using Wihngo.Services.Interfaces;
 
@@ -17,6 +18,7 @@ public class SolanaTransactionService : ISolanaTransactionService
 {
     private readonly IRpcClient _rpcClient;
     private readonly P2PPaymentConfiguration _config;
+    private readonly ISecretService _secretService;
     private readonly ILogger<SolanaTransactionService> _logger;
 
     // USDC has 6 decimals
@@ -31,9 +33,11 @@ public class SolanaTransactionService : ISolanaTransactionService
     public SolanaTransactionService(
         IOptions<P2PPaymentConfiguration> config,
         IOptions<SolanaConfig> solanaConfig,
+        ISecretService secretService,
         ILogger<SolanaTransactionService> logger)
     {
         _config = config.Value;
+        _secretService = secretService;
         _logger = logger;
         _rpcClient = ClientFactory.GetClient(solanaConfig.Value.RpcUrl);
     }
@@ -114,14 +118,23 @@ public class SolanaTransactionService : ISolanaTransactionService
 
             // For an unsigned transaction, we need to create the full transaction format:
             // [1 byte: num signatures] [64 bytes per signature (empty)] [message bytes]
-            // Since client will sign, we create transaction with 1 empty signature slot
-            var numSignatures = 1; // sender needs to sign
-            var emptySignature = new byte[64]; // placeholder for client signature
+            // If fee payer is different from sender, we need 2 signature slots:
+            // - Slot 0: Fee payer (sponsor) signature
+            // - Slot 1: Sender signature
+            var hasSponsorship = feePayer != null && feePayer != senderPubkey;
+            var numSignatures = hasSponsorship ? 2 : 1;
+            var emptySignature = new byte[64]; // placeholder for signatures
 
-            var transactionBytes = new byte[1 + 64 + messageBytes.Length];
+            var transactionBytes = new byte[1 + (64 * numSignatures) + messageBytes.Length];
             transactionBytes[0] = (byte)numSignatures;
-            Array.Copy(emptySignature, 0, transactionBytes, 1, 64);
-            Array.Copy(messageBytes, 0, transactionBytes, 65, messageBytes.Length);
+
+            // Leave signature slots empty (will be filled by signers)
+            for (int i = 0; i < numSignatures; i++)
+            {
+                Array.Copy(emptySignature, 0, transactionBytes, 1 + (64 * i), 64);
+            }
+
+            Array.Copy(messageBytes, 0, transactionBytes, 1 + (64 * numSignatures), messageBytes.Length);
 
             // Serialize to base64 (ready for client to sign)
             var serialized = Convert.ToBase64String(transactionBytes);
@@ -411,9 +424,9 @@ public class SolanaTransactionService : ISolanaTransactionService
                 }
             }
 
-            // Allow 1% tolerance for amount matching
-            var tolerance = expectedAmount * 0.01m;
-            var amountMatches = Math.Abs(actualAmount - expectedAmount) <= tolerance;
+            // SECURITY: Require exact amount match (no tolerance) to prevent underpayment attacks
+            // Both values are in USDC with 6 decimal precision
+            var amountMatches = actualAmount == expectedAmount;
 
             return new TransactionVerificationResult
             {
@@ -433,6 +446,92 @@ public class SolanaTransactionService : ISolanaTransactionService
                 Success = false,
                 Error = ex.Message
             };
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<string> AddSponsorSignatureAsync(string partiallySignedTransactionBase64)
+    {
+        try
+        {
+            // Get sponsor wallet secret key from secure storage
+            // This should be a base58-encoded 64-byte secret key (private key + public key)
+            var sponsorSecretKeyBase58 = await _secretService.GetRequiredSecretAsync("SponsorWalletPrivateKey");
+
+            // Decode the base58 secret key to bytes
+            // Solana secret keys are 64 bytes: first 32 = private key, last 32 = public key
+            byte[] secretKeyBytes;
+            try
+            {
+                secretKeyBytes = Encoders.Base58.DecodeData(sponsorSecretKeyBase58);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("Invalid base58 format for sponsor wallet secret key", ex);
+            }
+
+            if (secretKeyBytes.Length != 64)
+            {
+                throw new InvalidOperationException(
+                    $"Sponsor wallet secret key must be 64 bytes, got {secretKeyBytes.Length}. " +
+                    "Ensure you're using the full secret key (not just the private key seed).");
+            }
+
+            // Create account from secret key bytes
+            // privateKey = first 32 bytes, publicKey = last 32 bytes
+            var privateKey = secretKeyBytes[..32];
+            var publicKey = secretKeyBytes[32..];
+            var sponsorAccount = new Account(privateKey, publicKey);
+
+            // Verify the sponsor public key matches configuration
+            var expectedSponsorPubkey = _config.GasSponsorship?.SponsorWalletPubkey;
+            if (expectedSponsorPubkey != null && sponsorAccount.PublicKey.Key != expectedSponsorPubkey)
+            {
+                _logger.LogError(
+                    "Sponsor wallet mismatch: expected {Expected}, got {Actual}",
+                    expectedSponsorPubkey, sponsorAccount.PublicKey.Key);
+                throw new InvalidOperationException("Sponsor wallet private key does not match configured public key");
+            }
+
+            // Decode the transaction
+            var txBytes = Convert.FromBase64String(partiallySignedTransactionBase64);
+
+            // Parse transaction structure:
+            // [1 byte: num signatures] [64 bytes per signature] [message bytes]
+            var numSignatures = txBytes[0];
+
+            if (numSignatures < 2)
+            {
+                throw new InvalidOperationException(
+                    $"Transaction has {numSignatures} signature slot(s), expected at least 2 for sponsored transaction");
+            }
+
+            // Extract the message bytes (everything after signatures)
+            var messageStart = 1 + (64 * numSignatures);
+            var messageBytes = new byte[txBytes.Length - messageStart];
+            Array.Copy(txBytes, messageStart, messageBytes, 0, messageBytes.Length);
+
+            // Sign the message with sponsor wallet
+            // The sponsor (fee payer) signature goes in slot 0
+            var sponsorSignature = sponsorAccount.Sign(messageBytes);
+
+            // Copy sponsor signature to slot 0
+            Array.Copy(sponsorSignature, 0, txBytes, 1, 64);
+
+            _logger.LogInformation(
+                "Added sponsor signature from wallet {SponsorPubkey}",
+                sponsorAccount.PublicKey.Key);
+
+            return Convert.ToBase64String(txBytes);
+        }
+        catch (InvalidOperationException)
+        {
+            throw; // Re-throw configuration errors
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error adding sponsor signature to transaction");
+            throw new InvalidOperationException("Failed to add sponsor signature: " + ex.Message, ex);
         }
     }
 }
