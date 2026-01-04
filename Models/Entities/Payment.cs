@@ -229,8 +229,10 @@ public sealed class Payment
     {
         if (string.IsNullOrWhiteSpace(destinationAddress))
             throw new ArgumentException("Destination address is required.", nameof(destinationAddress));
-        if (amountCents <= 0)
-            throw new ArgumentException("Amount must be positive.", nameof(amountCents));
+        if (purpose == PaymentPurpose.BirdSupport && amountCents <= 0)
+            throw new ArgumentException("Amount must be positive for bird support.", nameof(amountCents));
+        if (purpose == PaymentPurpose.PlatformSupport && wihngoAmountCents <= 0)
+            throw new ArgumentException("Wihngo amount must be positive for platform support.", nameof(wihngoAmountCents));
         if (purpose == PaymentPurpose.BirdSupport && birdId == null)
             throw new ArgumentException("BirdId is required for bird support payments.", nameof(birdId));
         if (string.IsNullOrWhiteSpace(buyerEmail))

@@ -259,16 +259,28 @@ public sealed class PaymentsController : ControllerBase
         [FromBody] CreateManualPaymentRequest request,
         CancellationToken ct = default)
     {
-        if (request.AmountCents <= 0)
-            return BadRequest(new { error = "Amount must be positive." });
+        // Determine purpose: BirdSupport if birdId provided, PlatformSupport otherwise
+        var isPlatformOnly = !request.BirdId.HasValue;
+
+        if (isPlatformOnly)
+        {
+            // Platform-only: wihngoAmountCents must be positive, amountCents can be zero
+            if (request.WihngoAmountCents <= 0)
+                return BadRequest(new { error = "Wihngo support amount must be positive for platform donations." });
+        }
+        else
+        {
+            // Bird support: amountCents must be positive
+            if (request.AmountCents <= 0)
+                return BadRequest(new { error = "Amount must be positive for bird support." });
+        }
 
         if (string.IsNullOrWhiteSpace(request.Email))
             return BadRequest(new { error = "Email is required for manual payments." });
 
-        // Determine purpose: BirdSupport if birdId provided, PlatformSupport otherwise
-        var purpose = request.BirdId.HasValue
-            ? PaymentPurpose.BirdSupport
-            : PaymentPurpose.PlatformSupport;
+        var purpose = isPlatformOnly
+            ? PaymentPurpose.PlatformSupport
+            : PaymentPurpose.BirdSupport;
 
         // Create anonymous payment intent (user claims after confirmation)
         var result = await _paymentService.CreateManualPaymentIntentAsync(
