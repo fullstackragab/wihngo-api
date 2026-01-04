@@ -265,9 +265,14 @@ public sealed class PaymentsController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Email))
             return BadRequest(new { error = "Email is required for manual payments." });
 
+        // Determine purpose: BirdSupport if birdId provided, PlatformSupport otherwise
+        var purpose = request.BirdId.HasValue
+            ? PaymentPurpose.BirdSupport
+            : PaymentPurpose.PlatformSupport;
+
         // Create anonymous payment intent (user claims after confirmation)
         var result = await _paymentService.CreateManualPaymentIntentAsync(
-            purpose: PaymentPurpose.BirdSupport,
+            purpose: purpose,
             amountCents: request.AmountCents,
             buyerEmail: request.Email,
             birdId: request.BirdId,
@@ -571,6 +576,7 @@ public sealed class PaymentsController : ControllerBase
         PaymentPurpose.BirdSupport => "bird_support",
         PaymentPurpose.Payout => "payout",
         PaymentPurpose.Refund => "refund",
+        PaymentPurpose.PlatformSupport => "platform_support",
         _ => "unknown"
     };
 
@@ -672,9 +678,10 @@ public sealed record IntentStatusResponse(
 
 /// <summary>
 /// Request to create a manual payment intent.
+/// BirdId is optional - if null, this is a platform-only donation.
 /// </summary>
 public sealed record CreateManualPaymentRequest(
-    Guid BirdId,
+    Guid? BirdId,
     int AmountCents,
     string Email,
     int WihngoAmountCents = 0

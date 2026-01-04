@@ -56,7 +56,12 @@ public enum PaymentPurpose
     /// <summary>
     /// Refund to a user.
     /// </summary>
-    Refund = 2
+    Refund = 2,
+
+    /// <summary>
+    /// User supporting the Wihngo platform directly (no specific bird).
+    /// </summary>
+    PlatformSupport = 3
 }
 
 /// <summary>

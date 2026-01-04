@@ -676,6 +676,7 @@ public sealed class PaymentRepository : IPaymentRepository
         PaymentPurpose.BirdSupport => "BIRD_SUPPORT",
         PaymentPurpose.Payout => "PAYOUT",
         PaymentPurpose.Refund => "REFUND",
+        PaymentPurpose.PlatformSupport => "PLATFORM_SUPPORT",
         _ => throw new ArgumentOutOfRangeException(nameof(purpose))
     };
 
@@ -760,6 +761,7 @@ public sealed class PaymentRepository : IPaymentRepository
             "BIRD_SUPPORT" => PaymentPurpose.BirdSupport,
             "PAYOUT" => PaymentPurpose.Payout,
             "REFUND" => PaymentPurpose.Refund,
+            "PLATFORM_SUPPORT" => PaymentPurpose.PlatformSupport,
             _ => throw new ArgumentOutOfRangeException(nameof(purpose))
         };
 
