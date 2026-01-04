@@ -394,7 +394,7 @@ public sealed class PaymentsController : ControllerBase
         {
             _logger.LogWarning(
                 "[PAYMENT] Transaction already used: {TxHash}, existing payment: {PaymentId}",
-                request.TxHash, existingPayment.id);
+                request.TxHash, (object)existingPayment.id);
 
             return BadRequest(new VerifySolanaSupportResponse
             {

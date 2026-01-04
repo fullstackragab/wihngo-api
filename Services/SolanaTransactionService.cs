@@ -513,6 +513,16 @@ public class SolanaTransactionService : ISolanaTransactionService
             // Build a map of token account changes
             var tokenChanges = new Dictionary<int, (string? Owner, decimal PreBalance, decimal PostBalance)>();
 
+            // Helper to get owner from account keys using account index
+            string? GetOwnerFromAccountKeys(int accountIdx)
+            {
+                if (accountKeys != null && accountIdx >= 0 && accountIdx < accountKeys.Length)
+                {
+                    return accountKeys[accountIdx];
+                }
+                return null;
+            }
+
             // Process post balances
             foreach (var balance in postBalances)
             {
@@ -521,8 +531,8 @@ public class SolanaTransactionService : ISolanaTransactionService
                     mintMatches = true;
                     var accountIndex = balance.AccountIndex;
 
-                    // Get owner from the account keys if available
-                    // For SPL token accounts, we need to use the owner field from the balance
+                    // Get owner from the account keys using account index
+                    var owner = GetOwnerFromAccountKeys(accountIndex);
                     decimal postAmount = 0;
                     if (decimal.TryParse(balance.UiTokenAmount?.UiAmountString, out var parsed))
                     {
@@ -531,12 +541,12 @@ public class SolanaTransactionService : ISolanaTransactionService
 
                     if (!tokenChanges.ContainsKey(accountIndex))
                     {
-                        tokenChanges[accountIndex] = (balance.Owner, 0, postAmount);
+                        tokenChanges[accountIndex] = (owner, 0, postAmount);
                     }
                     else
                     {
                         var existing = tokenChanges[accountIndex];
-                        tokenChanges[accountIndex] = (balance.Owner ?? existing.Owner, existing.PreBalance, postAmount);
+                        tokenChanges[accountIndex] = (owner ?? existing.Owner, existing.PreBalance, postAmount);
                     }
                 }
             }
@@ -549,6 +559,8 @@ public class SolanaTransactionService : ISolanaTransactionService
                     mintMatches = true;
                     var accountIndex = balance.AccountIndex;
 
+                    // Get owner from the account keys using account index
+                    var owner = GetOwnerFromAccountKeys(accountIndex);
                     decimal preAmount = 0;
                     if (decimal.TryParse(balance.UiTokenAmount?.UiAmountString, out var parsed))
                     {
@@ -557,12 +569,12 @@ public class SolanaTransactionService : ISolanaTransactionService
 
                     if (!tokenChanges.ContainsKey(accountIndex))
                     {
-                        tokenChanges[accountIndex] = (balance.Owner, preAmount, 0);
+                        tokenChanges[accountIndex] = (owner, preAmount, 0);
                     }
                     else
                     {
                         var existing = tokenChanges[accountIndex];
-                        tokenChanges[accountIndex] = (balance.Owner ?? existing.Owner, preAmount, existing.PostBalance);
+                        tokenChanges[accountIndex] = (owner ?? existing.Owner, preAmount, existing.PostBalance);
                     }
                 }
             }
