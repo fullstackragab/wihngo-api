@@ -22,14 +22,6 @@ public class InvoiceConfiguration
     public int InvoiceExpiryMinutes { get; set; } = 30;
 }
 
-public class SolanaConfiguration
-{
-    public string RpcUrl { get; set; } = "https://api.mainnet-beta.solana.com";
-    public string MerchantWalletAddress { get; set; } = string.Empty;
-    public int ConfirmationBlocks { get; set; } = 32; // finalized
-    public int PollingIntervalSeconds { get; set; } = 10;
-}
-
 public class BaseConfiguration
 {
     public string RpcUrl { get; set; } = "https://mainnet.base.org";

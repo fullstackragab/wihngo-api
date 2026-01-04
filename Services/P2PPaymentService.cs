@@ -221,7 +221,7 @@ public class P2PPaymentService : IP2PPaymentService
             RecipientWalletPubkey = recipientPubkey,
             AmountUsdc = request.AmountUsdc,
             FeeUsdc = fee,
-            Status = PaymentStatus.Pending,
+            Status = P2PPaymentStatus.Pending,
             GasSponsored = gasSponsored,
             SerializedTransaction = serializedTx,
             Memo = request.Memo,
@@ -331,7 +331,7 @@ public class P2PPaymentService : IP2PPaymentService
             return new SubmitTransactionResponse
             {
                 PaymentId = request.PaymentId,
-                Status = PaymentStatus.Failed,
+                Status = P2PPaymentStatus.Failed,
                 ErrorMessage = "Payment not found"
             };
         }
@@ -363,7 +363,7 @@ public class P2PPaymentService : IP2PPaymentService
         }
 
         // 3. Check payment is still pending
-        if (payment.Status != PaymentStatus.Pending)
+        if (payment.Status != P2PPaymentStatus.Pending)
         {
             return new SubmitTransactionResponse
             {
@@ -371,10 +371,10 @@ public class P2PPaymentService : IP2PPaymentService
                 Status = payment.Status,
                 SolanaSignature = payment.SolanaSignature,
                 ErrorMessage = $"Payment is already {payment.Status}",
-                WasAlreadySubmitted = payment.Status == PaymentStatus.Submitted ||
-                                      payment.Status == PaymentStatus.Confirming ||
-                                      payment.Status == PaymentStatus.Confirmed ||
-                                      payment.Status == PaymentStatus.Completed
+                WasAlreadySubmitted = payment.Status == P2PPaymentStatus.Submitted ||
+                                      payment.Status == P2PPaymentStatus.Confirming ||
+                                      payment.Status == P2PPaymentStatus.Confirmed ||
+                                      payment.Status == P2PPaymentStatus.Completed
             };
         }
 
@@ -383,12 +383,12 @@ public class P2PPaymentService : IP2PPaymentService
         {
             await conn.ExecuteAsync(
                 "UPDATE p2p_payments SET status = @Status, updated_at = @UpdatedAt WHERE id = @PaymentId",
-                new { Status = PaymentStatus.Expired, UpdatedAt = DateTime.UtcNow, PaymentId = payment.Id });
+                new { Status = P2PPaymentStatus.Expired, UpdatedAt = DateTime.UtcNow, PaymentId = payment.Id });
 
             return new SubmitTransactionResponse
             {
                 PaymentId = payment.Id,
-                Status = PaymentStatus.Expired,
+                Status = P2PPaymentStatus.Expired,
                 ErrorMessage = "Payment intent has expired"
             };
         }
@@ -436,7 +436,7 @@ public class P2PPaymentService : IP2PPaymentService
                   WHERE id = @PaymentId",
                 new
                 {
-                    Status = PaymentStatus.Submitted,
+                    Status = P2PPaymentStatus.Submitted,
                     Signature = signature,
                     IdempotencyKey = request.IdempotencyKey,
                     SubmittedAt = DateTime.UtcNow,
@@ -452,7 +452,7 @@ public class P2PPaymentService : IP2PPaymentService
             {
                 PaymentId = payment.Id,
                 SolanaSignature = signature,
-                Status = PaymentStatus.Submitted
+                Status = P2PPaymentStatus.Submitted
             };
         }
         catch (Exception ex)
@@ -461,12 +461,12 @@ public class P2PPaymentService : IP2PPaymentService
 
             await conn.ExecuteAsync(
                 "UPDATE p2p_payments SET status = @Status, updated_at = @UpdatedAt WHERE id = @PaymentId",
-                new { Status = PaymentStatus.Failed, UpdatedAt = DateTime.UtcNow, PaymentId = payment.Id });
+                new { Status = P2PPaymentStatus.Failed, UpdatedAt = DateTime.UtcNow, PaymentId = payment.Id });
 
             return new SubmitTransactionResponse
             {
                 PaymentId = payment.Id,
-                Status = PaymentStatus.Failed,
+                Status = P2PPaymentStatus.Failed,
                 ErrorMessage = ex.Message
             };
         }
@@ -483,11 +483,11 @@ public class P2PPaymentService : IP2PPaymentService
               WHERE id = @PaymentId AND sender_user_id = @UserId AND status = @CurrentStatus",
             new
             {
-                Status = PaymentStatus.Cancelled,
+                Status = P2PPaymentStatus.Cancelled,
                 UpdatedAt = DateTime.UtcNow,
                 PaymentId = paymentId,
                 UserId = userId,
-                CurrentStatus = PaymentStatus.Pending
+                CurrentStatus = P2PPaymentStatus.Pending
             });
 
         if (rowsAffected > 0)
@@ -584,7 +584,7 @@ public class P2PPaymentService : IP2PPaymentService
             // Transaction failed on-chain
             await conn.ExecuteAsync(
                 "UPDATE p2p_payments SET status = @Status, updated_at = @UpdatedAt WHERE id = @PaymentId",
-                new { Status = PaymentStatus.Failed, UpdatedAt = DateTime.UtcNow, PaymentId = paymentId });
+                new { Status = P2PPaymentStatus.Failed, UpdatedAt = DateTime.UtcNow, PaymentId = paymentId });
 
             _logger.LogError("Payment {PaymentId} failed on-chain: {Error}", paymentId, status.Error);
             return false;
@@ -621,7 +621,7 @@ public class P2PPaymentService : IP2PPaymentService
 
                 await conn.ExecuteAsync(
                     "UPDATE p2p_payments SET status = @Status, updated_at = @UpdatedAt WHERE id = @PaymentId",
-                    new { Status = PaymentStatus.Failed, UpdatedAt = DateTime.UtcNow, PaymentId = paymentId });
+                    new { Status = P2PPaymentStatus.Failed, UpdatedAt = DateTime.UtcNow, PaymentId = paymentId });
 
                 return false;
             }
@@ -633,7 +633,7 @@ public class P2PPaymentService : IP2PPaymentService
                   WHERE id = @PaymentId",
                 new
                 {
-                    Status = PaymentStatus.Confirmed,
+                    Status = P2PPaymentStatus.Confirmed,
                     ConfirmedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
                     PaymentId = paymentId
@@ -645,7 +645,7 @@ public class P2PPaymentService : IP2PPaymentService
                 new { PaymentId = paymentId });
 
             // Record ledger entries
-            payment!.Status = PaymentStatus.Completed;
+            payment!.Status = P2PPaymentStatus.Completed;
             await _ledgerService.RecordPaymentAsync(payment);
 
             // Mark as completed
@@ -655,7 +655,7 @@ public class P2PPaymentService : IP2PPaymentService
                   WHERE id = @PaymentId",
                 new
                 {
-                    Status = PaymentStatus.Completed,
+                    Status = P2PPaymentStatus.Completed,
                     CompletedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow,
                     PaymentId = paymentId
@@ -669,11 +669,11 @@ public class P2PPaymentService : IP2PPaymentService
         }
 
         // Still confirming
-        if (payment.Status != PaymentStatus.Confirming)
+        if (payment.Status != P2PPaymentStatus.Confirming)
         {
             await conn.ExecuteAsync(
                 "UPDATE p2p_payments SET status = @Status, updated_at = @UpdatedAt WHERE id = @PaymentId",
-                new { Status = PaymentStatus.Confirming, UpdatedAt = DateTime.UtcNow, PaymentId = paymentId });
+                new { Status = P2PPaymentStatus.Confirming, UpdatedAt = DateTime.UtcNow, PaymentId = paymentId });
         }
 
         return false;
@@ -689,7 +689,7 @@ public class P2PPaymentService : IP2PPaymentService
               WHERE status IN (@Submitted, @Confirming)
               AND solana_signature IS NOT NULL
               ORDER BY submitted_at ASC",
-            new { Submitted = PaymentStatus.Submitted, Confirming = PaymentStatus.Confirming });
+            new { Submitted = P2PPaymentStatus.Submitted, Confirming = P2PPaymentStatus.Confirming });
 
         return payments.ToList();
     }
@@ -720,7 +720,7 @@ public class P2PPaymentService : IP2PPaymentService
                 paymentId, status.Confirmations);
 
             // Update status to confirming if it was still submitted
-            if (payment.Status == PaymentStatus.Submitted)
+            if (payment.Status == P2PPaymentStatus.Submitted)
             {
                 await conn.ExecuteAsync(
                     @"UPDATE p2p_payments
@@ -728,7 +728,7 @@ public class P2PPaymentService : IP2PPaymentService
                       WHERE id = @PaymentId",
                     new
                     {
-                        Status = PaymentStatus.Confirming,
+                        Status = P2PPaymentStatus.Confirming,
                         Confirmations = status.Confirmations,
                         UpdatedAt = DateTime.UtcNow,
                         PaymentId = paymentId
@@ -750,7 +750,7 @@ public class P2PPaymentService : IP2PPaymentService
               WHERE id = @PaymentId",
             new
             {
-                Status = PaymentStatus.Timeout,
+                Status = P2PPaymentStatus.Timeout,
                 ErrorMessage = "Transaction was submitted but never appeared on-chain. The transaction may have been dropped from the mempool. You can retry the payment.",
                 UpdatedAt = DateTime.UtcNow,
                 PaymentId = paymentId

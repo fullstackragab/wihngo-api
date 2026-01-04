@@ -80,7 +80,7 @@ public class LedgerService : ILedgerService
     /// <inheritdoc />
     public async Task RecordPaymentAsync(P2PPayment payment)
     {
-        if (payment.Status != PaymentStatus.Completed)
+        if (payment.Status != P2PPaymentStatus.Completed)
         {
             throw new InvalidOperationException("Cannot record ledger entries for non-completed payment");
         }

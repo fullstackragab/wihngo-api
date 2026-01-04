@@ -153,8 +153,8 @@ public class SupportController : ControllerBase
             var userId = GetUserId();
             var result = await _transferService.SubmitSignedTransactionAsync(userId, request);
 
-            if (result.Status == Models.Entities.PaymentStatus.Failed ||
-                result.Status == Models.Entities.PaymentStatus.Expired)
+            if (result.Status == Models.Entities.P2PPaymentStatus.Failed ||
+                result.Status == Models.Entities.P2PPaymentStatus.Expired)
             {
                 return BadRequest(result);
             }
@@ -171,7 +171,7 @@ public class SupportController : ControllerBase
             return StatusCode(500, new SubmitTransactionResponse
             {
                 PaymentId = request.PaymentId,
-                Status = Models.Entities.PaymentStatus.Failed,
+                Status = Models.Entities.P2PPaymentStatus.Failed,
                 ErrorMessage = "An error occurred submitting the transaction"
             });
         }

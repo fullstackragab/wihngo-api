@@ -48,7 +48,7 @@ public class P2PPayment
     [Required]
     [MaxLength(20)]
     [Column("status")]
-    public string Status { get; set; } = PaymentStatus.Pending;
+    public string Status { get; set; } = P2PPaymentStatus.Pending;
 
     // Blockchain details
     [MaxLength(88)]
@@ -111,13 +111,13 @@ public class P2PPayment
     /// <summary>
     /// Check if payment has expired
     /// </summary>
-    public bool IsExpired => DateTime.UtcNow > ExpiresAt && Status == PaymentStatus.Pending;
+    public bool IsExpired => DateTime.UtcNow > ExpiresAt && Status == P2PPaymentStatus.Pending;
 }
 
 /// <summary>
-/// Payment status constants
+/// P2P Payment status constants (string-based for legacy compatibility)
 /// </summary>
-public static class PaymentStatus
+public static class P2PPaymentStatus
 {
     public const string Pending = "pending";
     public const string AwaitingSignature = "awaiting_signature";

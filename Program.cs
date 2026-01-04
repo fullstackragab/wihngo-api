@@ -243,6 +243,7 @@ static string? ExtractDatabaseName(string? connectionString)
 builder.Services.Configure<SecurityConfiguration>(builder.Configuration.GetSection("Security"));
 builder.Services.Configure<InvoiceConfiguration>(builder.Configuration.GetSection("Invoice"));
 builder.Services.Configure<SolanaConfiguration>(builder.Configuration.GetSection("Solana"));
+builder.Services.Configure<PlatformConfiguration>(builder.Configuration.GetSection("Platform"));
 builder.Services.Configure<Wihngo.Configuration.BaseConfiguration>(builder.Configuration.GetSection("Base"));
 builder.Services.Configure<PayPalConfiguration>(builder.Configuration.GetSection("PayPal"));
 builder.Services.Configure<WiseConfiguration>(builder.Configuration.GetSection("Wise"));
@@ -411,6 +412,27 @@ builder.Services.AddScoped<StoryLanguageBackfillService>();
 
 // Kind Words (Comments) Services
 builder.Services.AddScoped<IKindWordsService, KindWordsService>();
+
+// ========================================
+// 💰 ULOMIRA-STYLE PAYMENT SYSTEM
+// ========================================
+// Provider-agnostic payment infrastructure
+// Note: SolanaConfiguration and PlatformConfiguration are registered above
+
+// Payment Services
+builder.Services.AddScoped<Wihngo.Services.Interfaces.IPaymentRepository, Wihngo.Services.PaymentRepository>();
+builder.Services.AddScoped<Wihngo.Services.Interfaces.IPaymentService, Wihngo.Services.PaymentService>();
+builder.Services.AddScoped<Wihngo.Services.Interfaces.ISolanaHdWalletService, Wihngo.Services.SolanaHdWalletService>();
+builder.Services.AddScoped<Wihngo.Services.Interfaces.IPaymentProviderFactory, Wihngo.Services.PaymentProviderFactory>();
+builder.Services.AddScoped<Wihngo.Services.UsdcSolanaPaymentProvider>();
+builder.Services.AddScoped<Wihngo.Services.ManualUsdcPaymentProvider>();
+
+// Add logging for new payment services
+builder.Logging.AddFilter("Wihngo.Services.PaymentService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.PaymentRepository", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.UsdcSolanaPaymentProvider", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Services.SolanaHdWalletService", LogLevel.Information);
+builder.Logging.AddFilter("Wihngo.Controllers.PaymentsController", LogLevel.Information);
 
 // 📋 HANGFIRE - CONDITIONAL SETUP
 if (isDatabaseAvailable)
