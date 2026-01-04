@@ -450,6 +450,257 @@ public class SolanaTransactionService : ISolanaTransactionService
     }
 
     /// <inheritdoc />
+    public async Task<DualTransferVerificationResult> VerifyDualTransferTransactionAsync(
+        string signature,
+        string expectedSender,
+        string expectedBirdWallet,
+        decimal expectedBirdAmount,
+        string expectedWihngoWallet,
+        decimal expectedWihngoAmount)
+    {
+        try
+        {
+            // Fetch transaction with finalized commitment
+            var result = await _rpcClient.GetTransactionAsync(signature, Commitment.Finalized);
+
+            if (!result.WasSuccessful || result.Result == null)
+            {
+                return new DualTransferVerificationResult
+                {
+                    Success = false,
+                    TransactionFound = false,
+                    Error = "Transaction not found or not finalized"
+                };
+            }
+
+            var transaction = result.Result;
+
+            // Check for on-chain errors
+            if (transaction.Meta?.Error != null)
+            {
+                return new DualTransferVerificationResult
+                {
+                    Success = false,
+                    TransactionFound = true,
+                    TransactionSucceeded = false,
+                    Error = "Transaction failed on-chain"
+                };
+            }
+
+            // Get account keys for payer extraction
+            var accountKeys = transaction.Transaction?.Message?.AccountKeys;
+            string? actualPayer = accountKeys?.Length > 0 ? accountKeys[0] : null;
+            bool payerMatches = actualPayer != null && actualPayer == expectedSender;
+
+            // Parse pre/post token balances to find USDC transfers
+            var preBalances = transaction.Meta?.PreTokenBalances;
+            var postBalances = transaction.Meta?.PostTokenBalances;
+
+            if (preBalances == null || postBalances == null)
+            {
+                return new DualTransferVerificationResult
+                {
+                    Success = false,
+                    TransactionFound = true,
+                    TransactionSucceeded = true,
+                    Error = "No token balance changes found in transaction"
+                };
+            }
+
+            var usdcMint = _config.UsdcMintAddress;
+            bool mintMatches = false;
+
+            // Build a map of token account changes
+            var tokenChanges = new Dictionary<int, (string? Owner, decimal PreBalance, decimal PostBalance)>();
+
+            // Process post balances
+            foreach (var balance in postBalances)
+            {
+                if (balance.Mint == usdcMint)
+                {
+                    mintMatches = true;
+                    var accountIndex = balance.AccountIndex;
+
+                    // Get owner from the account keys if available
+                    // For SPL token accounts, we need to use the owner field from the balance
+                    decimal postAmount = 0;
+                    if (decimal.TryParse(balance.UiTokenAmount?.UiAmountString, out var parsed))
+                    {
+                        postAmount = parsed;
+                    }
+
+                    if (!tokenChanges.ContainsKey(accountIndex))
+                    {
+                        tokenChanges[accountIndex] = (balance.Owner, 0, postAmount);
+                    }
+                    else
+                    {
+                        var existing = tokenChanges[accountIndex];
+                        tokenChanges[accountIndex] = (balance.Owner ?? existing.Owner, existing.PreBalance, postAmount);
+                    }
+                }
+            }
+
+            // Process pre balances
+            foreach (var balance in preBalances)
+            {
+                if (balance.Mint == usdcMint)
+                {
+                    mintMatches = true;
+                    var accountIndex = balance.AccountIndex;
+
+                    decimal preAmount = 0;
+                    if (decimal.TryParse(balance.UiTokenAmount?.UiAmountString, out var parsed))
+                    {
+                        preAmount = parsed;
+                    }
+
+                    if (!tokenChanges.ContainsKey(accountIndex))
+                    {
+                        tokenChanges[accountIndex] = (balance.Owner, preAmount, 0);
+                    }
+                    else
+                    {
+                        var existing = tokenChanges[accountIndex];
+                        tokenChanges[accountIndex] = (balance.Owner ?? existing.Owner, preAmount, existing.PostBalance);
+                    }
+                }
+            }
+
+            // Find transfers (accounts where balance increased)
+            var transfers = new List<(string Owner, decimal Amount)>();
+            foreach (var kvp in tokenChanges)
+            {
+                var (owner, pre, post) = kvp.Value;
+                if (owner != null && post > pre)
+                {
+                    transfers.Add((owner, post - pre));
+                }
+            }
+
+            // Count USDC transfers
+            int usdcTransferCount = transfers.Count;
+
+            // Initialize transfer details
+            TransferDetail? birdTransfer = null;
+            TransferDetail? wihngoTransfer = null;
+
+            // Find bird transfer
+            var birdMatch = transfers.FirstOrDefault(t =>
+                t.Owner.Equals(expectedBirdWallet, StringComparison.OrdinalIgnoreCase));
+
+            if (birdMatch.Owner != null)
+            {
+                birdTransfer = new TransferDetail
+                {
+                    Found = true,
+                    Destination = birdMatch.Owner,
+                    ExpectedAmount = expectedBirdAmount,
+                    ActualAmount = birdMatch.Amount,
+                    AmountMatches = birdMatch.Amount == expectedBirdAmount,
+                    DestinationMatches = true
+                };
+            }
+            else
+            {
+                birdTransfer = new TransferDetail
+                {
+                    Found = false,
+                    Destination = expectedBirdWallet,
+                    ExpectedAmount = expectedBirdAmount,
+                    ActualAmount = 0,
+                    AmountMatches = false,
+                    DestinationMatches = false
+                };
+            }
+
+            // Find Wihngo transfer
+            var wihngoMatch = transfers.FirstOrDefault(t =>
+                t.Owner.Equals(expectedWihngoWallet, StringComparison.OrdinalIgnoreCase));
+
+            if (wihngoMatch.Owner != null)
+            {
+                wihngoTransfer = new TransferDetail
+                {
+                    Found = true,
+                    Destination = wihngoMatch.Owner,
+                    ExpectedAmount = expectedWihngoAmount,
+                    ActualAmount = wihngoMatch.Amount,
+                    AmountMatches = wihngoMatch.Amount == expectedWihngoAmount,
+                    DestinationMatches = true
+                };
+            }
+            else
+            {
+                wihngoTransfer = new TransferDetail
+                {
+                    Found = false,
+                    Destination = expectedWihngoWallet,
+                    ExpectedAmount = expectedWihngoAmount,
+                    ActualAmount = 0,
+                    AmountMatches = false,
+                    DestinationMatches = false
+                };
+            }
+
+            // Determine overall success
+            // Both transfers must be found with exact amounts, correct destinations, and payer must match
+            bool success = mintMatches &&
+                           payerMatches &&
+                           usdcTransferCount == 2 &&
+                           birdTransfer.Found &&
+                           birdTransfer.AmountMatches &&
+                           wihngoTransfer.Found &&
+                           wihngoTransfer.AmountMatches;
+
+            // Build error message if not successful
+            string? error = null;
+            if (!success)
+            {
+                var errors = new List<string>();
+                if (!mintMatches) errors.Add("Wrong token mint (not USDC)");
+                if (!payerMatches) errors.Add($"Payer mismatch: expected {expectedSender}, got {actualPayer}");
+                if (usdcTransferCount != 2) errors.Add($"Expected 2 USDC transfers, found {usdcTransferCount}");
+                if (!birdTransfer.Found) errors.Add("Bird transfer not found");
+                else if (!birdTransfer.AmountMatches) errors.Add($"Bird amount mismatch: expected {expectedBirdAmount}, got {birdTransfer.ActualAmount}");
+                if (!wihngoTransfer.Found) errors.Add("Wihngo transfer not found");
+                else if (!wihngoTransfer.AmountMatches) errors.Add($"Wihngo amount mismatch: expected {expectedWihngoAmount}, got {wihngoTransfer.ActualAmount}");
+                error = string.Join("; ", errors);
+            }
+
+            _logger.LogInformation(
+                "Dual transfer verification: Signature={Signature}, Success={Success}, BirdTransfer={BirdFound}/{BirdAmount}, WihngoTransfer={WihngoFound}/{WihngoAmount}",
+                signature, success,
+                birdTransfer.Found, birdTransfer.ActualAmount,
+                wihngoTransfer.Found, wihngoTransfer.ActualAmount);
+
+            return new DualTransferVerificationResult
+            {
+                Success = success,
+                TransactionFound = true,
+                TransactionSucceeded = true,
+                MintMatches = mintMatches,
+                BirdTransfer = birdTransfer,
+                WihngoTransfer = wihngoTransfer,
+                ActualPayer = actualPayer,
+                PayerMatches = payerMatches,
+                UsdcTransferCount = usdcTransferCount,
+                Error = error
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error verifying dual transfer transaction {Signature}", signature);
+            return new DualTransferVerificationResult
+            {
+                Success = false,
+                TransactionFound = false,
+                Error = ex.Message
+            };
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<string> AddSponsorSignatureAsync(string partiallySignedTransactionBase64)
     {
         try

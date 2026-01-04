@@ -358,3 +358,130 @@ public class CheckSupportBalanceRequest : SupportPreflightRequest { }
 /// Alias for SupportPreflightResponse (used by P2PPaymentsController)
 /// </summary>
 public class CheckSupportBalanceResponse : SupportPreflightResponse { }
+
+// =============================================
+// EXTERNAL TRANSACTION VERIFICATION
+// =============================================
+// For verifying externally-submitted Solana transactions
+// containing two USDC transfers (bird owner + Wihngo)
+// =============================================
+
+/// <summary>
+/// Request to verify an externally-submitted Solana transaction.
+/// The transaction must contain exactly two USDC SPL token transfers:
+/// one to the bird owner and one to the Wihngo platform.
+/// </summary>
+public class VerifySolanaSupportRequest
+{
+    /// <summary>
+    /// Solana transaction signature/hash to verify
+    /// </summary>
+    [Required(ErrorMessage = "Transaction hash is required")]
+    [MinLength(32, ErrorMessage = "Transaction hash must be at least 32 characters")]
+    [MaxLength(128, ErrorMessage = "Transaction hash must not exceed 128 characters")]
+    public string TxHash { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The bird being supported
+    /// </summary>
+    [Required(ErrorMessage = "Bird ID is required")]
+    public Guid BirdId { get; set; }
+
+    /// <summary>
+    /// Bird owner's wallet public key (destination for bird amount)
+    /// </summary>
+    [Required(ErrorMessage = "Bird wallet is required")]
+    public string BirdWallet { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Expected amount to bird owner in cents (e.g., 500 = $5.00)
+    /// USDC on Solana has 6 decimals, so 500 cents = 5.00 USDC = 5,000,000 raw
+    /// </summary>
+    [Required(ErrorMessage = "Bird amount is required")]
+    [Range(1, 1000000, ErrorMessage = "Bird amount must be between 1 and 1,000,000 cents")]
+    public int BirdAmountCents { get; set; }
+
+    /// <summary>
+    /// Expected amount to Wihngo in cents (e.g., 100 = $1.00)
+    /// </summary>
+    [Required(ErrorMessage = "Wihngo amount is required")]
+    [Range(1, 1000000, ErrorMessage = "Wihngo amount must be between 1 and 1,000,000 cents")]
+    public int WihngoAmountCents { get; set; }
+}
+
+/// <summary>
+/// Response from Solana transaction verification
+/// </summary>
+public class VerifySolanaSupportResponse
+{
+    /// <summary>
+    /// Whether the verification was successful
+    /// </summary>
+    public bool Success { get; set; }
+
+    /// <summary>
+    /// Status: pending, confirmed, failed
+    /// </summary>
+    public string Status { get; set; } = "pending";
+
+    /// <summary>
+    /// The transaction hash that was verified
+    /// </summary>
+    public string TxHash { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Bird support payment ID (if successfully created/found)
+    /// </summary>
+    public Guid? PaymentId { get; set; }
+
+    /// <summary>
+    /// Bird ID that was supported
+    /// </summary>
+    public Guid? BirdId { get; set; }
+
+    /// <summary>
+    /// Bird name
+    /// </summary>
+    public string? BirdName { get; set; }
+
+    /// <summary>
+    /// Verified payer wallet address
+    /// </summary>
+    public string? PayerWallet { get; set; }
+
+    /// <summary>
+    /// Bird amount in cents (verified)
+    /// </summary>
+    public int BirdAmountCents { get; set; }
+
+    /// <summary>
+    /// Wihngo amount in cents (verified)
+    /// </summary>
+    public int WihngoAmountCents { get; set; }
+
+    /// <summary>
+    /// Error message if verification failed
+    /// </summary>
+    public string? Error { get; set; }
+
+    /// <summary>
+    /// Detailed verification results
+    /// </summary>
+    public VerificationDetails? Details { get; set; }
+}
+
+/// <summary>
+/// Detailed verification breakdown
+/// </summary>
+public class VerificationDetails
+{
+    public bool TransactionFound { get; set; }
+    public bool TransactionSucceeded { get; set; }
+    public bool MintMatches { get; set; }
+    public bool PayerMatches { get; set; }
+    public int UsdcTransferCount { get; set; }
+    public bool BirdTransferValid { get; set; }
+    public bool WihngoTransferValid { get; set; }
+    public decimal ActualBirdAmount { get; set; }
+    public decimal ActualWihngoAmount { get; set; }
+}

@@ -73,6 +73,25 @@ public interface ISolanaTransactionService
     /// <param name="partiallySignedTransactionBase64">Base64 encoded transaction with user signature</param>
     /// <returns>Base64 encoded fully signed transaction</returns>
     Task<string> AddSponsorSignatureAsync(string partiallySignedTransactionBase64);
+
+    /// <summary>
+    /// Verifies a transaction containing two USDC SPL token transfers (bird owner + Wihngo platform).
+    /// Used for validating externally-submitted split payment transactions.
+    /// </summary>
+    /// <param name="signature">Transaction signature/hash to verify</param>
+    /// <param name="expectedSender">Expected sender wallet public key</param>
+    /// <param name="expectedBirdWallet">Expected bird owner's wallet public key</param>
+    /// <param name="expectedBirdAmount">Expected USDC amount to bird owner (in USDC, not lamports)</param>
+    /// <param name="expectedWihngoWallet">Expected Wihngo treasury wallet public key</param>
+    /// <param name="expectedWihngoAmount">Expected USDC amount to Wihngo (in USDC, not lamports)</param>
+    /// <returns>Verification result with details about each transfer</returns>
+    Task<DualTransferVerificationResult> VerifyDualTransferTransactionAsync(
+        string signature,
+        string expectedSender,
+        string expectedBirdWallet,
+        decimal expectedBirdAmount,
+        string expectedWihngoWallet,
+        decimal expectedWihngoAmount);
 }
 
 /// <summary>
@@ -100,4 +119,96 @@ public class TransactionVerificationResult
     public bool MintMatches { get; set; }
     public decimal ActualAmount { get; set; }
     public string? Error { get; set; }
+}
+
+/// <summary>
+/// Result of dual-transfer transaction verification (bird owner + Wihngo platform)
+/// </summary>
+public class DualTransferVerificationResult
+{
+    /// <summary>
+    /// Whether the overall verification succeeded (both transfers valid)
+    /// </summary>
+    public bool Success { get; set; }
+
+    /// <summary>
+    /// Whether the transaction was found and finalized on-chain
+    /// </summary>
+    public bool TransactionFound { get; set; }
+
+    /// <summary>
+    /// Whether the transaction executed without errors
+    /// </summary>
+    public bool TransactionSucceeded { get; set; }
+
+    /// <summary>
+    /// Whether the correct USDC mint was used
+    /// </summary>
+    public bool MintMatches { get; set; }
+
+    /// <summary>
+    /// Details about the bird owner transfer
+    /// </summary>
+    public TransferDetail? BirdTransfer { get; set; }
+
+    /// <summary>
+    /// Details about the Wihngo platform transfer
+    /// </summary>
+    public TransferDetail? WihngoTransfer { get; set; }
+
+    /// <summary>
+    /// The payer wallet extracted from the transaction
+    /// </summary>
+    public string? ActualPayer { get; set; }
+
+    /// <summary>
+    /// Whether the payer matches the expected sender
+    /// </summary>
+    public bool PayerMatches { get; set; }
+
+    /// <summary>
+    /// Number of USDC transfers found in the transaction
+    /// </summary>
+    public int UsdcTransferCount { get; set; }
+
+    /// <summary>
+    /// Error message if verification failed
+    /// </summary>
+    public string? Error { get; set; }
+}
+
+/// <summary>
+/// Details about a single transfer within a transaction
+/// </summary>
+public class TransferDetail
+{
+    /// <summary>
+    /// Whether this transfer was found
+    /// </summary>
+    public bool Found { get; set; }
+
+    /// <summary>
+    /// Destination wallet public key
+    /// </summary>
+    public string? Destination { get; set; }
+
+    /// <summary>
+    /// Expected amount in USDC
+    /// </summary>
+    public decimal ExpectedAmount { get; set; }
+
+    /// <summary>
+    /// Actual amount transferred in USDC
+    /// </summary>
+    public decimal ActualAmount { get; set; }
+
+    /// <summary>
+    /// Whether the amount matches exactly
+    /// </summary>
+    public bool AmountMatches { get; set; }
+
+    /// <summary>
+    /// Whether the destination matches expected
+    /// </summary>
+    public bool DestinationMatches { get; set; }
 }

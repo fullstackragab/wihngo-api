@@ -1,8 +1,11 @@
 using System.Security.Claims;
+using Dapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Wihngo.Configuration;
+using Wihngo.Data;
+using Wihngo.Dtos;
 using Wihngo.Models.Enums;
 using Wihngo.Services.Interfaces;
 
@@ -19,18 +22,27 @@ namespace Wihngo.Controllers;
 public sealed class PaymentsController : ControllerBase
 {
     private readonly IPaymentService _paymentService;
+    private readonly ISolanaTransactionService _solanaService;
+    private readonly IDbConnectionFactory _dbFactory;
     private readonly SolanaConfiguration _solanaSettings;
+    private readonly P2PPaymentConfiguration _p2pConfig;
     private readonly PlatformConfiguration _platformSettings;
     private readonly ILogger<PaymentsController> _logger;
 
     public PaymentsController(
         IPaymentService paymentService,
+        ISolanaTransactionService solanaService,
+        IDbConnectionFactory dbFactory,
         IOptions<SolanaConfiguration> solanaSettings,
+        IOptions<P2PPaymentConfiguration> p2pConfig,
         IOptions<PlatformConfiguration> platformSettings,
         ILogger<PaymentsController> logger)
     {
         _paymentService = paymentService;
+        _solanaService = solanaService;
+        _dbFactory = dbFactory;
         _solanaSettings = solanaSettings.Value;
+        _p2pConfig = p2pConfig.Value;
         _platformSettings = platformSettings.Value;
         _logger = logger;
     }
@@ -328,6 +340,210 @@ public sealed class PaymentsController : ControllerBase
             BirdId: result.BirdId,
             Message: "Payment claimed successfully. Support completed."
         ));
+    }
+
+    /// <summary>
+    /// Verify an externally-submitted Solana transaction containing two USDC transfers.
+    /// This endpoint validates that a transaction contains the expected split payment
+    /// (bird owner amount + Wihngo platform amount) and records it as confirmed.
+    /// </summary>
+    /// <remarks>
+    /// Use this endpoint when the transaction was submitted externally (not through our system).
+    /// The transaction must:
+    /// - Be finalized on Solana
+    /// - Contain exactly two USDC SPL token transfers
+    /// - One transfer to the bird owner's wallet with the expected amount
+    /// - One transfer to the Wihngo treasury wallet with the expected amount
+    /// - Have the authenticated user's wallet as the payer
+    ///
+    /// Amount conversion: cents to USDC uses 6 decimals
+    /// - 500 cents = $5.00 = 5.00 USDC = 5,000,000 raw units
+    /// </remarks>
+    [HttpPost("solana/verify")]
+    [ProducesResponseType(typeof(VerifySolanaSupportResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> VerifySolanaSupport(
+        [FromBody] VerifySolanaSupportRequest request,
+        CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+        if (userId == Guid.Empty)
+            return Unauthorized(new { error = "User not authenticated." });
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(new VerifySolanaSupportResponse
+            {
+                Success = false,
+                Status = "failed",
+                TxHash = request.TxHash,
+                Error = "Validation failed"
+            });
+        }
+
+        using var conn = await _dbFactory.CreateOpenConnectionAsync();
+
+        // 1. Check if txHash already used (idempotency/replay protection)
+        var existingPayment = await conn.QueryFirstOrDefaultAsync<dynamic>(
+            @"SELECT id, status FROM support_intents
+              WHERE solana_signature = @TxHash
+              LIMIT 1",
+            new { request.TxHash });
+
+        if (existingPayment != null)
+        {
+            _logger.LogWarning(
+                "[PAYMENT] Transaction already used: {TxHash}, existing payment: {PaymentId}",
+                request.TxHash, existingPayment.id);
+
+            return BadRequest(new VerifySolanaSupportResponse
+            {
+                Success = false,
+                Status = "failed",
+                TxHash = request.TxHash,
+                PaymentId = existingPayment.id,
+                Error = "Transaction hash already used"
+            });
+        }
+
+        // 2. Get bird info
+        var bird = await conn.QueryFirstOrDefaultAsync<dynamic>(
+            "SELECT bird_id, owner_id, name FROM birds WHERE bird_id = @BirdId",
+            new { request.BirdId });
+
+        if (bird == null)
+        {
+            return BadRequest(new VerifySolanaSupportResponse
+            {
+                Success = false,
+                Status = "failed",
+                TxHash = request.TxHash,
+                Error = "Bird not found"
+            });
+        }
+
+        // 3. Get user's wallet to verify they are the payer
+        var userWallet = await conn.QueryFirstOrDefaultAsync<string>(
+            @"SELECT public_key FROM wallets
+              WHERE user_id = @UserId AND is_primary = true
+              LIMIT 1",
+            new { UserId = userId });
+
+        if (string.IsNullOrEmpty(userWallet))
+        {
+            return BadRequest(new VerifySolanaSupportResponse
+            {
+                Success = false,
+                Status = "failed",
+                TxHash = request.TxHash,
+                Error = "User has no connected wallet"
+            });
+        }
+
+        // 4. Convert cents to USDC (USDC has 6 decimals)
+        decimal birdAmountUsdc = request.BirdAmountCents / 100.0m;
+        decimal wihngoAmountUsdc = request.WihngoAmountCents / 100.0m;
+
+        // 5. Verify the transaction on-chain
+        var verificationResult = await _solanaService.VerifyDualTransferTransactionAsync(
+            request.TxHash,
+            userWallet,
+            request.BirdWallet,
+            birdAmountUsdc,
+            _p2pConfig.WihngoTreasuryWallet,
+            wihngoAmountUsdc);
+
+        // Build verification details for response
+        var details = new VerificationDetails
+        {
+            TransactionFound = verificationResult.TransactionFound,
+            TransactionSucceeded = verificationResult.TransactionSucceeded,
+            MintMatches = verificationResult.MintMatches,
+            PayerMatches = verificationResult.PayerMatches,
+            UsdcTransferCount = verificationResult.UsdcTransferCount,
+            BirdTransferValid = verificationResult.BirdTransfer?.Found == true && verificationResult.BirdTransfer.AmountMatches,
+            WihngoTransferValid = verificationResult.WihngoTransfer?.Found == true && verificationResult.WihngoTransfer.AmountMatches,
+            ActualBirdAmount = verificationResult.BirdTransfer?.ActualAmount ?? 0,
+            ActualWihngoAmount = verificationResult.WihngoTransfer?.ActualAmount ?? 0
+        };
+
+        if (!verificationResult.Success)
+        {
+            _logger.LogWarning(
+                "[PAYMENT] Verification failed: TxHash={TxHash}, Error={Error}",
+                request.TxHash, verificationResult.Error);
+
+            return BadRequest(new VerifySolanaSupportResponse
+            {
+                Success = false,
+                Status = "failed",
+                TxHash = request.TxHash,
+                BirdId = request.BirdId,
+                BirdName = bird.name,
+                Error = verificationResult.Error,
+                Details = details
+            });
+        }
+
+        // 6. Transaction verified - create support intent record
+        var intentId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+
+        await conn.ExecuteAsync(
+            @"INSERT INTO support_intents
+              (id, supporter_user_id, bird_id, recipient_user_id, support_amount, bird_amount, wihngo_support_amount,
+               total_amount, currency, status, payment_method, sender_wallet_pubkey,
+               recipient_wallet_pubkey, wihngo_wallet_pubkey, solana_signature, confirmations,
+               paid_at, completed_at, created_at, updated_at)
+              VALUES (@Id, @SupporterUserId, @BirdId, @RecipientUserId, @BirdAmount, @BirdAmount, @WihngoSupportAmount,
+               @TotalAmount, @Currency, @Status, @PaymentMethod, @SenderWalletPubkey,
+               @RecipientWalletPubkey, @WihngoWalletPubkey, @SolanaSignature, @Confirmations,
+               @PaidAt, @CompletedAt, @CreatedAt, @UpdatedAt)",
+            new
+            {
+                Id = intentId,
+                SupporterUserId = userId,
+                request.BirdId,
+                RecipientUserId = (Guid)bird.owner_id,
+                BirdAmount = birdAmountUsdc,
+                WihngoSupportAmount = wihngoAmountUsdc,
+                TotalAmount = birdAmountUsdc + wihngoAmountUsdc,
+                Currency = "USDC",
+                Status = "completed",
+                PaymentMethod = "wallet",
+                SenderWalletPubkey = userWallet,
+                RecipientWalletPubkey = request.BirdWallet,
+                WihngoWalletPubkey = _p2pConfig.WihngoTreasuryWallet,
+                SolanaSignature = request.TxHash,
+                Confirmations = 32, // Finalized = 32 confirmations
+                PaidAt = now,
+                CompletedAt = now,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+
+        // 7. Update bird support count
+        await conn.ExecuteAsync(
+            "UPDATE birds SET supported_count = supported_count + 1 WHERE bird_id = @BirdId",
+            new { request.BirdId });
+
+        _logger.LogInformation(
+            "[PAYMENT] Verified and confirmed: TxHash={TxHash}, IntentId={IntentId}, BirdId={BirdId}, BirdAmount=${BirdAmount}, WihngoAmount=${WihngoAmount}",
+            request.TxHash, intentId, request.BirdId, birdAmountUsdc, wihngoAmountUsdc);
+
+        return Ok(new VerifySolanaSupportResponse
+        {
+            Success = true,
+            Status = "confirmed",
+            TxHash = request.TxHash,
+            PaymentId = intentId,
+            BirdId = request.BirdId,
+            BirdName = bird.name,
+            PayerWallet = userWallet,
+            BirdAmountCents = request.BirdAmountCents,
+            WihngoAmountCents = request.WihngoAmountCents,
+            Details = details
+        });
     }
 
     private static string StatusToString(PaymentStatus status) => status switch
