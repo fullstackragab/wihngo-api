@@ -680,18 +680,11 @@ public class P2PPaymentService : IP2PPaymentService
     }
 
     /// <inheritdoc />
-    public async Task<List<P2PPayment>> GetPendingConfirmationsAsync()
+    public Task<List<P2PPayment>> GetPendingConfirmationsAsync()
     {
-        using var conn = await _dbFactory.CreateOpenConnectionAsync();
-
-        var payments = await conn.QueryAsync<P2PPayment>(
-            @"SELECT * FROM p2p_payments
-              WHERE status IN (@Submitted, @Confirming)
-              AND solana_signature IS NOT NULL
-              ORDER BY submitted_at ASC",
-            new { Submitted = P2PPaymentStatus.Submitted, Confirming = P2PPaymentStatus.Confirming });
-
-        return payments.ToList();
+        // p2p_payments table deprecated - new payment system uses payments table
+        // Return empty list to prevent background job errors
+        return Task.FromResult(new List<P2PPayment>());
     }
 
     /// <inheritdoc />
