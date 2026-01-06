@@ -336,6 +336,14 @@ builder.Services.Configure<AwsConfiguration>(config =>
     logger.LogInformation("  Region: {Region}", region);
 });
 
+// AWS Public Bucket Configuration - for bird images (publicly accessible)
+builder.Services.Configure<AwsPublicBucketConfiguration>(config =>
+{
+    config.Bucket = builder.Configuration["AWS_PUBLIC_BUCKET:Bucket"] ?? string.Empty;
+    config.AccessKeyId = builder.Configuration["AWS_PUBLIC_BUCKET:AccessKeyId"] ?? string.Empty;
+    config.SecretAccessKey = builder.Configuration["AWS_PUBLIC_BUCKET:SecretAccessKey"] ?? string.Empty;
+});
+
 // HttpClient
 builder.Services.AddHttpClient();
 
@@ -365,6 +373,7 @@ builder.Services.AddScoped<IP2PPaymentService, P2PPaymentService>();
 builder.Services.AddScoped<ISupportIntentService, SupportIntentService>();
 builder.Services.AddScoped<IWalletConnectIntentService, WalletConnectIntentService>();
 builder.Services.AddScoped<PaymentConfirmationJob>();
+builder.Services.AddScoped<SupportIntentConfirmationJob>();
 
 // Add logging for wallet connect service
 builder.Logging.AddFilter("Wihngo.Services.WalletConnectIntentService", LogLevel.Information);
@@ -652,6 +661,11 @@ if (isDatabaseAvailable)
     });
 
     // Register recurring jobs
+    RecurringJob.AddOrUpdate<SupportIntentConfirmationJob>(
+        "check-support-intent-confirmations",
+        job => job.CheckPendingIntentsAsync(),
+        "*/10 * * * * *"); // Every 10 seconds
+
     RecurringJob.AddOrUpdate<PaymentConfirmationJob>(
         "check-pending-payments",
         job => job.CheckPendingPaymentsAsync(),
@@ -668,6 +682,7 @@ if (isDatabaseAvailable)
         job => job.ExpireOldRemindersAsync(),
         "0 * * * *"); // Every hour
 
+    Console.WriteLine("✅ SupportIntentConfirmationJob scheduled (every 10 seconds)");
     Console.WriteLine("✅ PaymentConfirmationJob scheduled (every 10 seconds)");
     Console.WriteLine("✅ WeeklySupportReminderJob scheduled (every 15 minutes)");
 }

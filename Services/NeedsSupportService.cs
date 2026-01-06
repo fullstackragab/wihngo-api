@@ -19,25 +19,24 @@ namespace Wihngo.Services;
 public class NeedsSupportService : INeedsSupportService
 {
     private readonly IDbConnectionFactory _dbFactory;
+    private readonly IS3Service _s3Service;
     private readonly ILogger<NeedsSupportService> _logger;
 
-    private const int MaxRoundsPerWeek = 2;
+    private const int MaxRoundsPerWeek = 1;
 
     private const string HowItWorksMessage = @"Wihngo's Weekly Support System:
 
-Every week, you can help support birds in need through 2 rounds of giving.
+Every week, you can help support birds in need.
 
-Round 1: All birds marked as 'needs support' are shown. Support any bird you'd like!
+All birds marked as 'needs support' are shown. Each bird can receive support once per week.
 
-Round 2: Once every bird has received support once, they all appear again for a second chance to help.
-
-After 2 rounds: When all birds have been supported twice this week, you'll see a thank you message. The cycle resets every Sunday!
+When all birds have been supported, you'll see a thank you message. The cycle resets every Sunday!
 
 Your support goes directly to bird owners to help care for their feathered friends.";
 
     private const string ThankYouMessageTemplate = @"Thank you for your amazing support!
 
-All {0} birds have received their weekly support (2 times each)!
+All {0} birds have received their weekly support!
 
 The community has come together to help every bird in need this week. Your generosity makes a real difference in the lives of these birds and their caretakers.
 
@@ -45,9 +44,11 @@ The support cycle will reset on Sunday, and you'll be able to help again!";
 
     public NeedsSupportService(
         IDbConnectionFactory dbFactory,
+        IS3Service s3Service,
         ILogger<NeedsSupportService> logger)
     {
         _dbFactory = dbFactory;
+        _s3Service = s3Service;
         _logger = logger;
     }
 
@@ -58,6 +59,9 @@ The support cycle will reset on Sunday, and you'll be able to help again!";
         var weekStart = GetWeekStart(DateTime.UtcNow);
         var weekEnd = weekStart.AddDays(7);
 
+        _logger.LogInformation("NeedsSupport: Using weekStart={WeekStart}, UTC now={UtcNow}",
+            weekStart.Date.ToString("yyyy-MM-dd"), DateTime.UtcNow);
+
         // Get all birds marked as needing support (and public + support enabled)
         var birdsData = await conn.QueryAsync<dynamic>(@"
             SELECT b.bird_id, b.name, b.species, b.tagline, b.image_url, b.location,
@@ -67,16 +71,22 @@ The support cycle will reset on Sunday, and you'll be able to help again!";
             FROM birds b
             JOIN users u ON b.owner_id = u.user_id
             LEFT JOIN weekly_bird_support_rounds r
-                ON b.bird_id = r.bird_id AND r.week_start_date = @WeekStart
+                ON b.bird_id = r.bird_id AND r.week_start_date = @WeekStart::date
             WHERE b.needs_support = true
               AND b.is_public = true
               AND b.support_enabled = true
               AND b.is_memorial = false
             ORDER BY COALESCE(r.times_supported, 0) ASC, b.created_at ASC",
-            new { WeekStart = weekStart.Date });
+            new { WeekStart = weekStart.ToString("yyyy-MM-dd") });
 
         var allBirds = birdsData.ToList();
         var totalBirds = allBirds.Count;
+
+        foreach (var bird in allBirds)
+        {
+            _logger.LogInformation("NeedsSupport: Bird {Name} has times_supported={TimesSupported}",
+                (string)bird.name, (int)bird.times_supported);
+        }
 
         if (totalBirds == 0)
         {
@@ -120,23 +130,39 @@ The support cycle will reset on Sunday, and you'll be able to help again!";
 
         // Filter birds that haven't been supported enough for current round
         // Birds with times_supported < currentRound are shown
-        var birdsToShow = allBirds
-            .Where(b => (int)b.times_supported < currentRound)
-            .Select(b => new BirdNeedsSupportDto
+        var filteredBirds = allBirds.Where(b => (int)b.times_supported < currentRound).ToList();
+
+        var birdsToShow = new List<BirdNeedsSupportDto>();
+        foreach (var b in filteredBirds)
+        {
+            string? imageUrl = null;
+            if (!string.IsNullOrWhiteSpace((string?)b.image_url))
+            {
+                try
+                {
+                    imageUrl = await _s3Service.GenerateDownloadUrlAsync(b.image_url);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to generate image URL for bird {BirdId}", (Guid)b.bird_id);
+                }
+            }
+
+            birdsToShow.Add(new BirdNeedsSupportDto
             {
                 BirdId = b.bird_id,
                 Name = b.name,
                 Species = b.species,
                 Tagline = b.tagline,
-                ImageUrl = b.image_url,
+                ImageUrl = imageUrl,
                 Location = b.location,
                 OwnerName = b.owner_name,
                 OwnerId = b.owner_id,
                 TimesSupportedThisWeek = b.times_supported,
                 LastSupportedAt = b.last_supported_at,
                 TotalSupportCount = b.supported_count
-            })
-            .ToList();
+            });
+        }
 
         int supportedThisRound = totalBirds - birdsToShow.Count;
 

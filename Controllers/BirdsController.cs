@@ -194,6 +194,9 @@ namespace Wihngo.Controllers
         {
             var userId = GetUserIdClaim();
 
+            // Calculate week start for weekly support tracking
+            var weekStart = GetWeekStart(DateTime.UtcNow);
+
             // Get bird with owner using raw SQL (including activity tracking and visibility fields)
             var birdSql = @"
                 SELECT
@@ -210,14 +213,18 @@ namespace Wihngo.Controllers
                     b.last_activity_at,
                     b.is_memorial,
                     b.is_public,
+                    b.needs_support,
                     u.user_id owner_user_id,
-                    u.name owner_name
+                    u.name owner_name,
+                    COALESCE(r.times_supported, 0) times_supported_this_week
                 FROM birds b
                 LEFT JOIN users u ON b.owner_id = u.user_id
+                LEFT JOIN weekly_bird_support_rounds r
+                    ON b.bird_id = r.bird_id AND r.week_start_date = @WeekStart::date
                 WHERE b.bird_id = @BirdId";
 
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
-            var birdData = await connection.QueryFirstOrDefaultAsync<dynamic>(birdSql, new { BirdId = id });
+            var birdData = await connection.QueryFirstOrDefaultAsync<dynamic>(birdSql, new { BirdId = id, WeekStart = weekStart.ToString("yyyy-MM-dd") });
 
             if (birdData == null) return NotFound();
 
@@ -253,6 +260,10 @@ namespace Wihngo.Controllers
             var lastSeenText = _activityService.GetLastSeenText(lastActivityAt, isMemorial);
             var supportUnavailableMessage = _activityService.GetSupportUnavailableMessage(activityStatus);
 
+            // Get weekly support tracking data
+            int timesSupportedThisWeek = (int)(birdData.times_supported_this_week ?? 0);
+            bool needsSupport = birdData.needs_support ?? false;
+
             // Map to DTO (using property names from BirdProfileDto)
             var dto = new BirdProfileDto
             {
@@ -269,8 +280,10 @@ namespace Wihngo.Controllers
                 CanSupport = canSupport,
                 SupportUnavailableMessage = supportUnavailableMessage,
                 IsMemorial = isMemorial,
+                TimesSupportedThisWeek = timesSupportedThisWeek,
                 // Only show visibility status to owner
-                IsPublic = userId.HasValue && userId.Value == ownerId ? isPublic : null
+                IsPublic = userId.HasValue && userId.Value == ownerId ? isPublic : null,
+                NeedsSupport = userId.HasValue && userId.Value == ownerId ? needsSupport : null
             };
 
             // Generate download URL for image
@@ -437,6 +450,87 @@ namespace Wihngo.Controllers
                 Page = page,
                 PageSize = pageSize
             });
+        }
+
+        /// <summary>
+        /// Upload a bird profile image before creating the bird
+        /// </summary>
+        /// <remarks>
+        /// Use this endpoint to upload an image first, then include the returned S3 key
+        /// in the POST /api/birds request to create the bird with the image.
+        /// </remarks>
+        [Authorize]
+        [HttpPost("upload-image")]
+        [ProducesResponseType(typeof(BirdImageUploadResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<ActionResult<BirdImageUploadResponse>> UploadImageBeforeCreate(IFormFile file)
+        {
+            var userId = GetUserIdClaim();
+            if (userId == null) return Unauthorized();
+
+            if (file == null || file.Length == 0)
+            {
+                return BadRequest(new { message = "No file provided" });
+            }
+
+            // Validate file type
+            var allowedTypes = new[] { "image/jpeg", "image/png", "image/gif", "image/webp" };
+            if (!allowedTypes.Contains(file.ContentType.ToLower()))
+            {
+                return BadRequest(new { message = "Invalid file type. Allowed: jpeg, png, gif, webp" });
+            }
+
+            // Validate file size (max 10MB)
+            const long maxSize = 10 * 1024 * 1024;
+            if (file.Length > maxSize)
+            {
+                return BadRequest(new { message = "File too large. Maximum size is 10MB" });
+            }
+
+            // Get file extension
+            var extension = Path.GetExtension(file.FileName);
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                extension = file.ContentType switch
+                {
+                    "image/jpeg" => ".jpg",
+                    "image/png" => ".png",
+                    "image/gif" => ".gif",
+                    "image/webp" => ".webp",
+                    _ => ".jpg"
+                };
+            }
+
+            try
+            {
+                // Generate S3 key for bird profile image (use userId as placeholder since bird doesn't exist yet)
+                var (_, s3Key) = await _s3Service.GenerateUploadUrlAsync(
+                    userId.Value,
+                    "bird-profile-image",
+                    extension,
+                    null);
+
+                // Upload file directly to S3
+                using var stream = file.OpenReadStream();
+                await _s3Service.UploadFileAsync(s3Key, stream, file.ContentType);
+
+                // Generate download URL for immediate use
+                var downloadUrl = await _s3Service.GenerateDownloadUrlAsync(s3Key);
+
+                _logger.LogInformation("Bird image uploaded before creation: {S3Key} by user {UserId}", s3Key, userId.Value);
+
+                return Ok(new BirdImageUploadResponse
+                {
+                    S3Key = s3Key,
+                    Url = downloadUrl
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error uploading bird image for user {UserId}", userId.Value);
+                return StatusCode(500, new { message = "Failed to upload image" });
+            }
         }
 
         [Authorize]
@@ -1520,6 +1614,13 @@ namespace Wihngo.Controllers
 
             var isFollowing = await _birdFollowService.IsFollowingAsync(userId.Value, id);
             return Ok(new { isFollowing });
+        }
+
+        private static DateTime GetWeekStart(DateTime date)
+        {
+            // Week starts on Sunday
+            var diff = date.DayOfWeek - DayOfWeek.Sunday;
+            return date.Date.AddDays(-diff);
         }
     }
 }

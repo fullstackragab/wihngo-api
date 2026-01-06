@@ -382,3 +382,6 @@ secrets.txt
 
 # Claude Code local settings
 .claude/settings.local.json
+
+
+API_SECRETS.txt

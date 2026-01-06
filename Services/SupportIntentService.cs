@@ -533,7 +533,8 @@ public class SupportIntentService : ISupportIntentService
               (id, supporter_user_id, bird_id, recipient_user_id, support_amount, bird_amount, wihngo_support_amount,
                total_amount, currency, status, payment_method, sender_wallet_pubkey,
                recipient_wallet_pubkey, wihngo_wallet_pubkey, serialized_transaction, expires_at, created_at, updated_at)
-              VALUES (@Id, @SupporterUserId, @BirdId, @RecipientUserId, @BirdAmount, @BirdAmount, @WihngoSupportAmount,
+              VALUES (@Id, @SupporterUserId, NULLIF(@BirdId, '00000000-0000-0000-0000-000000000000'::uuid),
+               NULLIF(@RecipientUserId, '00000000-0000-0000-0000-000000000000'::uuid), @BirdAmount, @BirdAmount, @WihngoSupportAmount,
                @TotalAmount, @Currency, @Status, @PaymentMethod, @SenderWalletPubkey,
                @RecipientWalletPubkey, @WihngoWalletPubkey, @SerializedTransaction, @ExpiresAt, @CreatedAt, @UpdatedAt)",
             intent);
@@ -725,8 +726,22 @@ public class SupportIntentService : ISupportIntentService
                     "UPDATE birds SET supported_count = supported_count + 1 WHERE bird_id = @BirdId",
                     new { intent.BirdId });
 
-                // Record support for weekly rounds tracking (3-round system)
+                // Record support for weekly rounds tracking
                 await _needsSupportService.RecordSupportReceivedAsync(intent.BirdId);
+
+                // Insert into support_transactions for food goal tracking
+                await conn.ExecuteAsync(@"
+                    INSERT INTO support_transactions (transaction_id, supporter_id, bird_id, amount, message, created_at)
+                    VALUES (@TransactionId, @SupporterId, @BirdId, @Amount, @Message, @CreatedAt)",
+                    new
+                    {
+                        TransactionId = intentId,
+                        SupporterId = intent.SupporterUserId,
+                        BirdId = intent.BirdId,
+                        Amount = intent.BirdAmount,
+                        Message = (string?)null,
+                        CreatedAt = DateTime.UtcNow
+                    });
             }
 
             // Mark as completed

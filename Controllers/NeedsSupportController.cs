@@ -8,7 +8,7 @@ namespace Wihngo.Controllers;
 
 /// <summary>
 /// Controller for the "birds need support" feature.
-/// Manages the 3-round weekly support system.
+/// Each bird can be supported once per week.
 /// </summary>
 [ApiController]
 [Route("api/needs-support")]
@@ -26,17 +26,16 @@ public class NeedsSupportController : ControllerBase
     }
 
     /// <summary>
-    /// Get all birds needing support with current round information.
+    /// Get all birds needing support.
     /// This is the main endpoint for the "birds need support" page.
     /// </summary>
     /// <remarks>
-    /// Returns birds that need support in the current round.
+    /// Returns birds that need support this week.
     ///
     /// How it works:
-    /// - Round 1: All birds marked as 'needs support' are shown
-    /// - When all birds receive support once, Round 2 begins (all shown again)
-    /// - When all birds receive support twice, Round 3 begins (all shown again)
-    /// - After 3 rounds: Thank you message, no birds shown
+    /// - All birds marked as 'needs support' are shown
+    /// - Each bird can receive support once per week
+    /// - When all birds have been supported: Thank you message, no birds shown
     /// - Resets every Sunday
     /// </remarks>
     [HttpGet("birds")]
@@ -127,7 +126,7 @@ public class NeedsSupportController : ControllerBase
             canReceiveSupport = canSupport,
             message = canSupport
                 ? "This bird can receive support"
-                : "This bird has received maximum support for this week (2 times)"
+                : "This bird has already been supported this week"
         });
     }
 }

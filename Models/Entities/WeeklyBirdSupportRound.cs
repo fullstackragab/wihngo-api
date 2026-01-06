@@ -4,8 +4,8 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace Wihngo.Models.Entities;
 
 /// <summary>
-/// Tracks how many times a bird has received support in a given week.
-/// Used to implement the 2-round weekly support system.
+/// Tracks whether a bird has received support in a given week.
+/// Each bird can be supported once per week.
 /// </summary>
 [Table("weekly_bird_support_rounds")]
 public class WeeklyBirdSupportRound
@@ -23,7 +23,7 @@ public class WeeklyBirdSupportRound
     public DateTime WeekStartDate { get; set; }
 
     /// <summary>
-    /// How many times this bird has been supported this week (0-2).
+    /// How many times this bird has been supported this week (0-1).
     /// </summary>
     [Column("times_supported")]
     public int TimesSupported { get; set; } = 0;
