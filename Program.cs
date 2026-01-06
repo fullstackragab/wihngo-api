@@ -671,6 +671,11 @@ if (isDatabaseAvailable)
         job => job.CheckPendingPaymentsAsync(),
         "*/10 * * * * *"); // Every 10 seconds for payment confirmations
 
+    RecurringJob.AddOrUpdate<ManualPaymentDetectionJob>(
+        "check-manual-payment-deposits",
+        job => job.CheckPendingManualPaymentsAsync(),
+        "*/15 * * * * *"); // Every 15 seconds for manual QR payment detection
+
     // Weekly Support Reminder Jobs
     RecurringJob.AddOrUpdate<WeeklySupportReminderJob>(
         "weekly-support-reminders",
@@ -684,6 +689,7 @@ if (isDatabaseAvailable)
 
     Console.WriteLine("✅ SupportIntentConfirmationJob scheduled (every 10 seconds)");
     Console.WriteLine("✅ PaymentConfirmationJob scheduled (every 10 seconds)");
+    Console.WriteLine("✅ ManualPaymentDetectionJob scheduled (every 15 seconds)");
     Console.WriteLine("✅ WeeklySupportReminderJob scheduled (every 15 minutes)");
 }
 
