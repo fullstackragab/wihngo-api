@@ -413,6 +413,10 @@ builder.Services.AddScoped<StoryLanguageBackfillService>();
 // Kind Words (Comments) Services
 builder.Services.AddScoped<IKindWordsService, KindWordsService>();
 
+// Weekly Support Services (Non-Custodial Recurring Donations)
+builder.Services.AddScoped<IWeeklySupportService, WeeklySupportService>();
+builder.Services.AddScoped<WeeklySupportReminderJob>();
+
 // ========================================
 // 💰 ULOMIRA-STYLE PAYMENT SYSTEM
 // ========================================
@@ -651,7 +655,19 @@ if (isDatabaseAvailable)
         job => job.CheckPendingPaymentsAsync(),
         "*/10 * * * * *"); // Every 10 seconds for payment confirmations
 
+    // Weekly Support Reminder Jobs
+    RecurringJob.AddOrUpdate<WeeklySupportReminderJob>(
+        "weekly-support-reminders",
+        job => job.ProcessRemindersAsync(),
+        "*/15 * * * *"); // Every 15 minutes
+
+    RecurringJob.AddOrUpdate<WeeklySupportReminderJob>(
+        "expire-weekly-reminders",
+        job => job.ExpireOldRemindersAsync(),
+        "0 * * * *"); // Every hour
+
     Console.WriteLine("✅ PaymentConfirmationJob scheduled (every 10 seconds)");
+    Console.WriteLine("✅ WeeklySupportReminderJob scheduled (every 15 minutes)");
 }
 
 Console.WriteLine("");

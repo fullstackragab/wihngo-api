@@ -24,6 +24,12 @@ namespace Wihngo.Models.Enums
         
         // Recommendation Notifications
         SuggestedBirds,
-        ReEngagement
+        ReEngagement,
+
+        // Weekly Support Notifications
+        WeeklySupportReminder,      // Reminder to approve weekly payment
+        WeeklySupportCompleted,     // Confirmation that payment was processed
+        WeeklySupportMissed,        // User missed a weekly payment
+        WeeklySupportSubscribed     // New subscription created
     }
 }

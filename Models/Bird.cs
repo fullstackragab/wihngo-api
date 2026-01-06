@@ -65,6 +65,10 @@ namespace Wihngo.Models
         [Column("support_enabled")]
         public bool SupportEnabled { get; set; } = true;
 
+        // Whether this bird is visible to public (draft/hidden if false)
+        [Column("is_public")]
+        public bool IsPublic { get; set; } = true;
+
         // Optional QR code URL for offline-to-online profile link
         [MaxLength(1000)]
         public string? QrCodeUrl { get; set; }

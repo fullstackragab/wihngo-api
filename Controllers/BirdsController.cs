@@ -98,11 +98,12 @@ namespace Wihngo.Controllers
 
             using var connection = await _dbFactory.CreateOpenConnectionAsync();
 
-            // Get total count for pagination
-            var countSql = "SELECT COUNT(*) FROM birds WHERE owner_id IS NOT NULL AND bird_id IS NOT NULL";
+            // Get total count for pagination (only public birds)
+            var countSql = "SELECT COUNT(*) FROM birds WHERE owner_id IS NOT NULL AND bird_id IS NOT NULL AND is_public = TRUE";
             var totalCount = await connection.ExecuteScalarAsync<int>(countSql);
 
             // Get paginated birds with activity tracking fields - ordered by most recent activity
+            // Only show public birds (is_public = TRUE)
             var birdsSql = @"
                 SELECT
                     bird_id,
@@ -114,9 +115,10 @@ namespace Wihngo.Controllers
                     COALESCE(supported_count, 0) supported_count,
                     owner_id,
                     last_activity_at,
-                    is_memorial
+                    is_memorial,
+                    is_public
                 FROM birds
-                WHERE owner_id IS NOT NULL AND bird_id IS NOT NULL
+                WHERE owner_id IS NOT NULL AND bird_id IS NOT NULL AND is_public = TRUE
                 ORDER BY COALESCE(last_activity_at, created_at) DESC
                 LIMIT @PageSize OFFSET @Offset";
 
@@ -190,7 +192,9 @@ namespace Wihngo.Controllers
         [HttpGet("{id}")]
         public async Task<ActionResult<BirdProfileDto>> Get(Guid id)
         {
-            // Get bird with owner using raw SQL (including activity tracking fields)
+            var userId = GetUserIdClaim();
+
+            // Get bird with owner using raw SQL (including activity tracking and visibility fields)
             var birdSql = @"
                 SELECT
                     b.bird_id,
@@ -205,6 +209,7 @@ namespace Wihngo.Controllers
                     b.created_at,
                     b.last_activity_at,
                     b.is_memorial,
+                    b.is_public,
                     u.user_id owner_user_id,
                     u.name owner_name
                 FROM birds b
@@ -215,6 +220,14 @@ namespace Wihngo.Controllers
             var birdData = await connection.QueryFirstOrDefaultAsync<dynamic>(birdSql, new { BirdId = id });
 
             if (birdData == null) return NotFound();
+
+            // Check visibility - hidden birds only visible to owner
+            bool isPublic = birdData.is_public ?? true;
+            Guid ownerId = birdData.owner_id;
+            if (!isPublic && (!userId.HasValue || userId.Value != ownerId))
+            {
+                return NotFound(); // Hidden bird - appear as not found to non-owners
+            }
 
             // Get stories for this bird
             var storiesSql = @"
@@ -255,7 +268,9 @@ namespace Wihngo.Controllers
                 LastSeenText = lastSeenText,
                 CanSupport = canSupport,
                 SupportUnavailableMessage = supportUnavailableMessage,
-                IsMemorial = isMemorial
+                IsMemorial = isMemorial,
+                // Only show visibility status to owner
+                IsPublic = userId.HasValue && userId.Value == ownerId ? isPublic : null
             };
 
             // Generate download URL for image
@@ -272,7 +287,6 @@ namespace Wihngo.Controllers
             }
 
             // Check if current user has loved this bird
-            var userId = GetUserIdClaim();
             if (userId.HasValue)
             {
                 var loveSql = "SELECT EXISTS(SELECT 1 FROM loves WHERE user_id = @UserId AND bird_id = @BirdId)";
@@ -980,6 +994,52 @@ namespace Wihngo.Controllers
                 message = dto.SupportEnabled
                     ? "This bird can now receive support"
                     : "Support has been disabled for this bird"
+            });
+        }
+
+        /// <summary>
+        /// Update bird visibility (public/hidden)
+        /// </summary>
+        /// <remarks>
+        /// Hide a bird from public listings or make it visible again.
+        /// When hidden (isPublic=false), the bird is in draft mode and only visible to the owner.
+        /// Hidden birds won't appear in searches, feeds, or public profiles.
+        /// </remarks>
+        [Authorize]
+        [HttpPatch("{id}/visibility")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> UpdateVisibility(Guid id, [FromBody] BirdVisibilityDto dto)
+        {
+            if (!await EnsureOwner(id)) return Forbid();
+
+            using var connection = await _dbFactory.CreateOpenConnectionAsync();
+
+            // Check if bird exists
+            var birdExists = await connection.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS(SELECT 1 FROM birds WHERE bird_id = @BirdId)",
+                new { BirdId = id });
+
+            if (!birdExists) return NotFound();
+
+            // Update is_public
+            await connection.ExecuteAsync(@"
+                UPDATE birds
+                SET is_public = @IsPublic
+                WHERE bird_id = @BirdId",
+                new { dto.IsPublic, BirdId = id });
+
+            _logger.LogInformation(
+                "Bird {BirdId} visibility updated: IsPublic={IsPublic}",
+                id, dto.IsPublic);
+
+            return Ok(new {
+                success = true,
+                isPublic = dto.IsPublic,
+                message = dto.IsPublic
+                    ? "This bird is now visible to everyone"
+                    : "This bird is now hidden from public"
             });
         }
 

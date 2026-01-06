@@ -54,6 +54,19 @@ namespace Wihngo.Dtos
     }
 
     /// <summary>
+    /// DTO for updating bird visibility (public/hidden)
+    /// </summary>
+    public class BirdVisibilityDto
+    {
+        /// <summary>
+        /// Whether this bird should be visible to the public.
+        /// When false, the bird is in draft/hidden mode and only visible to the owner.
+        /// </summary>
+        [Required]
+        public bool IsPublic { get; set; }
+    }
+
+    /// <summary>
     /// DTO for updating a bird's profile
     /// </summary>
     public class BirdUpdateDto

@@ -56,6 +56,12 @@ namespace Wihngo.Dtos
         /// Whether the bird is in memorial status
         /// </summary>
         public bool IsMemorial { get; set; }
+
+        /// <summary>
+        /// Whether the bird is visible to public (true) or hidden/draft (false).
+        /// Only included when the requesting user is the owner.
+        /// </summary>
+        public bool? IsPublic { get; set; }
     }
 
     public class ConservationDto
