@@ -61,7 +61,7 @@ public class WeeklySupportService : IWeeklySupportService
         {
             return (null, new ValidationErrorResponse
             {
-                Field = "BirdId",
+                ErrorCode = "BIRD_NOT_FOUND",
                 Message = "Bird not found"
             });
         }
@@ -70,7 +70,7 @@ public class WeeklySupportService : IWeeklySupportService
         {
             return (null, new ValidationErrorResponse
             {
-                Field = "BirdId",
+                ErrorCode = "SUPPORT_NOT_ENABLED",
                 Message = "This bird is not accepting support"
             });
         }
@@ -82,7 +82,7 @@ public class WeeklySupportService : IWeeklySupportService
         {
             return (null, new ValidationErrorResponse
             {
-                Field = "BirdId",
+                ErrorCode = "CANNOT_SUPPORT_OWN_BIRD",
                 Message = "You cannot subscribe to your own bird"
             });
         }
@@ -97,7 +97,7 @@ public class WeeklySupportService : IWeeklySupportService
         {
             return (null, new ValidationErrorResponse
             {
-                Field = "BirdId",
+                ErrorCode = "SUBSCRIPTION_EXISTS",
                 Message = "You already have an active subscription for this bird"
             });
         }
@@ -111,7 +111,7 @@ public class WeeklySupportService : IWeeklySupportService
         {
             return (null, new ValidationErrorResponse
             {
-                Field = "Wallet",
+                ErrorCode = "WALLET_NOT_CONNECTED",
                 Message = "Please connect your Phantom wallet first"
             });
         }
@@ -307,7 +307,7 @@ public class WeeklySupportService : IWeeklySupportService
         {
             return (null, new ValidationErrorResponse
             {
-                Field = "SubscriptionId",
+                ErrorCode = "SUBSCRIPTION_NOT_FOUND",
                 Message = "Subscription not found"
             });
         }
@@ -477,7 +477,7 @@ public class WeeklySupportService : IWeeklySupportService
         {
             return (null, new ValidationErrorResponse
             {
-                Field = "PaymentId",
+                ErrorCode = "PAYMENT_NOT_FOUND",
                 Message = "Payment not found"
             });
         }
@@ -487,7 +487,7 @@ public class WeeklySupportService : IWeeklySupportService
         {
             return (null, new ValidationErrorResponse
             {
-                Field = "PaymentId",
+                ErrorCode = "PAYMENT_NOT_FOUND",
                 Message = "Payment not found"
             });
         }
@@ -498,7 +498,7 @@ public class WeeklySupportService : IWeeklySupportService
         {
             return (null, new ValidationErrorResponse
             {
-                Field = "PaymentId",
+                ErrorCode = "INVALID_PAYMENT_STATUS",
                 Message = $"Payment cannot be approved (status: {status})"
             });
         }
@@ -508,7 +508,7 @@ public class WeeklySupportService : IWeeklySupportService
         {
             return (null, new ValidationErrorResponse
             {
-                Field = "PaymentId",
+                ErrorCode = "PAYMENT_EXPIRED",
                 Message = "Payment reminder has expired"
             });
         }
@@ -616,7 +616,7 @@ public class WeeklySupportService : IWeeklySupportService
 
         _logger.LogInformation(
             "Weekly payment {PaymentId} completed for subscription {SubscriptionId}",
-            payment.id, payment.subscription_id);
+            (Guid)payment.id, (Guid)payment.subscription_id);
 
         return true;
     }
@@ -692,7 +692,7 @@ public class WeeklySupportService : IWeeklySupportService
             {
                 _logger.LogError(ex,
                     "Failed to process reminder for subscription {SubscriptionId}",
-                    sub.id);
+                    (Guid)sub.id);
             }
         }
 
@@ -747,7 +747,7 @@ public class WeeklySupportService : IWeeklySupportService
 
                     _logger.LogInformation(
                         "Auto-paused subscription {SubscriptionId} after {Count} consecutive misses",
-                        payment.subscription_id, newMissedCount);
+                        (Guid)payment.subscription_id, newMissedCount);
 
                     // Send auto-pause notification
                     await SendAutoPausedNotificationAsync(
@@ -772,7 +772,7 @@ public class WeeklySupportService : IWeeklySupportService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to expire payment {PaymentId}", payment.id);
+                _logger.LogError(ex, "Failed to expire payment {PaymentId}", (Guid)payment.id);
             }
         }
 
@@ -848,7 +848,7 @@ public class WeeklySupportService : IWeeklySupportService
 
         _logger.LogInformation(
             "Sent weekly reminder for subscription {SubscriptionId}, payment {PaymentId}",
-            sub.id, paymentId);
+            (Guid)sub.id, paymentId);
     }
 
     private static DateTime CalculateNextReminderDate(int dayOfWeek, int preferredHour)

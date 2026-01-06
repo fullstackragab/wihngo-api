@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>f1a0661b-00fe-46b3-9e9c-a2ce2259acca</UserSecretsId>
@@ -11,7 +11,7 @@
 
   <ItemGroup>
     <PackageReference Include="AWSSDK.Rekognition" Version="3.7.302.22" />
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.12" />
     <PackageReference Include="NTextCat" Version="0.3.65" />
     <PackageReference Include="Scalar.AspNetCore" Version="1.2.59" />
     <PackageReference Include="Microsoft.Extensions.SecretManager.Tools" Version="2.0.2" />

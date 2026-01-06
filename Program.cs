@@ -97,7 +97,7 @@ builder.Services.AddControllers().AddJsonOptions(opts =>
     opts.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 
-builder.Services.AddOpenApi();
+builder.Services.AddEndpointsApiExplorer();
 
 // Register AutoMapper with explicit profile
 builder.Services.AddAutoMapper(cfg => cfg.AddProfile<AutoMapperProfile>());
@@ -631,10 +631,9 @@ app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Configure Swagger/OpenAPI
+// Configure Scalar API Reference (OpenAPI documentation)
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
     app.MapScalarApiReference();
 }
 
