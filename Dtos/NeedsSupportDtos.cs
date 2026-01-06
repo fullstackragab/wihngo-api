@@ -19,22 +19,22 @@ public class SetNeedsSupportRequest
 
 /// <summary>
 /// Response for the "birds need support" list with round information.
-/// Explains how the 3-round weekly support system works.
+/// Explains how the 2-round weekly support system works.
 /// </summary>
 public class BirdsNeedSupportResponse
 {
     /// <summary>
-    /// Current round (1, 2, or 3). Null if all rounds complete.
+    /// Current round (1 or 2). Null if all rounds complete.
     /// </summary>
     public int? CurrentRound { get; set; }
 
     /// <summary>
-    /// Total rounds per week (always 3).
+    /// Total rounds per week (always 2).
     /// </summary>
-    public int TotalRounds { get; set; } = 3;
+    public int TotalRounds { get; set; } = 2;
 
     /// <summary>
-    /// Whether all 3 rounds are complete for this week.
+    /// Whether all 2 rounds are complete for this week.
     /// </summary>
     public bool AllRoundsComplete { get; set; }
 
@@ -99,7 +99,7 @@ public class BirdNeedsSupportDto
     public Guid OwnerId { get; set; }
 
     /// <summary>
-    /// How many times this bird has been supported this week (0-3).
+    /// How many times this bird has been supported this week (0-2).
     /// </summary>
     public int TimesSupportedThisWeek { get; set; }
 
@@ -123,17 +123,17 @@ public class BirdWeeklySupportProgressDto
     public string BirdName { get; set; } = string.Empty;
 
     /// <summary>
-    /// How many times supported this week (0-3).
+    /// How many times supported this week (0-2).
     /// </summary>
     public int TimesSupportedThisWeek { get; set; }
 
     /// <summary>
     /// Max times a bird can be supported per week.
     /// </summary>
-    public int MaxTimesPerWeek { get; set; } = 3;
+    public int MaxTimesPerWeek { get; set; } = 2;
 
     /// <summary>
-    /// Whether the bird has received all 3 supports this week.
+    /// Whether the bird has received all 2 supports this week.
     /// </summary>
     public bool FullySupportedThisWeek { get; set; }
 
@@ -155,7 +155,7 @@ public class WeeklySupportStatsDto
     public DateTime WeekEndDate { get; set; }
 
     /// <summary>
-    /// Current round (1, 2, or 3). 4 means all complete.
+    /// Current round (1 or 2). 3 means all complete.
     /// </summary>
     public int CurrentRound { get; set; }
 
@@ -165,7 +165,7 @@ public class WeeklySupportStatsDto
     public int TotalBirdsNeedingSupport { get; set; }
 
     /// <summary>
-    /// Birds fully supported (all 3 rounds).
+    /// Birds fully supported (all 2 rounds).
     /// </summary>
     public int BirdsFullySupported { get; set; }
 
@@ -175,7 +175,7 @@ public class WeeklySupportStatsDto
     public int TotalSupportsThisWeek { get; set; }
 
     /// <summary>
-    /// Whether all birds have completed all 3 rounds.
+    /// Whether all birds have completed all 2 rounds.
     /// </summary>
     public bool AllRoundsComplete { get; set; }
 }

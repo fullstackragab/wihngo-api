@@ -26,11 +26,10 @@ CREATE INDEX IF NOT EXISTS idx_weekly_support_bird ON weekly_bird_support_rounds
 -- Comment explaining the feature
 COMMENT ON TABLE weekly_bird_support_rounds IS
 'Tracks how many times each bird has received support in a given week.
-Birds can receive support up to 3 times per week (3 rounds).
+Birds can receive support up to 2 times per week (2 rounds).
 Round 1: All birds needing support are shown
 Round 2: After all birds supported once, show all again
-Round 3: After all birds supported twice, show all again
-After 3 rounds: Show thank you message, no birds displayed';
+After 2 rounds: Show thank you message, no birds displayed';
 
 COMMENT ON COLUMN birds.needs_support IS
 'When true, this bird appears in the "birds need support" list.

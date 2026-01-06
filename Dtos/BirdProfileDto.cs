@@ -70,8 +70,8 @@ namespace Wihngo.Dtos
         public bool? NeedsSupport { get; set; }
 
         /// <summary>
-        /// How many times this bird has been supported this week (0-3).
-        /// Part of the 3-round weekly support system.
+        /// How many times this bird has been supported this week (0-2).
+        /// Part of the 2-round weekly support system.
         /// </summary>
         public int? TimesSupportedThisWeek { get; set; }
     }

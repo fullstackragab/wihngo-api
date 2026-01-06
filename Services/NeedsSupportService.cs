@@ -13,8 +13,7 @@ namespace Wihngo.Services;
 /// - Users see a list of birds needing support
 /// - When a bird receives support, it's removed from the list for that round
 /// - When all birds have been supported once, they all appear again (Round 2)
-/// - When all birds have been supported twice, they appear again (Round 3)
-/// - After all birds have been supported 3 times, show thank you message
+/// - After all birds have been supported 2 times, show thank you message
 /// - The cycle resets every week (Sunday)
 /// </summary>
 public class NeedsSupportService : INeedsSupportService
@@ -22,25 +21,23 @@ public class NeedsSupportService : INeedsSupportService
     private readonly IDbConnectionFactory _dbFactory;
     private readonly ILogger<NeedsSupportService> _logger;
 
-    private const int MaxRoundsPerWeek = 3;
+    private const int MaxRoundsPerWeek = 2;
 
     private const string HowItWorksMessage = @"Wihngo's Weekly Support System:
 
-Every week, you can help support birds in need through 3 rounds of giving.
+Every week, you can help support birds in need through 2 rounds of giving.
 
 Round 1: All birds marked as 'needs support' are shown. Support any bird you'd like!
 
 Round 2: Once every bird has received support once, they all appear again for a second chance to help.
 
-Round 3: After all birds are supported twice, they appear one more time.
-
-After 3 rounds: When all birds have been supported 3 times this week, you'll see a thank you message. The cycle resets every Sunday!
+After 2 rounds: When all birds have been supported twice this week, you'll see a thank you message. The cycle resets every Sunday!
 
 Your support goes directly to bird owners to help care for their feathered friends.";
 
     private const string ThankYouMessageTemplate = @"Thank you for your amazing support!
 
-All {0} birds have received their weekly support (3 times each)!
+All {0} birds have received their weekly support (2 times each)!
 
 The community has come together to help every bird in need this week. Your generosity makes a real difference in the lives of these birds and their caretakers.
 

@@ -127,7 +127,7 @@ public class NeedsSupportController : ControllerBase
             canReceiveSupport = canSupport,
             message = canSupport
                 ? "This bird can receive support"
-                : "This bird has received maximum support for this week (3 times)"
+                : "This bird has received maximum support for this week (2 times)"
         });
     }
 }
