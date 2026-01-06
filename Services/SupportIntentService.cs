@@ -30,6 +30,7 @@ public class SupportIntentService : ISupportIntentService
     private readonly ISolanaTransactionService _solanaService;
     private readonly ILedgerService _ledgerService;
     private readonly ISupportConfirmationEmailService _supportConfirmationEmailService;
+    private readonly INeedsSupportService _needsSupportService;
     private readonly P2PPaymentConfiguration _config;
     private readonly ILogger<SupportIntentService> _logger;
 
@@ -42,6 +43,7 @@ public class SupportIntentService : ISupportIntentService
         ISolanaTransactionService solanaService,
         ILedgerService ledgerService,
         ISupportConfirmationEmailService supportConfirmationEmailService,
+        INeedsSupportService needsSupportService,
         IOptions<P2PPaymentConfiguration> config,
         ILogger<SupportIntentService> logger)
     {
@@ -50,6 +52,7 @@ public class SupportIntentService : ISupportIntentService
         _solanaService = solanaService;
         _ledgerService = ledgerService;
         _supportConfirmationEmailService = supportConfirmationEmailService;
+        _needsSupportService = needsSupportService;
         _config = config.Value;
         _logger = logger;
     }
@@ -721,6 +724,9 @@ public class SupportIntentService : ISupportIntentService
                 await conn.ExecuteAsync(
                     "UPDATE birds SET supported_count = supported_count + 1 WHERE bird_id = @BirdId",
                     new { intent.BirdId });
+
+                // Record support for weekly rounds tracking (3-round system)
+                await _needsSupportService.RecordSupportReceivedAsync(intent.BirdId);
             }
 
             // Mark as completed

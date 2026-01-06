@@ -77,6 +77,10 @@ namespace Wihngo.Models
         [Column("last_activity_at")]
         public DateTime? LastActivityAt { get; set; }
 
+        // Whether this bird is marked as needing support (appears in "birds need support" list)
+        [Column("needs_support")]
+        public bool NeedsSupport { get; set; } = false;
+
         // Memorial fields
         [Column("is_memorial")]
         public bool IsMemorial { get; set; } = false;

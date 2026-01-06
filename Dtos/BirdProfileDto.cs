@@ -62,6 +62,18 @@ namespace Wihngo.Dtos
         /// Only included when the requesting user is the owner.
         /// </summary>
         public bool? IsPublic { get; set; }
+
+        /// <summary>
+        /// Whether the bird is marked as "needs support" and appears in the needs support list.
+        /// Only included when the requesting user is the owner.
+        /// </summary>
+        public bool? NeedsSupport { get; set; }
+
+        /// <summary>
+        /// How many times this bird has been supported this week (0-3).
+        /// Part of the 3-round weekly support system.
+        /// </summary>
+        public int? TimesSupportedThisWeek { get; set; }
     }
 
     public class ConservationDto

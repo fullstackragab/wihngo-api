@@ -417,6 +417,9 @@ builder.Services.AddScoped<IKindWordsService, KindWordsService>();
 builder.Services.AddScoped<IWeeklySupportService, WeeklySupportService>();
 builder.Services.AddScoped<WeeklySupportReminderJob>();
 
+// Needs Support Service (3-Round Weekly Support System)
+builder.Services.AddScoped<INeedsSupportService, NeedsSupportService>();
+
 // ========================================
 // 💰 ULOMIRA-STYLE PAYMENT SYSTEM
 // ========================================
