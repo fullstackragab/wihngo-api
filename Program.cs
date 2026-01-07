@@ -413,6 +413,7 @@ builder.Services.AddScoped<IWhisperTranscriptionService, WhisperTranscriptionSer
 // Content Moderation Services
 builder.Services.Configure<ContentModerationConfiguration>(builder.Configuration.GetSection("ContentModeration"));
 builder.Services.AddScoped<IContentModerationService, ContentModerationService>();
+builder.Services.AddScoped<IAiModerationService, AiModerationService>();
 
 // Smart Feed Services
 builder.Services.AddSingleton<ILanguageDetectionService, LanguageDetectionService>();

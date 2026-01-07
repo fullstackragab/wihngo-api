@@ -167,6 +167,30 @@ public class LoveVideoModerationItem
 
     public DateTime CreatedAt { get; set; }
     public string? RejectionReason { get; set; }
+
+    // ===========================================
+    // AI MODERATION FIELDS
+    // ===========================================
+
+    /// <summary>
+    /// AI decision: auto_approve, needs_human_review, reject
+    /// </summary>
+    public string? AiDecision { get; set; }
+
+    /// <summary>
+    /// AI confidence score (0.0 to 1.0)
+    /// </summary>
+    public double? AiConfidence { get; set; }
+
+    /// <summary>
+    /// AI-generated flags (e.g., safe, spam, off_topic)
+    /// </summary>
+    public List<string>? AiFlags { get; set; }
+
+    /// <summary>
+    /// AI-generated reasons for the decision
+    /// </summary>
+    public List<string>? AiReasons { get; set; }
 }
 
 /// <summary>

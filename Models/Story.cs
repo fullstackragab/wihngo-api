@@ -59,6 +59,35 @@ namespace Wihngo.Models
         [MaxLength(10)]
         public string? Country { get; set; }
 
+        // ===========================================
+        // MODERATION FIELDS
+        // ===========================================
+
+        /// <summary>
+        /// Moderation status: pending (default), approved, rejected, changes_requested
+        /// Only approved stories are visible publicly
+        /// </summary>
+        public StoryStatus Status { get; set; } = StoryStatus.Pending;
+
+        /// <summary>
+        /// Admin note explaining rejection or requested changes
+        /// </summary>
+        [MaxLength(1000)]
+        public string? AdminReviewNote { get; set; }
+
+        /// <summary>
+        /// Admin who reviewed this story
+        /// </summary>
+        public Guid? ReviewedByAdminId { get; set; }
+
+        [ForeignKey(nameof(ReviewedByAdminId))]
+        public User? ReviewedByAdmin { get; set; }
+
+        /// <summary>
+        /// When the story was reviewed by admin
+        /// </summary>
+        public DateTime? ReviewedAt { get; set; }
+
         // Navigation properties
         public List<StoryLike> Likes { get; set; } = new();
         public List<Comment> Comments { get; set; } = new();

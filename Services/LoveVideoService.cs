@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Dapper;
 using Microsoft.Extensions.Options;
@@ -26,6 +27,7 @@ public class LoveVideoService : ILoveVideoService
 {
     private readonly IDbConnectionFactory _dbFactory;
     private readonly IS3Service _s3Service;
+    private readonly IAiModerationService _aiModerationService;
     private readonly AwsConfiguration _awsConfig;
     private readonly AwsPublicBucketConfiguration _publicBucketConfig;
     private readonly ILogger<LoveVideoService> _logger;
@@ -52,12 +54,14 @@ public class LoveVideoService : ILoveVideoService
     public LoveVideoService(
         IDbConnectionFactory dbFactory,
         IS3Service s3Service,
+        IAiModerationService aiModerationService,
         IOptions<AwsConfiguration> awsConfig,
         IOptions<AwsPublicBucketConfiguration> publicBucketConfig,
         ILogger<LoveVideoService> logger)
     {
         _dbFactory = dbFactory;
         _s3Service = s3Service;
+        _aiModerationService = aiModerationService;
         _awsConfig = awsConfig.Value;
         _publicBucketConfig = publicBucketConfig.Value;
         _logger = logger;
@@ -266,6 +270,29 @@ public class LoveVideoService : ILoveVideoService
             mediaType = GetMediaTypeFromKey(mediaKey);
         }
 
+        // Run AI moderation
+        var aiResult = await _aiModerationService.ModerateContentAsync(new AiModerationRequest
+        {
+            StoryId = Guid.NewGuid(), // Will be replaced with actual ID
+            UserId = userId,
+            UserTrustLevel = UserTrustLevel.New, // TODO: Get from user profile
+            Text = request.Description,
+            HasImages = hasMedia && mediaType == LoveVideoMediaType.Image,
+            HasVideo = hasMedia && mediaType == LoveVideoMediaType.Video,
+            HasYoutubeUrl = hasYoutube,
+            Language = "auto"
+        });
+
+        // Determine status based on AI decision
+        var status = aiResult.Decision switch
+        {
+            AiModerationDecision.AutoApprove => LoveVideoStatus.Approved,
+            AiModerationDecision.Reject => LoveVideoStatus.Rejected,
+            _ => LoveVideoStatus.Pending // needs_human_review or unknown
+        };
+
+        var now = DateTime.UtcNow;
+
         using var conn = await _dbFactory.CreateOpenConnectionAsync();
 
         var loveVideo = new LoveVideo
@@ -278,31 +305,50 @@ public class LoveVideoService : ILoveVideoService
             MediaType = mediaType,
             Description = request.Description?.Trim(),
             Category = LoveVideoCategory.LoveCompanionship, // Default category
-            Status = LoveVideoStatus.Pending,
+            Status = status,
             SubmittedByUserId = userId,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
+            CreatedAt = now,
+            UpdatedAt = now,
+            // AI moderation fields
+            AiDecision = aiResult.Decision,
+            AiConfidence = aiResult.Confidence,
+            AiFlags = aiResult.Flags.Count > 0 ? JsonSerializer.Serialize(aiResult.Flags) : null,
+            AiReasons = aiResult.Reasons.Count > 0 ? JsonSerializer.Serialize(aiResult.Reasons) : null,
+            AiModeratedAt = now,
+            // Set approval time if auto-approved
+            ApprovedAt = status == LoveVideoStatus.Approved ? now : null,
+            RejectionReason = status == LoveVideoStatus.Rejected
+                ? string.Join("; ", aiResult.Reasons)
+                : null
         };
 
         await conn.ExecuteAsync(
             @"INSERT INTO love_videos
               (id, youtube_url, youtube_video_id, media_key, media_url, media_type, description, category, status,
-               submitted_by_user_id, created_at, updated_at)
+               submitted_by_user_id, created_at, updated_at, approved_at, rejection_reason,
+               ai_decision, ai_confidence, ai_flags, ai_reasons, ai_moderated_at)
               VALUES
               (@Id, @YoutubeUrl, @YoutubeVideoId, @MediaKey, @MediaUrl, @MediaType, @Description, @Category, @Status,
-               @SubmittedByUserId, @CreatedAt, @UpdatedAt)",
+               @SubmittedByUserId, @CreatedAt, @UpdatedAt, @ApprovedAt, @RejectionReason,
+               @AiDecision, @AiConfidence, @AiFlags, @AiReasons, @AiModeratedAt)",
             loveVideo);
 
         var source = hasYoutube ? $"YouTube: {youtubeUrl}" : hasMedia ? $"Media: {mediaKey}" : "Description only";
         _logger.LogInformation(
-            "Love video submitted: {Id} by user {UserId}, {Source}, Status: pending",
-            loveVideo.Id, userId, source);
+            "Love video submitted: {Id} by user {UserId}, {Source}, Status: {Status}, AI Decision: {AiDecision} ({AiConfidence:P0})",
+            loveVideo.Id, userId, source, status, aiResult.Decision, aiResult.Confidence);
 
         return new SubmitLoveVideoResponse
         {
             Success = true,
             Id = loveVideo.Id,
-            Status = LoveVideoStatus.Pending
+            Status = status,
+            Message = status switch
+            {
+                LoveVideoStatus.Approved => "Your submission has been published!",
+                LoveVideoStatus.Rejected => "Your submission couldn't be published because it doesn't meet our community guidelines.",
+                _ => "Your submission is being reviewed to keep Wihngo safe and meaningful."
+            }
         };
     }
 
@@ -580,7 +626,27 @@ public class LoveVideoService : ILoveVideoService
             Status = video.Status,
             SubmittedByUserId = video.SubmittedByUserId,
             CreatedAt = video.CreatedAt,
-            RejectionReason = video.RejectionReason
+            RejectionReason = video.RejectionReason,
+            // AI moderation fields
+            AiDecision = video.AiDecision,
+            AiConfidence = video.AiConfidence,
+            AiFlags = ParseJsonArray(video.AiFlags),
+            AiReasons = ParseJsonArray(video.AiReasons)
         };
+    }
+
+    private static List<string>? ParseJsonArray(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json);
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

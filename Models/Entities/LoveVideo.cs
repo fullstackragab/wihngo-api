@@ -124,6 +124,43 @@ public class LoveVideo
     public string? MediaType { get; set; }
 
     // ===========================================
+    // AI MODERATION FIELDS
+    // ===========================================
+
+    /// <summary>
+    /// AI moderation decision: auto_approve, needs_human_review, reject
+    /// </summary>
+    [Column("ai_decision")]
+    [MaxLength(30)]
+    public string? AiDecision { get; set; }
+
+    /// <summary>
+    /// AI confidence score (0.0 to 1.0)
+    /// </summary>
+    [Column("ai_confidence")]
+    public double? AiConfidence { get; set; }
+
+    /// <summary>
+    /// AI-generated flags (JSON array of strings)
+    /// </summary>
+    [Column("ai_flags")]
+    [MaxLength(500)]
+    public string? AiFlags { get; set; }
+
+    /// <summary>
+    /// AI-generated reasons (JSON array of strings)
+    /// </summary>
+    [Column("ai_reasons")]
+    [MaxLength(1000)]
+    public string? AiReasons { get; set; }
+
+    /// <summary>
+    /// When AI moderation was performed
+    /// </summary>
+    [Column("ai_moderated_at")]
+    public DateTime? AiModeratedAt { get; set; }
+
+    // ===========================================
     // EXPLICIT EXCLUSIONS (these fields must NEVER exist)
     // ===========================================
     // - birdId (stories cannot be linked to birds)
