@@ -20,7 +20,9 @@ namespace Wihngo.Services
         private static readonly HashSet<string> PublicMediaTypes = new(StringComparer.OrdinalIgnoreCase)
         {
             "bird-profile-image",
-            "bird-video"
+            "bird-video",
+            "love-video-image",
+            "love-video-video"
         };
 
         public S3Service(
@@ -84,7 +86,8 @@ namespace Wihngo.Services
             IsPublicMediaType(mediaType) ? _publicS3Client : _s3Client;
 
         private bool IsPublicBucketKey(string s3Key) =>
-            s3Key.StartsWith("birds/", StringComparison.OrdinalIgnoreCase);
+            s3Key.StartsWith("birds/", StringComparison.OrdinalIgnoreCase) ||
+            s3Key.StartsWith("love-videos/", StringComparison.OrdinalIgnoreCase);
 
         private string GetBucketForKey(string s3Key) =>
             IsPublicBucketKey(s3Key) && !string.IsNullOrWhiteSpace(_publicConfig.Bucket)
@@ -312,6 +315,9 @@ namespace Wihngo.Services
                 // For bird media without relatedId (before bird creation), use userId as folder
                 "bird-profile-image" => $"birds/profile-images/{relatedId ?? userId}/{uniqueId}{extension}",
                 "bird-video" => $"birds/videos/{relatedId ?? userId}/{uniqueId}{extension}",
+                // Love videos use public bucket, organized by user
+                "love-video-image" => $"love-videos/images/{userId}/{uniqueId}{extension}",
+                "love-video-video" => $"love-videos/videos/{userId}/{uniqueId}{extension}",
                 _ => throw new ArgumentException($"Invalid media type: {mediaType}", nameof(mediaType))
             };
         }

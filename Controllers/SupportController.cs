@@ -16,15 +16,18 @@ public class SupportController : ControllerBase
 {
     private readonly IP2PPaymentService _transferService;
     private readonly ISupportIntentService _supportIntentService;
+    private readonly ICaretakerEligibilityService _eligibilityService;
     private readonly ILogger<SupportController> _logger;
 
     public SupportController(
         IP2PPaymentService transferService,
         ISupportIntentService supportIntentService,
+        ICaretakerEligibilityService eligibilityService,
         ILogger<SupportController> logger)
     {
         _transferService = transferService;
         _supportIntentService = supportIntentService;
+        _eligibilityService = eligibilityService;
         _logger = logger;
     }
 
@@ -225,6 +228,103 @@ public class SupportController : ControllerBase
         {
             _logger.LogError(ex, "Error getting transfers");
             return StatusCode(500, new { error = "An error occurred" });
+        }
+    }
+
+    // =============================================
+    // CARETAKER ELIGIBILITY ENDPOINTS (Weekly Cap System)
+    // Invariant: Birds never multiply money. One user = one wallet = capped baseline support.
+    // =============================================
+
+    /// <summary>
+    /// Get eligibility status for a caretaker (how much they can receive this week)
+    /// </summary>
+    /// <remarks>
+    /// Returns the caretaker's weekly support cap status:
+    /// - weeklyCap: Maximum USDC they can receive per week in baseline support
+    /// - receivedThisWeek: Baseline support already received this week (gifts NOT included)
+    /// - remaining: How much more baseline support they can receive this week
+    ///
+    /// If remaining is 0, supporters can still send one-time gifts (which bypass the cap).
+    /// </remarks>
+    [HttpGet("eligibility")]
+    [ProducesResponseType(typeof(CaretakerEligibilityResponse), StatusCodes.Status200OK)]
+    public async Task<ActionResult<CaretakerEligibilityResponse>> GetEligibility([FromQuery] Guid userId)
+    {
+        try
+        {
+            var result = await _eligibilityService.GetEligibilityAsync(userId);
+
+            _logger.LogInformation(
+                "Eligibility check: Caretaker {UserId}, Cap: {Cap}, Received: {Received}, Remaining: {Remaining}",
+                userId, result.WeeklyCap, result.ReceivedThisWeek, result.Remaining);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting eligibility for user {UserId}", userId);
+            return StatusCode(500, new CaretakerEligibilityResponse
+            {
+                UserId = userId,
+                WeeklyCap = 0,
+                ReceivedThisWeek = 0,
+                Remaining = 0,
+                CanReceiveBaseline = false
+            });
+        }
+    }
+
+    /// <summary>
+    /// Record a support transaction after Solana verification
+    /// </summary>
+    /// <remarks>
+    /// Records a support transaction after it's been confirmed on Solana.
+    ///
+    /// The backend will:
+    /// 1. Verify the transaction on Solana RPC
+    /// 2. Confirm: USDC mint, amount, destination wallet
+    /// 3. Classify: baseline (if remaining > 0) or gift
+    ///
+    /// Important:
+    /// - Baseline support counts toward weekly cap
+    /// - Gifts are unlimited and do NOT count toward cap
+    /// - If type is not specified, backend auto-classifies based on remaining allowance
+    /// - Never retroactively increases baseline payout
+    /// </remarks>
+    [HttpPost("record")]
+    [ProducesResponseType(typeof(RecordSupportResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(RecordSupportResponse), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<RecordSupportResponse>> RecordSupportTransaction([FromBody] RecordSupportRequest request)
+    {
+        try
+        {
+            var supporterUserId = GetUserId();
+            var result = await _eligibilityService.RecordSupportTransactionAsync(supporterUserId, request);
+
+            if (!result.Success)
+            {
+                _logger.LogWarning(
+                    "Failed to record support: {ErrorCode} - {ErrorMessage}",
+                    result.ErrorCode, result.ErrorMessage);
+                return BadRequest(result);
+            }
+
+            _logger.LogInformation(
+                "Support recorded: {ReceiptId}, Type: {Type}, Amount: {Amount} USDC, To: {ToUserId}",
+                result.ReceiptId, result.TransactionType, request.Amount, request.ToUserId);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error recording support transaction");
+            return StatusCode(500, new RecordSupportResponse
+            {
+                Success = false,
+                ErrorCode = CaretakerEligibilityErrorCodes.InternalError,
+                ErrorMessage = "An error occurred recording the transaction"
+            });
         }
     }
 

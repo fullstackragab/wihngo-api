@@ -30,6 +30,10 @@ namespace Wihngo.Controllers
         private readonly IContentModerationService _moderationService;
         private readonly IBirdActivityService _activityService;
         private readonly IBirdFollowService _birdFollowService;
+        private readonly ICaretakerEligibilityService _eligibilityService;
+
+        // Anti-abuse: Maximum birds per user
+        private const int MaxBirdsPerUser = 10;
 
         public BirdsController(
             AppDbContext db,
@@ -41,7 +45,8 @@ namespace Wihngo.Controllers
             IMemorialService memorialService,
             IContentModerationService moderationService,
             IBirdActivityService activityService,
-            IBirdFollowService birdFollowService)
+            IBirdFollowService birdFollowService,
+            ICaretakerEligibilityService eligibilityService)
         {
             _db = db;
             _dbFactory = dbFactory;
@@ -53,6 +58,7 @@ namespace Wihngo.Controllers
             _moderationService = moderationService;
             _activityService = activityService;
             _birdFollowService = birdFollowService;
+            _eligibilityService = eligibilityService;
         }
 
         private Guid? GetUserIdClaim()
@@ -541,6 +547,24 @@ namespace Wihngo.Controllers
 
             var userId = GetUserIdClaim();
             if (userId == null) return Unauthorized();
+
+            // Anti-abuse: Check max birds per user
+            // Invariant: Birds never multiply money. One user = one wallet = capped baseline support.
+            var canAddMore = await _eligibilityService.CanAddMoreBirdsAsync(userId.Value, MaxBirdsPerUser);
+            if (!canAddMore)
+            {
+                var currentCount = await _eligibilityService.GetBirdCountAsync(userId.Value);
+                _logger.LogWarning(
+                    "User {UserId} attempted to create bird but has reached max limit ({Max}). Current: {Current}",
+                    userId.Value, MaxBirdsPerUser, currentCount);
+                return BadRequest(new
+                {
+                    message = $"Maximum of {MaxBirdsPerUser} birds allowed per account",
+                    code = CaretakerEligibilityErrorCodes.MaxBirdsReached,
+                    currentCount,
+                    maxAllowed = MaxBirdsPerUser
+                });
+            }
 
             // Validate S3 key if provided
             if (!string.IsNullOrWhiteSpace(dto.ImageS3Key))

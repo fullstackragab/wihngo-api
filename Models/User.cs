@@ -59,6 +59,14 @@
         
         public DateTime? LastPasswordChangeAt { get; set; }
 
+        // Weekly support cap (how much this user can RECEIVE per week in baseline support)
+        /// <summary>
+        /// Maximum USDC this caretaker can receive per week in baseline support.
+        /// Gifts are unlimited and do not count toward this cap.
+        /// Default: 5 USDC
+        /// </summary>
+        public decimal WeeklyCap { get; set; } = 5.00m;
+
         // Smart feed preferences
         /// <summary>
         /// JSON array of preferred content language codes (ISO 639-1)

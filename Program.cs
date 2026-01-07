@@ -371,6 +371,8 @@ builder.Services.AddScoped<ILedgerService, LedgerService>();
 builder.Services.AddScoped<IGasSponsorshipService, GasSponsorshipService>();
 builder.Services.AddScoped<IP2PPaymentService, P2PPaymentService>();
 builder.Services.AddScoped<ISupportIntentService, SupportIntentService>();
+builder.Services.AddScoped<ICaretakerEligibilityService, CaretakerEligibilityService>();
+builder.Services.AddScoped<ILoveVideoService, LoveVideoService>();
 builder.Services.AddScoped<IWalletConnectIntentService, WalletConnectIntentService>();
 builder.Services.AddScoped<PaymentConfirmationJob>();
 builder.Services.AddScoped<SupportIntentConfirmationJob>();
