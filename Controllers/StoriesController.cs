@@ -92,9 +92,35 @@
                     OFFSET @Offset LIMIT @Limit";
 
                 var stories = await connection.QueryAsync<dynamic>(sql, new { Offset = (page - 1) * pageSize, Limit = pageSize });
-                var dtoItems = new List<StorySummaryDto>(stories.Count());
+                var storiesList = stories.ToList();
 
-                foreach (var story in stories)
+                // Collect all S3 keys for parallel URL generation
+                var allS3Keys = new List<string>();
+                foreach (var story in storiesList)
+                {
+                    if (!string.IsNullOrWhiteSpace((string?)story.image_url))
+                        allS3Keys.Add((string)story.image_url);
+                    if (!string.IsNullOrWhiteSpace((string?)story.video_url))
+                        allS3Keys.Add((string)story.video_url);
+                }
+
+                // Generate all URLs in PARALLEL for performance
+                var urlTasks = allS3Keys.Distinct().Select(async key =>
+                {
+                    try
+                    {
+                        return (key, url: await _s3Service.GenerateDownloadUrlAsync(key));
+                    }
+                    catch
+                    {
+                        return (key, url: (string?)null);
+                    }
+                });
+                var urlResults = await Task.WhenAll(urlTasks);
+                var urlMap = urlResults.Where(r => r.url != null).ToDictionary(r => r.key, r => r.url!);
+
+                var dtoItems = new List<StorySummaryDto>(storiesList.Count);
+                foreach (var story in storiesList)
                 {
                     string content = story.content ?? string.Empty;
                     string birdName = story.bird_name ?? string.Empty;
@@ -102,8 +128,8 @@
                     var dto = new StorySummaryDto
                     {
                         StoryId = (Guid)story.story_id,
-                        Birds = string.IsNullOrWhiteSpace(birdName) 
-                            ? new List<string>() 
+                        Birds = string.IsNullOrWhiteSpace(birdName)
+                            ? new List<string>()
                             : new List<string> { birdName },
                         Mode = (StoryMode?)story.mode,
                         Date = ((DateTime)story.created_at).ToString("MMMM d, yyyy"),
@@ -112,31 +138,17 @@
                         VideoS3Key = story.video_url
                     };
 
-                    // Generate download URLs
-                    string? imageUrl = story.image_url;
-                    if (!string.IsNullOrWhiteSpace(imageUrl))
+                    // Map URLs from pre-generated cache
+                    string? imageKey = story.image_url as string;
+                    if (!string.IsNullOrWhiteSpace(imageKey) && urlMap.TryGetValue(imageKey, out var imageUrl))
                     {
-                        try
-                        {
-                            dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(imageUrl);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to generate download URL for story image {StoryId}", dto.StoryId);
-                        }
+                        dto.ImageUrl = imageUrl;
                     }
 
-                    string? videoUrl = story.video_url;
-                    if (!string.IsNullOrWhiteSpace(videoUrl))
+                    string? videoKey = story.video_url as string;
+                    if (!string.IsNullOrWhiteSpace(videoKey) && urlMap.TryGetValue(videoKey, out var videoUrl))
                     {
-                        try
-                        {
-                            dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(videoUrl);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to generate video download URL for story {StoryId}", dto.StoryId);
-                        }
+                        dto.VideoUrl = videoUrl;
                     }
 
                     dtoItems.Add(dto);
@@ -195,9 +207,35 @@
                     OFFSET @Offset LIMIT @Limit";
 
                 var stories = await connection.QueryAsync<dynamic>(sql, new { UserId = userId, Offset = (page - 1) * pageSize, Limit = pageSize });
-                var dtoItems = new List<StorySummaryDto>(stories.Count());
+                var storiesList = stories.ToList();
 
-                foreach (var story in stories)
+                // Collect all S3 keys for parallel URL generation
+                var allS3Keys = new List<string>();
+                foreach (var story in storiesList)
+                {
+                    if (!string.IsNullOrWhiteSpace((string?)story.image_url))
+                        allS3Keys.Add((string)story.image_url);
+                    if (!string.IsNullOrWhiteSpace((string?)story.video_url))
+                        allS3Keys.Add((string)story.video_url);
+                }
+
+                // Generate all URLs in PARALLEL for performance
+                var urlTasks = allS3Keys.Distinct().Select(async key =>
+                {
+                    try
+                    {
+                        return (key, url: await _s3Service.GenerateDownloadUrlAsync(key));
+                    }
+                    catch
+                    {
+                        return (key, url: (string?)null);
+                    }
+                });
+                var urlResults = await Task.WhenAll(urlTasks);
+                var urlMap = urlResults.Where(r => r.url != null).ToDictionary(r => r.key, r => r.url!);
+
+                var dtoItems = new List<StorySummaryDto>(storiesList.Count);
+                foreach (var story in storiesList)
                 {
                     string content = story.content ?? string.Empty;
                     string birdName = story.bird_name ?? string.Empty;
@@ -205,8 +243,8 @@
                     var dto = new StorySummaryDto
                     {
                         StoryId = (Guid)story.story_id,
-                        Birds = string.IsNullOrWhiteSpace(birdName) 
-                            ? new List<string>() 
+                        Birds = string.IsNullOrWhiteSpace(birdName)
+                            ? new List<string>()
                             : new List<string> { birdName },
                         Mode = (StoryMode?)story.mode,
                         Date = ((DateTime)story.created_at).ToString("MMMM d, yyyy"),
@@ -215,31 +253,17 @@
                         VideoS3Key = story.video_url
                     };
 
-                    // Generate download URLs
-                    string? imageUrl = story.image_url;
-                    if (!string.IsNullOrWhiteSpace(imageUrl))
+                    // Map URLs from pre-generated cache
+                    string? imageKey = story.image_url as string;
+                    if (!string.IsNullOrWhiteSpace(imageKey) && urlMap.TryGetValue(imageKey, out var imageUrl))
                     {
-                        try
-                        {
-                            dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(imageUrl);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to generate download URL for story {StoryId}", dto.StoryId);
-                        }
+                        dto.ImageUrl = imageUrl;
                     }
 
-                    string? videoUrl = story.video_url;
-                    if (!string.IsNullOrWhiteSpace(videoUrl))
+                    string? videoKey = story.video_url as string;
+                    if (!string.IsNullOrWhiteSpace(videoKey) && urlMap.TryGetValue(videoKey, out var videoUrl))
                     {
-                        try
-                        {
-                            dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(videoUrl);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed to generate video download URL for story {StoryId}", dto.StoryId);
-                        }
+                        dto.VideoUrl = videoUrl;
                     }
 
                     dtoItems.Add(dto);

@@ -130,9 +130,31 @@ namespace Wihngo.Controllers
 
             var birds = await connection.QueryAsync<dynamic>(birdsSql, new { PageSize = pageSize, Offset = offset });
 
-            // Generate download URLs and map to DTOs
+            // Generate download URLs in PARALLEL for performance
+            var birdsList = birds.ToList();
+            var s3Keys = birdsList
+                .Where(b => b.bird_id != null && !string.IsNullOrWhiteSpace((string?)b.image_url))
+                .Select(b => (string)b.image_url)
+                .ToList();
+
+            // Parallel S3 URL generation
+            var urlTasks = s3Keys.Select(async key =>
+            {
+                try
+                {
+                    return (key, url: await _s3Service.GenerateDownloadUrlAsync(key));
+                }
+                catch
+                {
+                    return (key, url: (string?)null);
+                }
+            });
+            var urlResults = await Task.WhenAll(urlTasks);
+            var urlMap = urlResults.Where(r => r.url != null).ToDictionary(r => r.key, r => r.url!);
+
+            // Map to DTOs
             var birdDtos = new List<BirdSummaryDto>();
-            foreach (var bird in birds)
+            foreach (var bird in birdsList)
             {
                 // Skip records with null IDs (defensive check)
                 if (bird.bird_id == null || bird.owner_id == null)
@@ -141,24 +163,17 @@ namespace Wihngo.Controllers
                     continue;
                 }
 
-                string? imageUrl = null;
-
                 // Access dynamic properties in lowercase (PostgreSQL default)
                 Guid birdId = (Guid)bird.bird_id;
                 Guid ownerId = (Guid)bird.owner_id;
                 DateTime? lastActivityAt = bird.last_activity_at as DateTime?;
                 bool isMemorial = bird.is_memorial ?? false;
 
-                try
+                string? imageUrl = null;
+                string? imageKey = bird.image_url as string;
+                if (!string.IsNullOrWhiteSpace(imageKey) && urlMap.TryGetValue(imageKey, out var cachedUrl))
                 {
-                    if (!string.IsNullOrWhiteSpace(bird.image_url))
-                    {
-                        imageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.image_url);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to generate download URL for bird {BirdId}", birdId);
+                    imageUrl = cachedUrl;
                 }
 
                 // Calculate activity status
@@ -407,8 +422,35 @@ namespace Wihngo.Controllers
                 Offset = offset
             });
 
+            var storiesList = stories.ToList();
+
+            // Collect all S3 keys for parallel URL generation
+            var allS3Keys = new List<string>();
+            foreach (var story in storiesList)
+            {
+                if (!string.IsNullOrWhiteSpace((string?)story.image_url))
+                    allS3Keys.Add((string)story.image_url);
+                if (!string.IsNullOrWhiteSpace((string?)story.video_url))
+                    allS3Keys.Add((string)story.video_url);
+            }
+
+            // Generate all URLs in PARALLEL for performance
+            var urlTasks = allS3Keys.Distinct().Select(async key =>
+            {
+                try
+                {
+                    return (key, url: await _s3Service.GenerateDownloadUrlAsync(key));
+                }
+                catch
+                {
+                    return (key, url: (string?)null);
+                }
+            });
+            var urlResults = await Task.WhenAll(urlTasks);
+            var urlMap = urlResults.Where(r => r.url != null).ToDictionary(r => r.key, r => r.url!);
+
             var items = new List<StorySummaryDto>();
-            foreach (var story in stories)
+            foreach (var story in storiesList)
             {
                 string content = story.content ?? string.Empty;
                 string birdName = story.bird_name ?? string.Empty;
@@ -427,23 +469,17 @@ namespace Wihngo.Controllers
                     CreatedAt = story.created_at
                 };
 
-                // Generate download URLs
-                if (!string.IsNullOrWhiteSpace(story.image_url))
+                // Map URLs from pre-generated cache
+                string? imageKey = story.image_url as string;
+                if (!string.IsNullOrWhiteSpace(imageKey) && urlMap.TryGetValue(imageKey, out var imageUrl))
                 {
-                    try
-                    {
-                        dto.ImageUrl = await _s3Service.GenerateDownloadUrlAsync(story.image_url);
-                    }
-                    catch { }
+                    dto.ImageUrl = imageUrl;
                 }
 
-                if (!string.IsNullOrWhiteSpace(story.video_url))
+                string? videoKey = story.video_url as string;
+                if (!string.IsNullOrWhiteSpace(videoKey) && urlMap.TryGetValue(videoKey, out var videoUrl))
                 {
-                    try
-                    {
-                        dto.VideoUrl = await _s3Service.GenerateDownloadUrlAsync(story.video_url);
-                    }
-                    catch { }
+                    dto.VideoUrl = videoUrl;
                 }
 
                 items.Add(dto);
@@ -1570,14 +1606,35 @@ namespace Wihngo.Controllers
                 WHERE bird_id = ANY(@BirdIds)";
 
             var birds = await connection.QueryAsync<dynamic>(sql, new { BirdIds = followedBirdIds.ToArray() });
+            var birdsList = birds.ToList();
 
             // Get loved birds for this user
             var lovedSql = "SELECT bird_id FROM loves WHERE user_id = @UserId";
             var lovedIds = await connection.QueryAsync<Guid>(lovedSql, new { UserId = userId.Value });
             var lovedBirdIds = new HashSet<Guid>(lovedIds);
 
+            // Generate S3 URLs in PARALLEL for performance
+            var s3Keys = birdsList
+                .Where(b => b.bird_id != null && !string.IsNullOrWhiteSpace((string?)b.image_url))
+                .Select(b => (string)b.image_url)
+                .ToList();
+
+            var urlTasks = s3Keys.Select(async key =>
+            {
+                try
+                {
+                    return (key, url: await _s3Service.GenerateDownloadUrlAsync(key));
+                }
+                catch
+                {
+                    return (key, url: (string?)null);
+                }
+            });
+            var urlResults = await Task.WhenAll(urlTasks);
+            var urlMap = urlResults.Where(r => r.url != null).ToDictionary(r => r.key, r => r.url!);
+
             var birdDtos = new List<BirdSummaryDto>();
-            foreach (var bird in birds)
+            foreach (var bird in birdsList)
             {
                 if (bird.bird_id == null || bird.owner_id == null) continue;
 
@@ -1587,16 +1644,10 @@ namespace Wihngo.Controllers
                 bool isMemorial = bird.is_memorial ?? false;
 
                 string? imageUrl = null;
-                try
+                string? imageKey = bird.image_url as string;
+                if (!string.IsNullOrWhiteSpace(imageKey) && urlMap.TryGetValue(imageKey, out var cachedUrl))
                 {
-                    if (!string.IsNullOrWhiteSpace(bird.image_url))
-                    {
-                        imageUrl = await _s3Service.GenerateDownloadUrlAsync(bird.image_url);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to generate download URL for bird {BirdId}", birdId);
+                    imageUrl = cachedUrl;
                 }
 
                 var activityStatus = _activityService.GetActivityStatus(lastActivityAt, isMemorial);

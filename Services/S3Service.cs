@@ -198,29 +198,34 @@ namespace Wihngo.Services
         }
 
         /// <summary>
-        /// Generate download URLs for multiple S3 keys in bulk (more efficient than one-by-one)
+        /// Generate download URLs for multiple S3 keys in bulk using PARALLEL processing
         /// </summary>
         /// <param name="s3Keys">List of S3 keys to generate URLs for</param>
         /// <returns>Dictionary mapping S3 key to download URL</returns>
         public async Task<Dictionary<string, string>> GenerateBulkDownloadUrlsAsync(IEnumerable<string> s3Keys)
         {
-            var result = new Dictionary<string, string>();
-            
-            foreach (var s3Key in s3Keys.Where(k => !string.IsNullOrWhiteSpace(k)))
+            var validKeys = s3Keys.Where(k => !string.IsNullOrWhiteSpace(k)).Distinct().ToList();
+
+            // Generate all URLs in PARALLEL for performance
+            var urlTasks = validKeys.Select(async key =>
             {
                 try
                 {
-                    var url = await GenerateDownloadUrlAsync(s3Key);
-                    result[s3Key] = url;
+                    var url = await GenerateDownloadUrlAsync(key);
+                    return (key, url, success: true);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to generate download URL for key {S3Key}", s3Key);
-                    // Continue with other keys
+                    _logger.LogWarning(ex, "Failed to generate download URL for key {S3Key}", key);
+                    return (key, url: (string?)null, success: false);
                 }
-            }
+            });
 
-            return result;
+            var results = await Task.WhenAll(urlTasks);
+
+            return results
+                .Where(r => r.success && r.url != null)
+                .ToDictionary(r => r.key, r => r.url!);
         }
 
         public async Task DeleteFileAsync(string s3Key)
